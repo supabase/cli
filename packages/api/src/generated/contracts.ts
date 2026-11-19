@@ -15214,10 +15214,12 @@ export const V2GetWarehouseTableLayoutInput = Schema.Struct({
 export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
   data: Schema.Struct({
     attributes: Schema.Struct({
-      application_status: Schema.String.annotate({
-        description:
-          "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
-      }),
+      application_status: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+        }),
+      ),
       desired: Schema.Struct({
         partition_by: Schema.Union([
           Schema.Array(
@@ -15318,13 +15320,15 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
         }),
         Schema.Null,
       ]),
-      pipeline_id: Schema.String.annotate({
-        description: "Warehouse replication pipeline identity.",
-      }),
-      reset_table: Schema.Boolean.annotate({
-        description:
-          "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
-      }),
+      pipeline_id: Schema.optionalKey(
+        Schema.String.annotate({ description: "Warehouse replication pipeline identity." }),
+      ),
+      reset_table: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+        }),
+      ),
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
     id: Schema.String.annotate({
@@ -20357,7 +20361,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
             }),
           ).annotate({
             description:
-              "Omit to preserve partitioning, null or an empty list to clear it, or supply all ordered partition keys.",
+              "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
           }),
           Schema.Null,
         ]),
@@ -20365,7 +20369,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
       reset_table: Schema.optionalKey(
         Schema.Boolean.annotate({
           description:
-            "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+            "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
         }),
       ),
       sort_by: Schema.optionalKey(
@@ -20398,7 +20402,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
           { mode: "oneOf" },
         ).annotate({
           description:
-            "Omit to preserve sorting, null to clear it, or supply the complete sort selector.",
+            "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
         }),
       ),
     }),
@@ -24531,7 +24535,7 @@ export const operationDefinitions = {
   v2UpdateWarehouseTableLayout: {
     id: "v2UpdateWarehouseTableLayout",
     description:
-      "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "PATCH",
     path: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
     pathParams: ["ref", "table_id"],

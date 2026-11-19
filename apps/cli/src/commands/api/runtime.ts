@@ -49,7 +49,6 @@ import type {
   ApiCommandEntry,
   ApiCommandFlag,
   ApiCommandWait,
-  ApiCommandWaitRead,
   ApiPollRead,
 } from "./api-command.model.ts";
 import { apiCommands, apiPollTargets } from "./generated.ts";
@@ -67,10 +66,6 @@ interface ResolvedWait {
   readonly wait: ApiCommandWait;
   readonly readEntry: ApiPollRead;
   readonly statusEntry: ApiCommandEntry;
-  readonly checks: ReadonlyArray<{
-    readonly wait: ApiCommandWaitRead;
-    readonly readEntry: ApiCommandEntry;
-  }>;
 }
 
 const resolveWait = (
@@ -79,19 +74,13 @@ const resolveWait = (
 ): ResolvedWait | undefined => {
   const { wait } = entry;
   if (wait === undefined) return undefined;
-  const checks = (wait.checks ?? []).flatMap((check) => {
-    const readEntry = entries.find((candidate) => candidate.operationId === check.read);
-    return readEntry === undefined ? [] : [{ wait: check, readEntry }];
-  });
-  if (checks.length !== (wait.checks?.length ?? 0)) return undefined;
   const publicRead = entries.find((candidate) => candidate.operationId === wait.read);
-  if (publicRead !== undefined)
-    return { wait, readEntry: publicRead, statusEntry: publicRead, checks };
+  if (publicRead !== undefined) return { wait, readEntry: publicRead, statusEntry: publicRead };
   const hidden = apiPollTargets.find((candidate) => candidate.operationId === wait.read);
   const inspect = entries.find((candidate) => candidate.operationId === hidden?.inspect);
   return hidden === undefined || inspect === undefined
     ? undefined
-    : { wait, readEntry: hidden, statusEntry: inspect, checks };
+    : { wait, readEntry: hidden, statusEntry: inspect };
 };
 
 const flagLocation = (entry: ApiCommandEntry, flag: ApiCommandFlag): ApiFlagLocation => {
@@ -135,9 +124,7 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
     ? {}
     : {
         wait: Flag.Boolean("wait").pipe(
-          Flag.withDescription(
-            entry.wait?.description ?? "Wait until the operation reaches a final status.",
-          ),
+          Flag.withDescription("Wait until the operation reaches a final status."),
           Flag.withDefault(false),
         ),
         timeout: Flag.String("timeout").pipe(
@@ -273,24 +260,20 @@ const handle = Effect.fn("api-command.run")(function* (
       if (waiting) {
         // A read that polls itself needs no change request: its own input is what gets polled.
         const selfPolling = resolved.readEntry.operationId === entry.operationId;
-        const changed = selfPolling
-          ? undefined
-          : yield* withTask(progress, summaryText(entry), () => sendApiRequest(entry, decoded));
-        const readInput =
-          changed === undefined
-            ? input
-            : yield* linkedReadInput({
-                wait: resolved.wait,
-                changedOperationId: entry.operationId,
-                ref,
-                changed,
-              });
+        const readInput = selfPolling
+          ? input
+          : yield* linkedReadInput({
+              wait: resolved.wait,
+              changedOperationId: entry.operationId,
+              ref,
+              changed: yield* withTask(progress, summaryText(entry), () =>
+                sendApiRequest(entry, decoded),
+              ),
+            });
         const polling = summaryText(resolved.readEntry);
         const settled = yield* withTask(progress, polling, (update) =>
           waitForOperation({
             wait: resolved.wait,
-            checks: resolved.checks,
-            changed,
             readEntry: resolved.readEntry,
             statusEntry: resolved.statusEntry,
             readInput,
@@ -322,25 +305,17 @@ const exampleFor = (entry: ApiCommandEntry): string => {
 
 const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefined) => {
   const polled = resolved?.readEntry.operationId;
-  const reads = [
-    ...new Set(
-      resolved === undefined
-        ? []
-        : [
-            resolved.readEntry.operationId,
-            ...resolved.checks.map((check) => check.readEntry.operationId),
-          ],
-    ),
-  ];
   const operations: ReadonlyArray<OperationEntry> = [
     { operationId: entry.operationId, kind: "required" },
-    ...reads
-      .filter((read) => read !== entry.operationId)
-      .map((read) => ({
-        operationId: read,
-        kind: "required" as const,
-        when: [{ flag: "wait", is: true }],
-      })),
+    ...(polled === undefined || polled === entry.operationId
+      ? []
+      : [
+          {
+            operationId: polled,
+            kind: "required" as const,
+            when: [{ flag: "wait", is: true }],
+          },
+        ]),
   ];
   const noApiEffectFlags = [
     "dry-run",

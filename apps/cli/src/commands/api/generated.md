@@ -103,7 +103,7 @@ Returns the sorting and partitioning rules saved for one replicated table, by so
 
 Update the layout of a table replicated to Warehouse
 
-Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.
+Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Feature: `warehouse`.
@@ -116,20 +116,6 @@ Updates saved sorting and partitioning rules for one source table OID. Omitted s
 | Flag            | Type    | Required | Repeatable | Binds to                            |
 | --------------- | ------- | -------- | ---------- | ----------------------------------- |
 | `--reset-table` | boolean | no       | no         | body `/data/attributes/reset_table` |
-
-### Wait
-
-Wait for the accepted layout to remain saved, a catalog observation to be available, and the table to be live. Checks readiness, not catalog convergence or completion of this specific update.
-
-- Polls: `GET /v2/projects/{ref}/warehouse/tables/{table_id}/layout` (`v2-get-warehouse-table-layout`).
-- Read parameters from the change response: `table_id` from `/data/id`.
-- Status at `/data/attributes/observation_status`; succeeded: `observed`; failed: .
-- Must still match the accepted response at: `/data/attributes/desired`, `/data/attributes/name`, `/data/attributes/pipeline_id`, `/data/attributes/schema`, `/data/id`.
-- Requires a non-null value at: `/data/attributes/observed`.
-- Also polls `v2-get-warehouse-table`: status at `/data/attributes/status`; succeeded: `live`; failed: `error`.
-  Must still match the accepted response at: `/data/attributes/name`, `/data/attributes/schema`, `/data/id`.
-- Rechecks the primary read after all checks succeed; returns that final read. These separate reads are not an atomic observation.
-- Failure hint names `supabase warehouse tables layout get <table_id> --remote=<ref>`.
 
 ## `supabase warehouse tables list`
 

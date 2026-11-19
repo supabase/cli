@@ -43,19 +43,6 @@ describe("poll schedule", () => {
     }),
   );
 
-  it.effect("honors the longest Retry-After across readiness reads", () =>
-    Effect.gen(function* () {
-      const times = yield* pollTimes([
-        {
-          ...outcome({ "retry-after": "2" }),
-          responses: [outcome({ "retry-after": "6" }).response],
-        },
-        outcome(),
-      ]);
-      expect(times).toEqual([0, 6]);
-    }),
-  );
-
   it.effect("waits for a Retry-After given as an HTTP date", () =>
     Effect.gen(function* () {
       const date = "Thu, 01 Jan 1970 00:00:04 GMT";

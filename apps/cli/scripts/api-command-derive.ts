@@ -7,7 +7,6 @@ import type {
   ApiCommandFlag,
   ApiCommandSchemas,
   ApiCommandWait,
-  ApiCommandWaitRead,
   ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
 
@@ -62,24 +61,9 @@ const StatusMapping = {
 /** How to tell that the resource a read operation returns has settled. */
 type ApiCommandPoll = Pick<ApiCommandWait, "status" | "succeeded" | "failed" | "error">;
 
-const WaitReadFields = {
-  ...StatusMapping,
-  read: Schema.String,
-  params: Schema.Record(Schema.String, Schema.String),
-  matches: Schema.optionalKey(Schema.Array(Schema.String)),
-  present: Schema.optionalKey(Schema.Array(Schema.String)),
-};
-
 const XOperationSchema = Schema.Struct({
   group: Schema.optionalKey(Schema.String),
   method: Schema.optionalKey(Schema.String),
-  wait: Schema.optionalKey(
-    Schema.Struct({
-      ...WaitReadFields,
-      description: Schema.String,
-      checks: Schema.Array(Schema.Struct(WaitReadFields)),
-    }),
-  ),
   poll: Schema.optionalKey(
     Schema.Struct({ ...StatusMapping, inspect: Schema.optionalKey(Schema.String) }),
   ),
@@ -98,7 +82,6 @@ type ParsedXOperation =
       readonly kind: "valid";
       readonly name?: { readonly group: string; readonly method: string };
       readonly poll?: ApiCommandPoll;
-      readonly wait?: ApiCommandWait;
       readonly inspect?: string;
     }
   | { readonly kind: "invalid"; readonly reason: string };
@@ -113,7 +96,7 @@ const statusMapping = (poll: ApiCommandPoll): ApiCommandPoll => ({
 const parseXOperation = (block: unknown): ParsedXOperation => {
   const decoded = decodeXOperation(block);
   if (Exit.isFailure(decoded)) return { kind: "invalid", reason: Cause.pretty(decoded.cause) };
-  const { group, method, poll, wait } = decoded.value;
+  const { group, method, poll } = decoded.value;
   if ((group === undefined) !== (method === undefined)) {
     return { kind: "invalid", reason: "a command name needs both group and method" };
   }
@@ -127,7 +110,6 @@ const parseXOperation = (block: unknown): ParsedXOperation => {
     kind: "valid",
     ...(group === undefined || method === undefined ? {} : { name: { group, method } }),
     ...(poll === undefined ? {} : { poll: statusMapping(poll) }),
-    ...(wait === undefined ? {} : { wait }),
     ...(poll?.inspect === undefined ? {} : { inspect: poll.inspect }),
   };
 };
@@ -171,7 +153,6 @@ interface OperationMetadata {
   readonly group: string;
   readonly method: string;
   readonly poll?: ApiCommandPoll;
-  readonly wait?: ApiCommandWait;
 }
 
 interface FlagShape {
@@ -585,16 +566,12 @@ const readMetadata = (
       problems.push(`${operationId}: invalid x-operation: ${parsed.reason}`);
       continue;
     }
-    const { name, poll, wait } = parsed;
+    const { name, poll } = parsed;
     if (name === undefined) {
       problems.push(`${operationId}: no command name; set x-operation group and method`);
       continue;
     }
-    metadata.set(operationId, {
-      ...name,
-      ...(poll === undefined ? {} : { poll }),
-      ...(wait === undefined ? {} : { wait }),
-    });
+    metadata.set(operationId, { ...name, ...(poll === undefined ? {} : { poll }) });
     if (poll !== undefined && operation.method !== "GET") {
       problems.push(`${operationId}: poll belongs on a read operation, not ${operation.method}`);
     }
@@ -1089,23 +1066,9 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     const linked = linkedWait(spec, operations, metadata, generated, hidden, operation, fail);
     const ownPoll = name.poll;
     requireOneWait(ownPoll, linked?.read, fail);
-    if (name.wait !== undefined && (linked !== undefined || ownPoll !== undefined)) {
-      fail("explicit wait cannot be combined with poll or a linked wait");
-    }
-    const wait =
-      name.wait ??
-      linked ??
-      (ownPoll === undefined ? undefined : pollWait(operationId, {}, ownPoll));
+    const wait = linked ?? (ownPoll === undefined ? undefined : pollWait(operationId, {}, ownPoll));
     if (wait !== undefined) {
-      if (name.wait !== undefined && operation.method === "GET") {
-        fail("explicit wait belongs on a mutation; use poll for a read");
-      }
-      for (const read of [wait, ...(wait.checks ?? [])]) {
-        if (name.wait !== undefined && !generated.includes(read.read)) {
-          fail(`explicit wait read "${read.read}" must be a generated operation`);
-        }
-        lintWait({ spec, operations, operation, wait: read, fail });
-      }
+      lintWait({ spec, operations, operation, wait, fail });
     }
 
     const response = classifySuccess(spec, operation, fail);
@@ -1220,7 +1183,7 @@ function lintWait(input: {
   readonly spec: JsonObject;
   readonly operations: ReadonlyMap<string, Operation>;
   readonly operation: Operation;
-  readonly wait: ApiCommandWaitRead;
+  readonly wait: ApiCommandWait;
   readonly fail: (reason: string) => void;
 }): void {
   const { spec, operations, operation, wait, fail } = input;
@@ -1275,21 +1238,6 @@ function lintWait(input: {
   }
 
   const readResponse = successSchema(spec, readOperation);
-  for (const pointer of wait.matches ?? []) {
-    if (
-      !pointerAlwaysPresent(spec, changeResponse, pointer) ||
-      !pointerAlwaysPresent(spec, readResponse, pointer)
-    ) {
-      fail(
-        `wait.matches pointer "${pointer}" must be required in both mutation and ${wait.read} responses`,
-      );
-    }
-  }
-  for (const pointer of wait.present ?? []) {
-    if (resolvePointer(spec, readResponse, pointer) === undefined) {
-      fail(`wait.present pointer "${pointer}" does not resolve in the ${wait.read} response`);
-    }
-  }
   const status = resolvePointer(spec, readResponse, wait.status);
   if (status === undefined) {
     fail(`wait.status pointer "${wait.status}" does not resolve in the ${wait.read} response`);

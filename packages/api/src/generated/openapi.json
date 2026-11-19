@@ -1121,7 +1121,7 @@
     },
     "/v1/oauth/token": {
       "post": {
-        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG \u2014 identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
+        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
         "operationId": "v1-exchange-oauth-token",
         "parameters": [],
         "requestBody": {
@@ -6638,7 +6638,7 @@
         "x-fga-permissions": [["infra_add_ons_read"]]
       },
       "patch": {
-        "description": "Selects an addon variant, for example scaling the project\u2019s compute instance up or down, and applies it to the project.",
+        "description": "Selects an addon variant, for example scaling the project’s compute instance up or down, and applies it to the project.",
         "operationId": "v1-apply-project-addon",
         "parameters": [
           {
@@ -13260,7 +13260,7 @@
     },
     "/v2/projects/{ref}/config": {
       "get": {
-        "description": "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration \u2014 the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-get-project-config",
         "parameters": [
           {
@@ -13350,7 +13350,7 @@
     },
     "/v2/projects/{ref}/notebooks": {
       "get": {
-        "description": "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted \u2014 read a single notebook to get its cells.",
+        "description": "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
         "operationId": "v2-list-notebooks",
         "parameters": [
           {
@@ -14714,7 +14714,7 @@
     },
     "/v2/projects/{ref}/compute/{name}/uploads": {
       "post": {
-        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage \u2014 no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-create-compute-instance-upload",
         "parameters": [
           {
@@ -33207,7 +33207,7 @@
         "x-scalar-stability": "experimental"
       },
       "patch": {
-        "description": "Updates saved sorting and partitioning rules for one source table OID. Omitted settings are preserved; null clears a setting. The backend validates the source schema and preserves other tables. An active pipeline is restarted, while a stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. True resets and recopies the selected table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table. Acceptance and application_status do not establish catalog convergence or completion of recopy: read the layout to inspect desired and observed rules and monitor table replication separately. There is no revision, idempotency, resolved preview or durable operation contract. A failed update can leave partial effects, including a completed reset; inspect the saved layout, pipeline and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-update-warehouse-table-layout",
         "parameters": [
           {
@@ -33224,7 +33224,7 @@
             }
           },
           {
-            "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+            "description": "Source Postgres table OID from the Warehouse tables list.",
             "in": "path",
             "name": "table_id",
             "required": true,
@@ -33251,7 +33251,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/V2WarehouseTableLayoutResponse_Output"
+                  "$ref": "#/components/schemas/V2WarehouseTableLayoutUpdateResponse_Output"
                 }
               }
             },
@@ -33305,7 +33305,7 @@
                 }
               }
             },
-            "description": "Warehouse pipeline not found"
+            "description": "Warehouse pipeline or replicated table not found"
           },
           "409": {
             "content": {
@@ -33335,7 +33335,7 @@
                 }
               }
             },
-            "description": "Layout update unavailable or outcome uncertain; inspect the saved layout, pipeline and table state before retrying"
+            "description": "Layout update unavailable or outcome uncertain; inspect the saved layout, pipeline, and table state before retrying"
           }
         },
         "security": [
@@ -33365,37 +33365,7 @@
         "x-oauth-scope": "database:write",
         "x-operation": {
           "group": "warehouse.tables.layout",
-          "method": "update",
-          "wait": {
-            "checks": [
-              {
-                "failed": ["error"],
-                "matches": ["/data/attributes/name", "/data/attributes/schema", "/data/id"],
-                "params": {
-                  "table_id": "/data/id"
-                },
-                "read": "v2-get-warehouse-table",
-                "status": "/data/attributes/status",
-                "succeeded": ["live"]
-              }
-            ],
-            "description": "Wait for the accepted layout to remain saved, a catalog observation to be available, and the table to be live. Checks readiness, not catalog convergence or completion of this specific update.",
-            "failed": [],
-            "matches": [
-              "/data/attributes/desired",
-              "/data/attributes/name",
-              "/data/attributes/pipeline_id",
-              "/data/attributes/schema",
-              "/data/id"
-            ],
-            "params": {
-              "table_id": "/data/id"
-            },
-            "present": ["/data/attributes/observed"],
-            "read": "v2-get-warehouse-table-layout",
-            "status": "/data/attributes/observation_status",
-            "succeeded": ["observed"]
-          }
+          "method": "update"
         },
         "x-scalar-stability": "experimental"
       }
@@ -49705,7 +49675,6 @@
                       },
                       "sort_by": {
                         "description": "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
-                        "nullable": true,
                         "oneOf": [
                           {
                             "properties": {
@@ -49759,6 +49728,461 @@
                             },
                             "required": ["columns", "kind"],
                             "type": "object"
+                          },
+                          {
+                            "type": "object",
+                            "nullable": true,
+                            "enum": [null]
+                          }
+                        ]
+                      }
+                    },
+                    "required": ["partition_by", "sort_by"],
+                    "type": "object"
+                  },
+                  "name": {
+                    "description": "Source PostgreSQL table name.",
+                    "type": "string"
+                  },
+                  "observation_status": {
+                    "description": "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, unavailable when the catalog could not be read, and not_requested when an update returned without reading the catalog.",
+                    "enum": ["not_requested", "observed", "table_missing", "unavailable"],
+                    "type": "string"
+                  },
+                  "observed": {
+                    "description": "Layout recorded in the DuckLake catalog, null unless observation_status is observed. Catalog metadata governs files written after it changes and does not establish that existing files are sorted or partitioned.",
+                    "nullable": true,
+                    "properties": {
+                      "observed_at": {
+                        "description": "Time the catalog metadata was read.",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                        "type": "string"
+                      },
+                      "partition_by": {
+                        "description": "Active partition keys in key order, with transforms as the catalog reports them, for example bucket(16).",
+                        "items": {
+                          "properties": {
+                            "column": {
+                              "type": "string"
+                            },
+                            "transform": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["column", "transform"],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "sort_by": {
+                        "description": "Active sort expressions in key order, as the catalog reports them.",
+                        "items": {
+                          "properties": {
+                            "direction": {
+                              "type": "string"
+                            },
+                            "expression": {
+                              "type": "string"
+                            },
+                            "nulls": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["direction", "expression", "nulls"],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": ["observed_at", "partition_by", "sort_by"],
+                    "type": "object"
+                  },
+                  "pipeline_id": {
+                    "description": "Warehouse replication pipeline identity.",
+                    "type": "string"
+                  },
+                  "reset_table": {
+                    "description": "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+                    "type": "boolean"
+                  },
+                  "schema": {
+                    "description": "Source PostgreSQL schema of the table.",
+                    "type": "string"
+                  }
+                },
+                "required": ["desired", "name", "observation_status", "observed", "schema"],
+                "type": "object"
+              },
+              "id": {
+                "description": "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+                "example": "16385",
+                "maxLength": 10,
+                "pattern": "^[1-9]\\d*$",
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_table_layout"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseTableLayoutUpdateRequest": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "additionalProperties": false,
+                "properties": {
+                  "partition_by": {
+                    "description": "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "column": {
+                          "description": "Source column name.",
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "transform": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": ["identity"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": ["year"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": ["month"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": ["day"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "enum": ["hour"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["kind"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "count": {
+                                  "description": "Number of hash buckets.",
+                                  "exclusiveMinimum": true,
+                                  "maximum": 2147483647,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "kind": {
+                                  "enum": ["bucket"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["count", "kind"],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": ["column", "transform"],
+                      "type": "object"
+                    },
+                    "nullable": true,
+                    "type": "array"
+                  },
+                  "reset_table": {
+                    "description": "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+                    "type": "boolean"
+                  },
+                  "sort_by": {
+                    "description": "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "enum": ["none"],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind"],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "enum": ["primary_key"],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind"],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "columns": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "direction": {
+                                  "enum": ["asc", "desc"],
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "description": "Source column name.",
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "nulls": {
+                                  "description": "Null placement. Null uses DuckLake's default placement.",
+                                  "enum": ["first", "last", null],
+                                  "nullable": true,
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["direction", "name"],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "kind": {
+                            "enum": ["columns"],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["columns", "kind"],
+                        "type": "object"
+                      },
+                      {
+                        "type": "object",
+                        "nullable": true,
+                        "enum": [null]
+                      }
+                    ]
+                  }
+                },
+                "type": "object"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_table_layout"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2WarehouseTableLayoutUpdateResponse_Output": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "application_status": {
+                    "description": "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+                    "type": "string"
+                  },
+                  "desired": {
+                    "description": "Saved layout rules. The replicator applies them on start and hourly, so they can differ from the observed layout.",
+                    "properties": {
+                      "partition_by": {
+                        "description": "Configured partition keys in order. An empty list explicitly clears partitioning; null leaves it unmanaged.",
+                        "items": {
+                          "properties": {
+                            "column": {
+                              "description": "Source column name.",
+                              "type": "string"
+                            },
+                            "transform": {
+                              "oneOf": [
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["identity"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["year"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["month"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["day"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "kind": {
+                                      "enum": ["hour"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "type": "object"
+                                },
+                                {
+                                  "properties": {
+                                    "count": {
+                                      "description": "Number of hash buckets.",
+                                      "exclusiveMinimum": true,
+                                      "maximum": 2147483647,
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "kind": {
+                                      "enum": ["bucket"],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["count", "kind"],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["column", "transform"],
+                          "type": "object"
+                        },
+                        "nullable": true,
+                        "type": "array"
+                      },
+                      "sort_by": {
+                        "description": "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": ["none"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["kind"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": ["primary_key"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["kind"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "columns": {
+                                "items": {
+                                  "properties": {
+                                    "direction": {
+                                      "enum": ["asc", "desc"],
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "description": "Source column name.",
+                                      "type": "string"
+                                    },
+                                    "nulls": {
+                                      "description": "Null placement. Null uses DuckLake's default placement.",
+                                      "enum": ["first", "last", null],
+                                      "nullable": true,
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["direction", "name", "nulls"],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "kind": {
+                                "enum": ["columns"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["columns", "kind"],
+                            "type": "object"
+                          },
+                          {
+                            "type": "object",
+                            "nullable": true,
+                            "enum": [null]
                           }
                         ]
                       }
@@ -49863,192 +50287,6 @@
               }
             },
             "required": ["attributes", "id", "type"],
-            "type": "object"
-          }
-        },
-        "required": ["data"],
-        "type": "object"
-      },
-      "V2WarehouseTableLayoutUpdateRequest": {
-        "properties": {
-          "data": {
-            "properties": {
-              "attributes": {
-                "additionalProperties": false,
-                "properties": {
-                  "partition_by": {
-                    "description": "Omit to preserve partitioning, null or an empty list to clear it, or supply all ordered partition keys.",
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "column": {
-                          "description": "Source column name.",
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "transform": {
-                          "oneOf": [
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "enum": ["identity"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["kind"],
-                              "type": "object"
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "enum": ["year"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["kind"],
-                              "type": "object"
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "enum": ["month"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["kind"],
-                              "type": "object"
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "enum": ["day"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["kind"],
-                              "type": "object"
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kind": {
-                                  "enum": ["hour"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["kind"],
-                              "type": "object"
-                            },
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "count": {
-                                  "description": "Number of hash buckets.",
-                                  "exclusiveMinimum": true,
-                                  "maximum": 2147483647,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "kind": {
-                                  "enum": ["bucket"],
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["count", "kind"],
-                              "type": "object"
-                            }
-                          ]
-                        }
-                      },
-                      "required": ["column", "transform"],
-                      "type": "object"
-                    },
-                    "nullable": true,
-                    "type": "array"
-                  },
-                  "reset_table": {
-                    "description": "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
-                    "type": "boolean"
-                  },
-                  "sort_by": {
-                    "description": "Omit to preserve sorting, null to clear it, or supply the complete sort selector.",
-                    "nullable": true,
-                    "oneOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "enum": ["none"],
-                            "type": "string"
-                          }
-                        },
-                        "required": ["kind"],
-                        "type": "object"
-                      },
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "enum": ["primary_key"],
-                            "type": "string"
-                          }
-                        },
-                        "required": ["kind"],
-                        "type": "object"
-                      },
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "columns": {
-                            "items": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "direction": {
-                                  "enum": ["asc", "desc"],
-                                  "type": "string"
-                                },
-                                "name": {
-                                  "description": "Source column name.",
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "nulls": {
-                                  "description": "Null placement. Null uses DuckLake's default placement.",
-                                  "enum": ["first", "last", null],
-                                  "nullable": true,
-                                  "type": "string"
-                                }
-                              },
-                              "required": ["direction", "name"],
-                              "type": "object"
-                            },
-                            "minItems": 1,
-                            "type": "array"
-                          },
-                          "kind": {
-                            "enum": ["columns"],
-                            "type": "string"
-                          }
-                        },
-                        "required": ["columns", "kind"],
-                        "type": "object"
-                      }
-                    ]
-                  }
-                },
-                "type": "object"
-              },
-              "type": {
-                "description": "Resource type.",
-                "enum": ["warehouse_table_layout"],
-                "type": "string"
-              }
-            },
-            "required": ["attributes", "type"],
             "type": "object"
           }
         },

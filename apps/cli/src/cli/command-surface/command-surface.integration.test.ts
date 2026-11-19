@@ -94,12 +94,12 @@ describe("command surface", () => {
         },
       });
       expect(Object.keys(update?.flags ?? {})).toEqual(
-        expect.arrayContaining(["body", "file", "dry-run", "reset-table", "wait", "timeout"]),
+        expect.arrayContaining(["body", "file", "dry-run", "reset-table"]),
       );
-      for (const flag of ["expected-revision", "idempotency-key"]) {
+      for (const flag of ["wait", "timeout", "expected-revision", "idempotency-key"]) {
         expect(update?.flags).not.toHaveProperty(flag);
       }
-      expect(titlesOf(update?.result)).toEqual(["response", "waited", "dryRun"]);
+      expect(titlesOf(update?.result)).toEqual(["response", "dryRun"]);
     }),
   );
 

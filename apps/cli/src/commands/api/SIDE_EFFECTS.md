@@ -62,7 +62,7 @@ can add:
 | `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
 | `GET`  | `/v1/branches/{id}`              | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                            |
 
-With `--wait`, the command also polls the read operations named in its reference entry.
+With `--wait`, the command also polls the read operation named in its reference entry.
 
 ### Request input
 
@@ -99,29 +99,7 @@ error).
   generated command, the hint names it with the identity the wait polled with, for example
   `supabase <noun> <read> --<identity-flag> <id> --remote=<ref>`. When the polled read is a hidden
   read, the hint names the command its `poll.inspect` operation generates, with only `--remote=<ref>`.
-- A readiness wait can require additional reads, non-null fields, and values that still match the
-  accepted mutation response. All reads must be ready; drift or missing match fields fails with
-  `operation_failed`. Object key order does not matter, but array order and nulls do.
-- Auxiliary failure states are checked even when the primary read is pending. After every read is
-  ready, the primary read is checked again. These separate observations cannot be atomic.
-- With `--wait`, stdout carries the final primary read response instead of the change response.
-
-For Warehouse layout updates, readiness means the accepted layout and pipeline/table identity
-remain saved, a catalog observation is available, and the table is live. Missing observations,
-syncing, unknown and stopped states remain pending; replication errors fail. The CLI sends PATCH
-once and polls both layout and table GETs. Success does not prove catalog convergence or completion
-of this specific update, and the final GET does not retain the PATCH reset history.
-
-### Readiness metadata
-
-A mutation can declare `x-operation.wait` instead of linking to a read's `poll` metadata.
-It specifies the primary `read`, `params` mapping read parameters to accepted-response JSON
-pointers, `status`, `succeeded`, `failed`, and a user-facing `description`. Optional `matches`
-pointers must remain equal to the accepted response; optional `present` pointers must be non-null.
-The `checks` array declares additional reads using the same fields except `description`.
-The primary read is also the returned result. Explicit readiness reads must be generated GET
-operations scoped by project ref. Generation validates all bindings and pointers, and rejects
-combining explicit waits with linked waits or self-polling metadata.
+- With `--wait`, stdout carries the final read response instead of the change response.
 
 ## Exit Codes
 

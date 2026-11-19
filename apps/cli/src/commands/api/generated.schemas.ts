@@ -1304,68 +1304,65 @@ export const apiCommandSchemas = {
                       type: ["array", "null"],
                     },
                     sort_by: {
-                      anyOf: [
+                      description:
+                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+                      oneOf: [
                         {
-                          description:
-                            "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
-                          oneOf: [
-                            {
-                              properties: {
-                                kind: {
-                                  enum: ["none"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
+                          properties: {
+                            kind: {
+                              enum: ["none"],
+                              type: "string",
                             },
-                            {
-                              properties: {
-                                kind: {
-                                  enum: ["primary_key"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              properties: {
-                                columns: {
-                                  items: {
-                                    properties: {
-                                      direction: {
-                                        enum: ["asc", "desc"],
-                                        type: "string",
-                                      },
-                                      name: {
-                                        description: "Source column name.",
-                                        type: "string",
-                                      },
-                                      nulls: {
-                                        description:
-                                          "Null placement. Null uses DuckLake's default placement.",
-                                        enum: ["first", "last", null],
-                                        type: ["string", "null"],
-                                      },
-                                    },
-                                    required: ["direction", "name", "nulls"],
-                                    type: "object",
-                                  },
-                                  type: "array",
-                                },
-                                kind: {
-                                  enum: ["columns"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["columns", "kind"],
-                              type: "object",
-                            },
-                          ],
+                          },
+                          required: ["kind"],
+                          type: "object",
                         },
                         {
-                          type: "null",
+                          properties: {
+                            kind: {
+                              enum: ["primary_key"],
+                              type: "string",
+                            },
+                          },
+                          required: ["kind"],
+                          type: "object",
+                        },
+                        {
+                          properties: {
+                            columns: {
+                              items: {
+                                properties: {
+                                  direction: {
+                                    enum: ["asc", "desc"],
+                                    type: "string",
+                                  },
+                                  name: {
+                                    description: "Source column name.",
+                                    type: "string",
+                                  },
+                                  nulls: {
+                                    description:
+                                      "Null placement. Null uses DuckLake's default placement.",
+                                    enum: ["first", "last", null],
+                                    type: ["string", "null"],
+                                  },
+                                },
+                                required: ["direction", "name", "nulls"],
+                                type: "object",
+                              },
+                              type: "array",
+                            },
+                            kind: {
+                              enum: ["columns"],
+                              type: "string",
+                            },
+                          },
+                          required: ["columns", "kind"],
+                          type: "object",
+                        },
+                        {
+                          type: ["object", "null"],
+                          enum: [null],
                         },
                       ],
                     },
@@ -1449,16 +1446,7 @@ export const apiCommandSchemas = {
                   type: "string",
                 },
               },
-              required: [
-                "application_status",
-                "desired",
-                "name",
-                "observation_status",
-                "observed",
-                "pipeline_id",
-                "reset_table",
-                "schema",
-              ],
+              required: ["desired", "name", "observation_status", "observed", "schema"],
               type: "object",
             },
             id: {
@@ -1685,7 +1673,7 @@ export const apiCommandSchemas = {
                 properties: {
                   partition_by: {
                     description:
-                      "Omit to preserve partitioning, null or an empty list to clear it, or supply all ordered partition keys.",
+                      "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
                     items: {
                       additionalProperties: false,
                       properties: {
@@ -1778,78 +1766,75 @@ export const apiCommandSchemas = {
                   },
                   reset_table: {
                     description:
-                      "Defaults to false, preserving historical files and replication progress. True resets and recopies this table when its layout changes, requires initial sync to be enabled, and disrupts reads during recopy. An unchanged layout never resets the table.",
+                      "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
                     type: "boolean",
                   },
                   sort_by: {
-                    anyOf: [
+                    description:
+                      "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                    oneOf: [
                       {
-                        description:
-                          "Omit to preserve sorting, null to clear it, or supply the complete sort selector.",
-                        oneOf: [
-                          {
-                            additionalProperties: false,
-                            properties: {
-                              kind: {
-                                enum: ["none"],
-                                type: "string",
-                              },
-                            },
-                            required: ["kind"],
-                            type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          kind: {
+                            enum: ["none"],
+                            type: "string",
                           },
-                          {
-                            additionalProperties: false,
-                            properties: {
-                              kind: {
-                                enum: ["primary_key"],
-                                type: "string",
-                              },
-                            },
-                            required: ["kind"],
-                            type: "object",
-                          },
-                          {
-                            additionalProperties: false,
-                            properties: {
-                              columns: {
-                                items: {
-                                  additionalProperties: false,
-                                  properties: {
-                                    direction: {
-                                      enum: ["asc", "desc"],
-                                      type: "string",
-                                    },
-                                    name: {
-                                      description: "Source column name.",
-                                      minLength: 1,
-                                      type: "string",
-                                    },
-                                    nulls: {
-                                      description:
-                                        "Null placement. Null uses DuckLake's default placement.",
-                                      enum: ["first", "last", null],
-                                      type: ["string", "null"],
-                                    },
-                                  },
-                                  required: ["direction", "name"],
-                                  type: "object",
-                                },
-                                minItems: 1,
-                                type: "array",
-                              },
-                              kind: {
-                                enum: ["columns"],
-                                type: "string",
-                              },
-                            },
-                            required: ["columns", "kind"],
-                            type: "object",
-                          },
-                        ],
+                        },
+                        required: ["kind"],
+                        type: "object",
                       },
                       {
-                        type: "null",
+                        additionalProperties: false,
+                        properties: {
+                          kind: {
+                            enum: ["primary_key"],
+                            type: "string",
+                          },
+                        },
+                        required: ["kind"],
+                        type: "object",
+                      },
+                      {
+                        additionalProperties: false,
+                        properties: {
+                          columns: {
+                            items: {
+                              additionalProperties: false,
+                              properties: {
+                                direction: {
+                                  enum: ["asc", "desc"],
+                                  type: "string",
+                                },
+                                name: {
+                                  description: "Source column name.",
+                                  minLength: 1,
+                                  type: "string",
+                                },
+                                nulls: {
+                                  description:
+                                    "Null placement. Null uses DuckLake's default placement.",
+                                  enum: ["first", "last", null],
+                                  type: ["string", "null"],
+                                },
+                              },
+                              required: ["direction", "name"],
+                              type: "object",
+                            },
+                            minItems: 1,
+                            type: "array",
+                          },
+                          kind: {
+                            enum: ["columns"],
+                            type: "string",
+                          },
+                        },
+                        required: ["columns", "kind"],
+                        type: "object",
+                      },
+                      {
+                        type: ["object", "null"],
+                        enum: [null],
                       },
                     ],
                   },
@@ -1972,68 +1957,65 @@ export const apiCommandSchemas = {
                       type: ["array", "null"],
                     },
                     sort_by: {
-                      anyOf: [
+                      description:
+                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+                      oneOf: [
                         {
-                          description:
-                            "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
-                          oneOf: [
-                            {
-                              properties: {
-                                kind: {
-                                  enum: ["none"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
+                          properties: {
+                            kind: {
+                              enum: ["none"],
+                              type: "string",
                             },
-                            {
-                              properties: {
-                                kind: {
-                                  enum: ["primary_key"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              properties: {
-                                columns: {
-                                  items: {
-                                    properties: {
-                                      direction: {
-                                        enum: ["asc", "desc"],
-                                        type: "string",
-                                      },
-                                      name: {
-                                        description: "Source column name.",
-                                        type: "string",
-                                      },
-                                      nulls: {
-                                        description:
-                                          "Null placement. Null uses DuckLake's default placement.",
-                                        enum: ["first", "last", null],
-                                        type: ["string", "null"],
-                                      },
-                                    },
-                                    required: ["direction", "name", "nulls"],
-                                    type: "object",
-                                  },
-                                  type: "array",
-                                },
-                                kind: {
-                                  enum: ["columns"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["columns", "kind"],
-                              type: "object",
-                            },
-                          ],
+                          },
+                          required: ["kind"],
+                          type: "object",
                         },
                         {
-                          type: "null",
+                          properties: {
+                            kind: {
+                              enum: ["primary_key"],
+                              type: "string",
+                            },
+                          },
+                          required: ["kind"],
+                          type: "object",
+                        },
+                        {
+                          properties: {
+                            columns: {
+                              items: {
+                                properties: {
+                                  direction: {
+                                    enum: ["asc", "desc"],
+                                    type: "string",
+                                  },
+                                  name: {
+                                    description: "Source column name.",
+                                    type: "string",
+                                  },
+                                  nulls: {
+                                    description:
+                                      "Null placement. Null uses DuckLake's default placement.",
+                                    enum: ["first", "last", null],
+                                    type: ["string", "null"],
+                                  },
+                                },
+                                required: ["direction", "name", "nulls"],
+                                type: "object",
+                              },
+                              type: "array",
+                            },
+                            kind: {
+                              enum: ["columns"],
+                              type: "string",
+                            },
+                          },
+                          required: ["columns", "kind"],
+                          type: "object",
+                        },
+                        {
+                          type: ["object", "null"],
+                          enum: [null],
                         },
                       ],
                     },
