@@ -128,6 +128,8 @@ const fixture = (
     readonly realtimeApiPort?: number;
     /** The stack serves its API port over TLS, so host clients get an `https` origin. */
     readonly apiTls?: boolean;
+    /** `--stack`; the fixture's only saved stack is the default one. */
+    readonly stack?: string;
     readonly savedFunctions?: Partial<ReturnType<typeof functionsConfig>>;
     readonly savedGotrueJwtKeys?: string;
     readonly savedJwks?: string;
@@ -369,7 +371,7 @@ const fixture = (
       create: () => Effect.die("unused"),
       open: () => Effect.succeed(stack),
       discover: () => Effect.die("unused"),
-      find: () =>
+      find: (findOptions) =>
         Effect.succeed(
           Option.some({
             definition: {
@@ -381,7 +383,7 @@ const fixture = (
               composition: { members: [], dependencies: [] },
             },
             host: undefined,
-          }),
+          }).pipe(Option.filter(() => !("name" in findOptions) || findOptions.name === undefined)),
         ),
       findDeleted: () => Effect.die("unused"),
     } satisfies StackApi["Service"];
@@ -393,7 +395,11 @@ const fixture = (
       BunCrypto.layer,
       recorder.layer,
       api,
-      mockCommandSettings({ workdir: projectRoot, supabaseHome: "/home" }),
+      mockCommandSettings({
+        workdir: projectRoot,
+        supabaseHome: "/home",
+        ...(options.stack === undefined ? {} : { stack: options.stack }),
+      }),
       mockRuntimeInfo({ cwd: projectRoot, homeDir: "/home" }),
       output.layer,
       signalControl.layer,
@@ -425,6 +431,19 @@ const fixture = (
   });
 
 describe("experimental Stack Functions serve", () => {
+  it.live("names a --stack that does not exist instead of serving the default stack", () =>
+    Effect.gen(function* () {
+      const state = yield* fixture({ stack: "feature" });
+      const error = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.flip,
+      );
+      expect(error.message).toBe('The local stack "feature" does not exist for this project.');
+      expect(error.suggestion).toBe("Run supabase start --stack feature.");
+      expect(state.createdFunctions).toBeUndefined();
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.live(
     "delegates standalone Functions credentials to the stack and forwards local verification keys",
     () =>

@@ -114,7 +114,7 @@ describe("domains activate integration", () => {
       });
       expect(api.requests).toHaveLength(1);
       assertPermissionDrift({ command: "domains activate", requests: api.requests });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

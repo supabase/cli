@@ -1,6 +1,6 @@
 # `supabase logs` and `supabase logs sources`
 
-Both commands default to the local stack. `--remote` selects the linked project; `--remote=<ref|branch>` selects another project or a branch. Reads are consent-exempt. SQL requires a hosted target.
+Both commands default to the local stack. `--stack` selects a local stack by name, else by ID or unique ID prefix, with `SUPABASE_STACK` as its fallback; the hidden `--stack-id` is its deprecated alias, prints a deprecation line on stderr, and cannot be combined with `--stack`. `--remote` selects the linked project; `--remote=<ref|branch>` selects another project or a branch. Reads are consent-exempt. SQL requires a hosted target.
 
 ## Files read
 
@@ -32,7 +32,7 @@ No background polling runs. Interactive `L` starts one finite load through a new
 
 ## Environment variables
 
-Shared settings use `SUPABASE_HOME`, `SUPABASE_WORKDIR`, `SUPABASE_PROJECT_ID`, `SUPABASE_PROFILE`, `SUPABASE_ACCESS_TOKEN`, and standard telemetry configuration. Capability discovery follows `SUPABASE_EXPERIMENTAL_STACK` and `SUPABASE_EXPERIMENTAL_COMPUTE` with project config fallback. `CI` and `TERM` also control browser eligibility. No new environment variable is introduced.
+Shared settings use `SUPABASE_HOME`, `SUPABASE_WORKDIR`, `SUPABASE_PROJECT_ID`, `SUPABASE_PROFILE`, `SUPABASE_ACCESS_TOKEN`, and standard telemetry configuration. Capability discovery follows `SUPABASE_EXPERIMENTAL_STACK` and `SUPABASE_EXPERIMENTAL_COMPUTE` with project config fallback. `CI` and `TERM` also control browser eligibility. `SUPABASE_STACK` selects the local stack when `--stack` is not passed; as an ID it only selects a stack of the current project.
 
 ## Exit codes
 

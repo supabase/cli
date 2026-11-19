@@ -1612,9 +1612,11 @@ describe("db dump integration", () => {
   }
 
   describe("managed stack dump", () => {
+    /* The stack lookup canonicalizes the project root, so it must exist on disk. */
+    const projectDir = useTempWorkdir("db-dump-stack-");
     for (const runtime of ["native", "docker"] as const) {
       it.effect(`streams schema output through the ${runtime} stack tool`, () => {
-        const { layer, out } = setup({ isLocal: true, stdout: "" });
+        const { layer, out } = setup({ isLocal: true, stdout: "", workdir: projectDir.current });
         return Effect.gen(function* () {
           yield* dbDump(flags());
           expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');

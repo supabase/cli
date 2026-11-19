@@ -134,6 +134,8 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     /** Selects the `stack` backend; omitted/false keeps the legacy default. */
     readonly stackBackend?: boolean;
     readonly stackApi?: SetupStorageStackApiOptions;
+    /** `--stack`. */
+    readonly stack?: string;
     /** Records the Management API requests through the real factory and runs the real linked-project cache. */
     readonly recordManagementApi?: boolean;
   },
@@ -278,7 +280,11 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     httpLayer,
     telemetry.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
+    mockCommandSettings({
+      workdir,
+      explicitWorkdir: opts.explicitWorkdir ?? false,
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
+    }),
     BunServices.layer,
     BunCrypto.layer,
     recorder.layer,
@@ -3053,6 +3059,66 @@ describe("stack backend", () => {
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
       expect(requests.some((r) => r.url.includes("/storage/v1/object/"))).toBe(true);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("names a missing --stack even when there is nothing to seed", () =>
+    Effect.gen(function* () {
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        stackBackend: true,
+        stack: "feature",
+        stackApi: { found: false },
+      });
+      const error = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'The local stack "feature" does not exist for this project.',
+      });
+      expect(requests).toEqual([]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("names a stopped --stack instead of suggesting the default stack", () =>
+    Effect.gen(function* () {
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.images]\npublic = true\n",
+        stackBackend: true,
+        stack: "feature",
+        stackApi: { lifecycle: "stopped" },
+      });
+      const error = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'The local stack "feature" is not running.',
+        suggestion: "Run supabase start --stack feature.",
+      });
+      expect(requests).toEqual([]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("keeps a failed Storage's restart advice on the --stack it selected", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.images]\npublic = true\n",
+        stackBackend: true,
+        stack: "feature",
+        stackApi: { storageState: "failed" },
+      });
+      const error = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error).toMatchObject({
+        suggestion: "Run supabase stack restart --stack feature, then retry.",
+      });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("keeps Storage's own advice for a --stack that is still starting", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.images]\npublic = true\n",
+        stackBackend: true,
+        stack: "feature",
+        stackApi: { lifecycle: "starting" },
+      });
+      const error = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error).toMatchObject({ suggestion: "The stack is still starting; retry shortly." });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

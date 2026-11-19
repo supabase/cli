@@ -95,7 +95,7 @@ describe("functions new (stack e2e)", () => {
           yield* Effect.addFinalizer(() =>
             stackId === undefined
               ? Effect.void
-              : runSupabaseEffect(["stack", "destroy", "--stack-id", stackId, "--yes"], {
+              : runSupabaseEffect(["stack", "destroy", "--stack", stackId, "--yes"], {
                   cwd: projectDir,
                   home: home.dir,
                   env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -130,7 +130,7 @@ describe("functions new (stack e2e)", () => {
           stackId = startResult.id;
 
           const status = yield* runSupabaseEffect(
-            ["stack", "status", "--env", "--stack-id", stackId, "--output-format", "json"],
+            ["stack", "status", "--env", "--stack", stackId, "--output-format", "json"],
             {
               cwd: projectDir,
               home: home.dir,

@@ -258,11 +258,11 @@ describe("targetFlags", () => {
 
   it("describes --remote by what the command can target", () => {
     expect(describeFlag(withDbUrl.remote).description).toBe(
-      "Target a remote database: the linked project, or --remote=<ref|branch|url>.",
+      "Target a remote database: the linked project, or `--remote=<ref|branch|url>`.",
     );
     expect(
       describeFlag(targetFlags({ subject: "Storage API", dbUrl: false }).remote).description,
-    ).toBe("Target a remote Storage API: the linked project, or --remote=<ref|branch>.");
+    ).toBe("Target a remote Storage API: the linked project, or `--remote=<ref|branch>`.");
   });
 });
 
@@ -305,14 +305,14 @@ describe("projectTargetFlags", () => {
         "--remote takes a project ref.",
       );
       expect(describeFlag(parent.remote).description).toBe(
-        "Target another project: --remote=<ref>. Defaults to the linked project.",
+        "Target another project: `--remote=<ref>`. Defaults to the linked project.",
       );
     }),
   );
 
   it("describes --remote as another project and hides --project-ref", () => {
     expect(describeFlag(hosted.remote).description).toBe(
-      "Target another project: --remote=<ref|branch>. Defaults to the linked project.",
+      "Target another project: `--remote=<ref|branch>`. Defaults to the linked project.",
     );
     expect(describeFlag(hosted.projectRef).hidden).toBe(true);
   });
@@ -361,7 +361,7 @@ describe("isRemoteFlag", () => {
 describe("seedTargetGlobalFlags", () => {
   it("takes a ref or a branch, never a database URL", () => {
     expect(describeFlag(seedTargetGlobalFlags.remote.flag).description).toBe(
-      "Target a remote Storage API: the linked project, or --remote=<ref|branch>.",
+      "Target a remote Storage API: the linked project, or `--remote=<ref|branch>`.",
     );
   });
 

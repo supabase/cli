@@ -52,7 +52,7 @@ older than one that already migrated it. The failure names the recorded and refu
 the remedies: pinning the recorded version in `supabase/config.toml`
 (`[local.services.<service>] version`, with `[db] major_version` set back when the database major
 differs and any `[db] orioledb_version` removed when an OrioleDB build is requested), or
-`supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
+`supabase stack destroy --stack <id>`, which permanently deletes the stack's local database
 data. Data with no recorded identity offers only the destroy. The check is skipped when nothing was
 written, the span records `lock.data_conflict_count`, and saved state that cannot be read is logged
 at debug level without failing the command.

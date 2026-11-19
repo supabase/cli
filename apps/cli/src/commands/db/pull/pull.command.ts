@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -20,6 +21,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   name: Argument.String("migration name").pipe(
@@ -43,6 +45,7 @@ const config = {
   }),
   diffEngine: Flag.Literals("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "pg-delta" }),
     Flag.optional,
   ),
   strictCoverage: Flag.Boolean("strict-coverage").pipe(
@@ -100,24 +103,6 @@ export const dbPullCommand = Command.make("pull", config).pipe(
     "Migration mode compares supabase/migrations with the selected live database (the local database by default, or the one --remote selects), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
   Command.withShortDescription("Pull schema from a database"),
-  withPermissions(
-    compose(
-      {
-        operations: [],
-        noApiEffectFlags: [
-          "declarative",
-          "use-pg-delta",
-          "diff-engine",
-          "strict-coverage",
-          "schema",
-        ],
-      },
-      dbConfig,
-      dbConfigPoolerFallback,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) => {
     const rejectRemoved = <E, R>(rejection: Effect.Effect<never, E, R>) =>
       rejection.pipe(
@@ -151,4 +136,23 @@ export const dbPullCommand = Command.make("pull", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "declarative",
+          "use-pg-delta",
+          "diff-engine",
+          "strict-coverage",
+          "schema",
+        ],
+      },
+      dbConfig,
+      dbConfigPoolerFallback,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

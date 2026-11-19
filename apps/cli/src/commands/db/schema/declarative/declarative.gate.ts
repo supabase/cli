@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import { aqua, bold } from "../../../../command-internal/colors.ts";
 import { configSetting } from "../../../../command-internal/config-advice.ts";
 import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
+import { defineExperimentalAccess } from "../../../../command-internal/command-access-policy.ts";
 
 /**
  * Whether the declarative (pg-delta) code paths are enabled: the gate is open when either the
@@ -29,15 +30,18 @@ export function pgDeltaSuggestion(configPath: string, configFormat: ConfigFormat
  * handler's own mutually-exclusive-flags check — a closed gate wins over a flag conflict, not
  * the other way around.
  */
-export const requirePgDelta = Effect.fnUntraced(function* (opts: {
-  readonly experimental: boolean;
-  readonly pgDeltaEnabled: boolean;
-  readonly configPath: string;
-  readonly configFormat?: ConfigFormat;
-}) {
-  if (isPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
-  return yield* new DeclarativeNotEnabledError({
-    message: "declarative commands require --experimental flag or pg-delta enabled in config",
-    suggestion: pgDeltaSuggestion(opts.configPath, opts.configFormat),
-  });
+export const pgDeltaAccess = defineExperimentalAccess({
+  experimental: "optional",
+  check: Effect.fnUntraced(function* (opts: {
+    readonly experimental: boolean;
+    readonly pgDeltaEnabled: boolean;
+    readonly configPath: string;
+    readonly configFormat?: ConfigFormat;
+  }) {
+    if (isPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
+    return yield* new DeclarativeNotEnabledError({
+      message: "declarative commands require --experimental flag or pg-delta enabled in config",
+      suggestion: pgDeltaSuggestion(opts.configPath, opts.configFormat),
+    });
+  }),
 });

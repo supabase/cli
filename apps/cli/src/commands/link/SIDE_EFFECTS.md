@@ -247,7 +247,7 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
   the remedies: pinning the recorded version in your config file
   (`local.services.<service>.version`, with `db.major_version` set back when the database major
   differs and any `db.orioledb_version` removed when an OrioleDB build is requested), or
-  `supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
+  `supabase stack destroy --stack <id>`, which permanently deletes the stack's local database
   data (data with no recorded identity offers only the destroy). The lock stays written, the link
   never fails on this check, and saved state that cannot be read is logged at debug level and
   warns of nothing.
