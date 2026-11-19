@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import {
   experimentalProjectLiveFlags,
   type LiveFixtures,
+  queryLiveDb,
   requireLiveSuccess,
   test,
   throwWithCleanup,
@@ -15,10 +16,11 @@ type LiveRun = Awaited<ReturnType<LiveFixtures["cli"]>>;
 // Bound the polled gets and the restore so one hung subprocess cannot exhaust
 // the live testTimeout and leave the shared project with a flipped posture.
 const POLL_ATTEMPT_EXIT_TIMEOUT_MS = 20_000;
+const DB_PROBE_TIMEOUT_MS = 10_000;
 const RESTORE_EXIT_TIMEOUT_MS = 60_000;
 const PROOF_INTERVAL_MS = 2_000;
 const PROOF_TIMEOUT_MS = 60_000;
-// Fits the worst case (bounded capture/toggle + two proofs + restore) with headroom.
+// Fits the worst case (bounded capture/toggle + proofs and readiness waits + restore) with headroom.
 const LIVE_TIMEOUT_MS = 600_000;
 
 const SslEnforcementPosture = Schema.Struct({
@@ -108,6 +110,31 @@ function expectApplied(
   );
 }
 
+// get can report the posture applied while Postgres is still restarting, so wait until the
+// database answers; this holds whether or not the change restarts the postmaster.
+function expectDatabaseReady(dbUrl: string, label: string) {
+  return Effect.tryPromise({
+    try: () => queryLiveDb(dbUrl, "select 1", undefined, DB_PROBE_TIMEOUT_MS),
+    catch: (error) =>
+      new SslEnforcementLiveError({
+        message: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        cause: error,
+      }),
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: DB_PROBE_TIMEOUT_MS,
+      orElse: () =>
+        Effect.fail(
+          new SslEnforcementLiveError({
+            message: `${label}: no answer within ${DB_PROBE_TIMEOUT_MS}ms`,
+          }),
+        ),
+    }),
+    Effect.retry(proofSchedule),
+    Effect.asVoid,
+  );
+}
+
 // Not wired to the test `signal`: an interrupt SIGKILLs an in-flight restore
 // mid-request (the run's scope release kills the process group), so letting the
 // bounded restore run out is strictly safer.
@@ -154,6 +181,10 @@ test(
             !posture,
             "ssl-enforcement get proof for ssl-enforcement update",
           );
+          yield* expectDatabaseReady(
+            project.dbUrl,
+            "database readiness after ssl-enforcement update",
+          );
         });
         const toggleExit = yield* Effect.exit(toggle);
 
@@ -168,6 +199,10 @@ test(
             flags,
             posture,
             "ssl-enforcement get proof of the restored posture for ssl-enforcement update",
+          );
+          yield* expectDatabaseReady(
+            project.dbUrl,
+            "database readiness after the ssl-enforcement update restore",
           );
         });
 
