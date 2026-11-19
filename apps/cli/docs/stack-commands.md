@@ -293,8 +293,7 @@ primary database without changing other services (webhooks setup only, creating 
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 A local `db reset` and declarative resets rebuild the existing database while retaining stack
-identity, ports, and composition. See
-[`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
+identity, ports, and composition.
 
 A local `gen types` and `inspect db …` resolve the project stack through the same
 local database target as `db dump`. They do not start a stack.
@@ -436,9 +435,21 @@ release line or major) is refused. The refusal offers to keep the data by pinnin
 `local.services.database.version` in your config file, setting `db.major_version` back when the major differs and removing any
 `db.orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
-data. A database that never initialized adopts the change. See the [`start` side
-effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
-details.
+data. A database that never initialized adopts the change.
+
+The project lease is `supabase/.supabase.lock.lease`; the CLI adds it and the lock's staged writes
+(`.supabase.lock.*.tmp`) to `supabase/.gitignore` whenever it takes the lease. Lock writes are
+atomic renames, so a frozen start reads the lock without the lease and never sees a partial file.
+When a `linked` service's observed release cannot be fetched because the release host is
+unreachable, the start keeps going with the bundled version, recorded as `unobserved`, and warns;
+any other failed resolution fails the start and writes nothing.
+
+`supabase db reset`, the shadow database of `supabase db diff`, and the temporary Functions instance
+of `supabase functions serve` read the lock without the lease and never resolve. Without a lock they
+use the bundled versions, honouring `[db] major_version`, `orioledb_version`, and a bundled
+`[local.services]` database version; any other explicit version fails with `supabase/supabase.lock
+not found; run supabase start to create it`, and a stale lock fails with `is stale for: <service>
+(<reason>)`.
 
 ## Port intents
 
@@ -548,9 +559,7 @@ core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is
 safe here since a first-start stack has no pre-existing buckets. Any other unusable Storage state,
 a missing capability/endpoint, a gateway activation failure, or an invalid bucket entry fails the
-`start` command; startup does not silently skip the configured seed. See
-[`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
+`start` command; startup does not silently skip the configured seed.
 
 **A local `db reset` and declarative reset** reapply the catalog, migrations, and seeds before
 resuming the saved composition. Bucket-seeding failures warn after the database reset succeeds.
-See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).

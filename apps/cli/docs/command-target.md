@@ -2,11 +2,11 @@
 
 Every command that acts on a database or hosted project announces the target it resolved, once, before it acts. The same identity goes to machine consumers as the JSON `target` object.
 
-This page is the shared reference for how a command's target is chosen, which errors the selection raises, the deprecated selector flags, how a hosted write is confirmed, and what the banner and the JSON `target` carry. [ADR 0033](../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) records why. The `SIDE_EFFECTS.md` of every `hosted`, `selectable` and `account` command opens with a `Target:` line that links here and lists only what is specific to that command: its own calls, files, exit codes and prompt, and any selector rule that differs from this page. A `local-only` command has no `Target:` line.
+This page is the shared reference for how a command's target is chosen, which errors the selection raises, the deprecated selector flags, how a hosted write is confirmed, and what the banner and the JSON `target` carry. [ADR 0033](../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) records why.
 
 ## Groups
 
-The `Target:` line names the command's group and its consent default: `Target: <group>, consent default <No|Yes>`, or `Target: <group>, no consent` when the command never asks for hosted-mutation consent. A document that covers several subcommands gives each one's default.
+Every command belongs to one group, which decides what it acts on when no target is given and which selector flags it takes. A command that writes to a hosted project also has a consent default.
 
 | Group        | Acts on                         | With no `--remote` | Selector flags                                                               |
 | ------------ | ------------------------------- | ------------------ | ---------------------------------------------------------------------------- |
@@ -90,8 +90,6 @@ A selector conflict lists only the selector flags the command has: `Only one of 
 
 - `--remote=<url>`: `--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`
 - the local default: `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.`, followed by `To use the linked project instead, pass --remote.` in a linked checkout.
-
-A command's own `SIDE_EFFECTS.md` records where else its password can come from and when it is withheld from a target.
 
 ## Deprecated selector flags
 

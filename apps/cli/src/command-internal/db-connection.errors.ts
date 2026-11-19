@@ -74,8 +74,8 @@ export class DbExecError extends Data.TaggedError("DbExecError")<{
 /**
  * A server-side `COPY (...) TO STDOUT` stream failed. The report handler maps a later
  * file-write failure to its own separate error, since bytes are collected before the output
- * file is opened. See `inspect/report/SIDE_EFFECTS.md`, "Divergence on the query that was in
- * flight when `COPY` failed", for the on-disk consequences.
+ * file is opened: a failed query writes no file, and a same-day re-run leaves the previous
+ * run's CSV for that query in place.
  */
 export class DbCopyError extends Data.TaggedError("DbCopyError")<{
   readonly message: string;

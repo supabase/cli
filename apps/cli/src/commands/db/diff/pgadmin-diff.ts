@@ -9,7 +9,7 @@
  * Each differ run's stdout is parsed and aggregated separately rather than
  * concatenated across runs and parsed once, which would turn a multi-`--schema`
  * diff, where every run parses fine on its own, into a spurious JSON
- * "trailing data" failure. See `SIDE_EFFECTS.md` for the user-facing behavior.
+ * "trailing data" failure.
  */
 
 import { Effect, Option, Result } from "effect";

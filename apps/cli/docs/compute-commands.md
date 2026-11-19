@@ -59,3 +59,33 @@ confirmation first, and both default to no. `compute delete` asks for the
 compute's name to be typed back. Pass `--yes`, or set `SUPABASE_YES` in your
 shell, to confirm in scripts and CI; without it, a run that cannot prompt fails
 before changing anything.
+
+## Excluding files from the build context
+
+`compute push` packages a compute's source directory into the build context, minus the paths
+that `[compute.<name>] exclude` matches. Patterns read the way `.gitignore` reads them:
+
+- A pattern without `/` matches that name at any depth; one with `/` is anchored at the
+  compute's source directory.
+- A trailing `/` matches directories only. Repeated trailing separators count as one, so
+  `dist/` and `dist//` are the same pattern.
+- `**` spans directories. Within one segment, `*`, `?` and character classes such as `[a-z]`
+  work as in the CLI's other glob options.
+
+An excluded directory is not descended into, so everything beneath it is out too, and the
+`excluded <n> paths` count on the packaged line counts the directory, not its contents. For
+the same reason, a trailing `**` matches what is inside a directory rather than the directory
+itself: `cache/**` empties `cache` and keeps the directory, while `cache` removes it.
+
+Re-inclusion with `!` is refused rather than read as a file name: a pattern re-admitting a
+path beneath an excluded directory could never be reached. Empty patterns, empty path
+segments (`src//dist`) and malformed character classes are refused too. Every refusal names
+the compute and the pattern, and happens before anything is packaged or uploaded.
+
+`compute push` applies only the patterns recorded in the config; it has no built-in defaults,
+so a compute without an `exclude` key uploads its whole source directory. `compute new`
+writes the selected runtime's default list into `config.toml`, where it can be edited.
+
+A source whose every file is excluded fails before upload with an error naming the patterns.
+An excluded symbolic link is skipped before the CLI checks whether it points outside the
+source directory, so excluding a hoisted `node_modules` link resolves the escaping-link error.

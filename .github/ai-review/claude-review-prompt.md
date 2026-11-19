@@ -113,7 +113,8 @@ errors, even when that is the fix the PR set out to make. Use category
 `type(scope)!:` title, a `BREAKING CHANGE:` line in the PR description and, on
 `develop`, a retarget to `next`. Do not report internal code, tests, CI,
 additive changes, experimental commands, newly rejected values that never had a
-meaning, or fixes that match the old `SIDE_EFFECTS.md`.
+meaning, or fixes that restore behavior the base branch's tests assert or a
+release shipped.
 
 ## Output
 

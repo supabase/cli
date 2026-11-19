@@ -313,7 +313,7 @@ const settingKeyLabel = (
 
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
- * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
+ * `stack_changes` entries. `editable` marks whether `key` is a
  * config key or env var the user can revert, or plain wording otherwise.
  */
 interface StructuredSettingChange {
@@ -453,7 +453,7 @@ const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new
  * The exact `supabase stack destroy` invocation that recreates this stack. Always targets the
  * full ID: a name re-resolves against the caller's current `--workdir`, which can point at a
  * different project's stack of the same name. Omits `--yes` on purpose, since destroying deletes
- * local database data (details in `SIDE_EFFECTS.md`).
+ * local database data.
  */
 const destroyCommandFor = (id: string): string => `supabase stack destroy --stack ${id}`;
 

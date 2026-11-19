@@ -22,7 +22,7 @@ export interface PullStepResult {
   readonly status: PullStepStatus;
   /** Workdir-relative paths written by this step. Empty when nothing was written. */
   readonly written: ReadonlyArray<string>;
-  /** Per-step machine detail; shape varies by step. See SIDE_EFFECTS.md's JSON payload shape. */
+  /** Per-step machine detail; shape varies by step. */
   readonly detail: Record<string, unknown>;
   /** Present for `status: "skipped"` (e.g. "not_needed", "--with-migration-history not set"). */
   readonly reason?: string;

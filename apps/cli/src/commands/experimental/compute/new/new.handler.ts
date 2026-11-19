@@ -338,7 +338,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     });
 
     const instances = recordedInstances(flags.instances);
-    // Recorded in `config.toml` rather than applied at push time; see ./SIDE_EFFECTS.md.
+    // Recorded in `config.toml` because `compute push` has no built-in exclusions.
     const exclude = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
 
     // Validated before anything is written: this is the directory the starter files

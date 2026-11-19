@@ -22,7 +22,6 @@ src/commands/<command>/
   <command>.command.ts   # command definition, flags, layer provision
   <command>.handler.ts   # command implementation
   <command>.errors.ts    # domain errors
-  SIDE_EFFECTS.md        # required compatibility contract
 ```
 
 Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
@@ -59,15 +58,12 @@ limits; put richer content in reference page bodies.
 
 The established CLI surface is a contract: command paths, flags, output text and streams,
 filesystem paths, API routes and request shapes, exit codes, and telemetry event timing and
-payloads. Use current tests, command `SIDE_EFFECTS.md`, and shipped behavior as the source of
-truth. Update tests and side-effect documentation with intentional behavior changes.
+payloads. Use current tests, shipped behavior, and generated references such as the command
+reference, error-tag and telemetry snapshots as the source of truth. Update tests, snapshots, and
+user docs with intentional behavior changes.
 
 State locations are also public: preserve `~/.supabase/…`, `<workdir>/supabase/.temp/…`, and
 native keyring entries. Do not move or rename them.
-
-Every command has a `SIDE_EFFECTS.md` based on the [template](src/SIDE_EFFECTS_TEMPLATE.md), documenting exact
-files and formats, API calls and shapes, environment variables, and exit codes. Keep it accurate;
-it is the command compatibility checklist and an input to E2E coverage.
 
 Every applicable command must preserve these invariants:
 
@@ -107,8 +103,6 @@ rather than deleting it; `db remote commit` is the reference:
 - Keep the old flag and argument config so existing invocations reach the removal error, not a
   parse error, and register the command with `Command.unlisted`.
 - Delete the handler, its tests, and its docs pages, and remove its `withDeprecated` annotation.
-- `SIDE_EFFECTS.md` documents exit 1, the removal message and suggestion, and the post-run
-  `telemetry.json` read and write under `SUPABASE_HOME`.
 - Test every tombstone through the real parser with and without its old flags, asserting the
   `RemovedSurfaceError` message and suggestion.
 
@@ -198,7 +192,7 @@ Experimental paths may change outside the stable compatibility promise, but befo
 family identify published config, disk, server, and telemetry boundaries and record the approved
 compatibility decision in the PR. For the Compute transition, no local compatibility aliases or
 migrations are required. Compute error tags intentionally start new fingerprints; server-owned
-contracts remain unchanged. Update tests, generated schemas, and side-effect documentation.
+contracts remain unchanged. Update tests, generated schemas, and user docs.
 
 ## Telemetry
 
@@ -225,8 +219,8 @@ path-valued `--output` remains redacted. Keep free-form user content redacted.
 Do not remove, rename, or reshape custom events. Preserve login aliasing after token persistence,
 link project and organization identity after the link write (including branch-link metadata),
 stack-started after health succeeds, and upgrade-suggested billing-gate events with their existing
-envelope and payload semantics. Use the catalog and the relevant command `SIDE_EFFECTS.md` for
-the complete current event contract.
+envelope and payload semantics. Use the catalog and the telemetry tests for the complete current
+event contract.
 
 ## Error classification
 

@@ -7,8 +7,8 @@ export const SQUASH_SEPARATOR_COMMENT =
 
 /**
  * Splits `text` on `\n`, drops the trailing empty token a final `\n` would produce,
- * and strips one trailing `\r` from each token. Does not enforce a max token size;
- * see SIDE_EFFECTS.md.
+ * and strips one trailing `\r` from each token. Does not enforce a max token size, so a
+ * dumped line longer than 64 KiB is written in full.
  */
 export function squashScanLines(text: string): ReadonlyArray<string> {
   if (text.length === 0) return [];
