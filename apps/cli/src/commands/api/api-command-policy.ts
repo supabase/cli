@@ -29,7 +29,6 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
 ];
 
 export interface ApiCommandPolicy {
-  readonly dryRun?: false;
   readonly confirmDescription?: true;
 }
 
@@ -37,7 +36,7 @@ export interface ApiCommandPolicy {
 export const commandPolicies = {
   "v2-add-warehouse-replication": { confirmDescription: true },
   "v2-remove-warehouse-replication": { confirmDescription: true },
-  "v2-resync-warehouse-replication": { dryRun: false, confirmDescription: true },
+  "v2-resync-warehouse-replication": { confirmDescription: true },
 } satisfies Partial<Record<OpenApiOperationId, ApiCommandPolicy>>;
 
 export const nouns = {

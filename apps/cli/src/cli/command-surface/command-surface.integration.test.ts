@@ -116,17 +116,13 @@ describe("command surface", () => {
       }),
   );
 
-  it.effect("omits unsupported resync preview results from the command surface", () =>
+  it.effect("describes local request preview results for every replication command", () =>
     Effect.gen(function* () {
       const warehouse = yield* warehouseVariant;
-      const resync = warehouse["warehouse replication resync"];
-      expect(resync?.flags).not.toHaveProperty("dry-run");
-      expect(titlesOf(resync?.result)).toEqual(["response"]);
-      for (const action of ["add", "remove"]) {
-        expect(titlesOf(warehouse[`warehouse replication ${action}`]?.result)).toEqual([
-          "response",
-          "dryRun",
-        ]);
+      for (const action of ["add", "remove", "resync"]) {
+        const command = warehouse[`warehouse replication ${action}`];
+        expect(command?.flags).toHaveProperty("dry-run");
+        expect(titlesOf(command?.result)).toEqual(["response", "dryRun"]);
       }
     }),
   );

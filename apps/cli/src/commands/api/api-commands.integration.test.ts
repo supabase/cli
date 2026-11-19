@@ -380,28 +380,28 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect.each([
-      "--dry-run",
-      "--idempotency-key=key",
-      "--expected-revision=1",
-      "--wait",
-      "--timeout=10s",
-    ])("rejects resync %s before a request", (flag) => {
-      const { console, calls } = fakeConsole();
-      const { sent, run } = setup(
-        ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders", flag],
-        { yes: true, route: accepted },
-      );
-      return Effect.gen(function* () {
-        const exit = yield* run.pipe(Effect.provideService(Console.Console, console), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(calls.join("\n")).toContain(flag.split("=")[0]);
-        expect(sent).toEqual([]);
-      });
-    });
+    it.effect.each(["--idempotency-key=key", "--expected-revision=1", "--wait", "--timeout=10s"])(
+      "rejects resync %s before a request",
+      (flag) => {
+        const { console, calls } = fakeConsole();
+        const { sent, run } = setup(
+          ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders", flag],
+          { yes: true, route: accepted },
+        );
+        return Effect.gen(function* () {
+          const exit = yield* run.pipe(
+            Effect.provideService(Console.Console, console),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(calls.join("\n")).toContain(flag.split("=")[0]);
+          expect(sent).toEqual([]);
+        });
+      },
+    );
 
     it.effect(
-      "shows rebuild and interruption effects in resync help without preview or wait flags",
+      "shows rebuild effects and local preview in resync help without server operation flags",
       () => {
         const { console, calls } = fakeConsole();
         const { sent, run } = setup(["warehouse", "replication", "resync", "--help"], {
@@ -414,13 +414,8 @@ describe("generated warehouse commands", () => {
           expect(help).toContain("interrupts replication for other tables");
           expect(help).toContain("--schema");
           expect(help).toContain("--table");
-          for (const flag of [
-            "--dry-run",
-            "--idempotency-key",
-            "--expected-revision",
-            "--wait",
-            "--timeout",
-          ])
+          expect(help).toContain("--dry-run");
+          for (const flag of ["--idempotency-key", "--expected-revision", "--wait", "--timeout"])
             expect(help).not.toContain(flag);
           expect(sent).toEqual([]);
         });
@@ -1537,26 +1532,40 @@ describe("generated warehouse commands", () => {
   });
 
   describe("consent and dry run", () => {
-    it.effect("prints exactly the request preview and sends nothing under --dry-run", () => {
-      const { out, sent, seen, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--table", "a", "--dry-run"],
-        { route: accepted },
-      );
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent).toEqual([]);
-        expect(seen).toEqual([]);
-        expect(decodeJson(out.stdoutText)).toEqual({
-          method: "POST",
-          path: ENABLE_PATH,
-          query: {},
-          headers: {},
-          body: {
-            data: { type: "warehouse_setup", attributes: { schema: "public", tables: ["a"] } },
-          },
+    it.effect.each([
+      {
+        command: ["enable"],
+        path: ENABLE_PATH,
+        type: "warehouse_setup",
+        attributes: { schema: "public", tables: ["a"] },
+      },
+      {
+        command: ["replication", "resync"],
+        path: `/v2/projects/${VALID_REF}/warehouse/replication/resync`,
+        type: "warehouse_replication_resync",
+        attributes: { schema: "public", table: "a" },
+      },
+    ])(
+      "$command prints exactly the request preview and sends nothing under --dry-run",
+      ({ command, path, type, attributes }) => {
+        const { out, sent, seen, run } = setup(
+          ["warehouse", ...command, "--schema", "public", "--table", "a", "--dry-run"],
+          { token: false, route: accepted },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([]);
+          expect(seen).toEqual([]);
+          expect(decodeJson(out.stdoutText)).toEqual({
+            method: "POST",
+            path,
+            query: {},
+            headers: {},
+            body: { data: { type, attributes } },
+          });
         });
-      });
-    });
+      },
+    );
 
     it.effect(
       "previews a mutation for a literal --remote ref with no access token, no request and no cache write",

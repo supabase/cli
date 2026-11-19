@@ -120,13 +120,13 @@ describe("deriveApiCommands", () => {
       "create-thing": operation({ ...create, description: "Rebuilds the thing." }),
     };
     const result = derive(operations, undefined, {
-      overrides: { policies: { "create-thing": { dryRun: false, confirmDescription: true } } },
+      overrides: { policies: { "create-thing": { confirmDescription: true } } },
     });
     expect(result.problems).toEqual([]);
-    expect(result.entries[0]).toMatchObject({ dryRun: false, confirmDescription: true });
+    expect(result.entries[0]).toMatchObject({ confirmDescription: true });
     expect(
       derive(operations, undefined, {
-        overrides: { policies: { "missing-thing": { dryRun: false } } },
+        overrides: { policies: { "missing-thing": { confirmDescription: true } } },
       }).problems,
     ).toEqual([expect.stringContaining("missing-thing")]);
   });

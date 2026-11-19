@@ -161,7 +161,6 @@ Resets replication for one selected source table using its currently saved layou
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Feature: `warehouse`.
-- Local request preview (`--dry-run`): unavailable.
 - Consent: prints the API description before the interactive confirmation.
 - Request: `POST /v2/projects/{ref}/warehouse/replication/resync` (`v2-resync-warehouse-replication`), success 202 json.
 - Body: JSON envelope `data.type = warehouse_replication_resync`, fields under `data.attributes`.

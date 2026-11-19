@@ -109,14 +109,10 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
           ),
         ),
       }),
-  ...(entry.dryRun === false
-    ? {}
-    : {
-        dryRun: Flag.Boolean("dry-run").pipe(
-          Flag.withDescription("Print the request that would be sent and send nothing."),
-          Flag.withDefault(false),
-        ),
-      }),
+  dryRun: Flag.Boolean("dry-run").pipe(
+    Flag.withDescription("Print the request that would be sent and send nothing."),
+    Flag.withDefault(false),
+  ),
   ...(!waitable
     ? {}
     : {
@@ -187,7 +183,7 @@ interface ApiCommandFlags {
   readonly argument?: string;
   readonly body?: Option.Option<string>;
   readonly file?: Option.Option<string>;
-  readonly dryRun?: boolean;
+  readonly dryRun: boolean;
   readonly wait?: boolean;
   readonly timeout?: string;
   readonly api: Parameters<typeof assembleInput>[2];
@@ -311,7 +307,7 @@ const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefine
         ]),
   ];
   const noApiEffectFlags = [
-    ...(entry.dryRun === false ? [] : ["dry-run"]),
+    "dry-run",
     ...(entry.body === undefined ? [] : ["body", "file"]),
     ...(resolved === undefined ? [] : ["timeout"]),
     ...(polled === entry.operationId ? ["wait"] : []),

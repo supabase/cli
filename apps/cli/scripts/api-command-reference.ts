@@ -150,7 +150,6 @@ const commandSection = (
     ...(entry.description === undefined ? [] : [prose(entry.description), ""]),
     `- Access: ${entry.readOnly ? "read-only, no consent" : "mutation, consent defaults to No (`--yes` when it cannot prompt)"}.`,
     `- Feature: ${code(entry.feature)}.`,
-    ...(entry.dryRun === false ? ["- Local request preview (`--dry-run`): unavailable."] : []),
     ...(entry.confirmDescription
       ? ["- Consent: prints the API description before the interactive confirmation."]
       : []),
