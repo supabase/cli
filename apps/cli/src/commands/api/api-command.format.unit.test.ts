@@ -37,4 +37,35 @@ describe("renderResponseText", () => {
   it("prints a clear line for an empty resource collection", () => {
     expect(renderResponseText({ data: [] })).toBe("No results\n");
   });
+
+  it.each([
+    { name: "scalar", item: (index: number): unknown => `sample-${index}` },
+    { name: "object", item: (index: number): unknown => ({ value: `sample-${index}` }) },
+  ])("shows the last 10 $name samples of a points series in response order", ({ item }) => {
+    const points = Array.from({ length: 12 }, (_, index) => item(index));
+    const output = renderResponseText({ points });
+    expect(output).not.toMatch(/sample-[01]\b/);
+    expect(output.indexOf("sample-2")).toBeGreaterThanOrEqual(0);
+    expect(output.indexOf("sample-2")).toBeLessThan(output.indexOf("sample-11"));
+    expect(output).toContain(
+      "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+    );
+    expect(renderResponseText({ points: points.slice(2) })).not.toContain("omitted");
+  });
+
+  it("bounds points series nested inside a top-level array of objects", () => {
+    const points = Array.from({ length: 12 }, (_, index) => `point-${index}`);
+    const output = renderResponseText([{ points }]);
+    expect(output).not.toMatch(/point-[01]\b/);
+    expect(output).toContain("point-11");
+    expect(output).toContain("2 omitted");
+  });
+
+  it("renders every item of an array that is not a points series", () => {
+    const tables = Array.from({ length: 12 }, (_, index) => ({ name: `table-${index}` }));
+    const output = renderResponseText({ tables });
+    expect(output).toContain("table-0");
+    expect(output).toContain("table-11");
+    expect(output).not.toContain("omitted");
+  });
 });

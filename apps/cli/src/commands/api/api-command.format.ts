@@ -2,6 +2,8 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import type { ApiRequestPreview } from "./api-command-request.ts";
 
 const INDENT = "  ";
+const SAMPLE_SERIES_KEY = "points";
+const SAMPLE_PREVIEW_LIMIT = 10;
 const ACRONYMS: ReadonlySet<string> = new Set(["id", "url", "fdw", "dns", "api", "sql", "tls"]);
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -86,35 +88,70 @@ const inlineText = (value: unknown): string | undefined => {
   if (Array.isArray(value)) {
     if (value.length === 0) return "-";
     if (value.every(isScalar)) return value.map(scalarText).join(", ");
-    return isObjectArray(value) ? undefined : compactJson(value);
+    return undefined;
   }
   return isObject(value) && Object.keys(value).length > 0 ? undefined : "-";
 };
 
 const blockLines = (entries: ReadonlyArray<readonly [string, unknown]>, indent: string) => {
-  const rows = entries.map(([key, value]) => ({
-    label: humanize(key),
-    value,
-    inline: inlineText(value),
-  }));
+  const rows = entries.map(([key, value]) => {
+    const series = key === SAMPLE_SERIES_KEY && Array.isArray(value) && value.length > 0;
+    return { label: humanize(key), value, series, inline: series ? undefined : inlineText(value) };
+  });
   const width = Math.max(
     0,
     ...rows.flatMap((row) => (row.inline === undefined ? [] : [row.label.length])),
   );
   const lines: Array<string> = [];
-  for (const { label, value, inline } of rows) {
+  for (const { label, value, series, inline } of rows) {
     if (inline !== undefined) {
       lines.push(`${indent}${label.padEnd(width)}${INDENT}${inline}`);
       continue;
     }
     lines.push(`${indent}${label}`);
-    if (isObjectArray(value)) {
-      lines.push(...objectTable(value, unionKeys(value), indent));
+    if (Array.isArray(value)) {
+      lines.push(...arrayLines(value, indent, series ? SAMPLE_PREVIEW_LIMIT : value.length));
     } else if (isObject(value)) {
       lines.push(...blockLines(Object.entries(value), `${indent}${INDENT}`));
     }
   }
   return lines;
+};
+
+const isFlatObjectArray = (value: unknown): value is ReadonlyArray<JsonObject> =>
+  isObjectArray(value) && value.every((item) => Object.values(item).every(isScalar));
+
+/** Sample series under a `points` key keep only their last samples in response order; other arrays render whole. */
+const arrayLines = (
+  items: ReadonlyArray<unknown>,
+  indent: string,
+  limit: number,
+): ReadonlyArray<string> => {
+  const offset = Math.max(0, items.length - limit);
+  const preview = items.slice(offset);
+  const notice =
+    offset === 0
+      ? []
+      : [
+          `${indent}${INDENT}Showing last ${preview.length} of ${items.length} samples; ${offset} omitted; use -o json for all samples.`,
+        ];
+  if (isFlatObjectArray(preview)) {
+    return [...notice, ...objectTable(preview, unionKeys(preview), indent)];
+  }
+  if (preview.every(isScalar))
+    return [...notice, `${indent}${INDENT}${preview.map(scalarText).join(", ")}`];
+  return [
+    ...notice,
+    ...preview.flatMap((item, index) => {
+      const label = `Item ${offset + index + 1}`;
+      return isObject(item)
+        ? [
+            `${indent}${INDENT}${label}`,
+            ...blockLines(Object.entries(item), `${indent}${INDENT}${INDENT}`),
+          ]
+        : blockLines([[label, item]], `${indent}${INDENT}`);
+    }),
+  ];
 };
 
 const isResource = (value: unknown): value is JsonObject & { readonly attributes: JsonObject } =>
@@ -138,11 +175,25 @@ const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined 
   }
   if (Array.isArray(data) && data.every(isResource)) {
     const rows = data.map((resource) => Object.fromEntries(resourceEntries(resource)));
-    const columns = unionKeys(rows).filter(
-      (column) =>
-        rows.every((row) => isScalar(row[column])) && rows.some((row) => row[column] !== undefined),
+    const columns = unionKeys(rows).filter((column) =>
+      rows.some((row) => row[column] !== undefined),
     );
-    return [humanize(String(data[0]?.["type"])), ...objectTable(rows, columns, "")];
+    const nested = new Set(columns.filter((column) => rows.some((row) => !isScalar(row[column]))));
+    const summary = columns.filter((column) => !nested.has(column));
+    const details = data.flatMap((resource, index) => {
+      const entries = resourceEntries(resource).filter(
+        ([key, value]) => nested.has(key) && value !== undefined,
+      );
+      if (entries.length === 0) return [];
+      const id = resource["id"];
+      const name = id === undefined || id === null ? `item ${index + 1}` : scalarText(id);
+      return ["", `${humanize(String(resource["type"]))} ${name}`, ...blockLines(entries, INDENT)];
+    });
+    return [
+      humanize(String(data[0]?.["type"])),
+      ...(summary.length === 0 ? [] : objectTable(rows, summary, "")),
+      ...details,
+    ];
   }
   return undefined;
 };
@@ -153,8 +204,8 @@ export const renderResponseText = (value: unknown): string => {
     const lines = resourceLines(value) ?? blockLines(Object.entries(value), "");
     return `${(lines.length === 0 ? ["-"] : lines).join("\n")}\n`;
   }
-  if (isObjectArray(value)) {
-    return `${objectTable(value, unionKeys(value), "").join("\n")}\n`;
+  if (Array.isArray(value) && value.length > 0) {
+    return `${arrayLines(value, "", value.length).join("\n")}\n`;
   }
   return `${inlineText(value) ?? compactJson(value)}\n`;
 };

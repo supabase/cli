@@ -24,6 +24,7 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-table",
   "v2-get-warehouse-table-layout",
   "v2-update-warehouse-table-layout",
+  "v2-get-warehouse-query-stats",
 ];
 
 export const nouns = {
@@ -31,6 +32,7 @@ export const nouns = {
     description: "Manage the data warehouse for a project",
     feature: "warehouse",
     groups: {
+      inspect: "Inspect Warehouse workload metrics",
       tables: "Inspect tables replicated to Warehouse",
       "tables.layout": "Inspect and update the layout of tables replicated to Warehouse",
       teardowns: "Inspect Warehouse cleanup operations",

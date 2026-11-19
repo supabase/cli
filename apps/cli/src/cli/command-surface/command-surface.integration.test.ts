@@ -57,6 +57,8 @@ describe("command surface", () => {
         "warehouse connection",
         "warehouse disable",
         "warehouse enable",
+        "warehouse inspect",
+        "warehouse inspect query-stats",
         "warehouse status",
         "warehouse tables",
         "warehouse tables get",
@@ -78,6 +80,32 @@ describe("command surface", () => {
       expect(walked["warehouse status"]).toStrictEqual(single);
       expect(Object.keys(walked)).toEqual(Object.keys(walked).toSorted());
     }),
+  );
+
+  it.effect(
+    "mounts workload inspection under Warehouse and preserves standalone inspect commands",
+    () =>
+      Effect.gen(function* () {
+        const { commands } = yield* Effect.promise(() => surface);
+        expect(commands).not.toHaveProperty("warehouse inspect query-stats");
+        const enabled = yield* walkCommandSurface(
+          rootCommandForFeatures({ apiFeatures: ["warehouse"] }),
+        );
+        for (const path of ["inspect", "inspect db", "inspect report", "inspect db table-stats"]) {
+          expect(enabled[path]).toEqual(commands[path]);
+        }
+        expect(enabled).not.toHaveProperty("inspect warehouse");
+        const stats = enabled["warehouse inspect query-stats"];
+        expect(stats).toMatchObject({
+          stage: { status: "experimental", feature: "warehouse" },
+          target: { group: "hosted", consent: "none" },
+          api: { operationId: "v2-get-warehouse-query-stats" },
+        });
+        expect(Object.keys(stats?.flags ?? {})).toEqual(
+          expect.arrayContaining(["since", "from", "to", "attributes", "interval", "remote"]),
+        );
+        expect(stats?.flags).not.toHaveProperty("wait");
+      }),
   );
 
   it.effect("describes layout updates without unsupported backend workflow flags", () =>

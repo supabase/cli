@@ -1,5 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import type { OperationOutput } from "@supabase/api/effect";
+import { parse as parseYaml } from "yaml";
 import {
   Cause,
   Console,
@@ -306,26 +308,50 @@ const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
 
 describe("generated warehouse commands", () => {
   describe("consolidated warehouse status", () => {
+    const attributes = {
+      project_ref: VALID_REF,
+      enabled: true,
+      status: "degraded",
+      configured_readiness: "not_ready",
+      query_connectivity: "not_checked",
+      observed_at: "2026-11-17T10:00:00Z",
+      compute: {
+        status: "available",
+        region: "us-east-1",
+        routing_status: "ready",
+        unavailable_reason: null,
+        observed_at: "2026-11-17T10:00:00Z",
+      },
+      lifecycle: null,
+      pipeline: null,
+      tables: {
+        status: "available",
+        unavailable_reason: null,
+        observed_at: "2026-11-17T10:00:00Z",
+        items: [],
+      },
+      replication: {
+        status: "unavailable",
+        unavailable_reason: "observation_unavailable",
+        observed_at: null,
+        apply_lag: null,
+      },
+      capabilities: {
+        context: true,
+        query_explain: false,
+        replication_add: false,
+        replication_remove: true,
+        table_layout_read: true,
+        table_layout_update: false,
+        table_resync: false,
+        workload_metrics: true,
+      },
+    } satisfies OperationOutput<"v2GetWarehouseStatus">["data"]["attributes"];
     const body = {
       data: {
         type: "warehouse_context",
         id: VALID_REF,
-        attributes: {
-          enabled: true,
-          status: "degraded",
-          configured_readiness: "not_ready",
-          query_connectivity: "not_checked",
-          observed_at: "2026-11-17T10:00:00Z",
-          tables: { status: "available", items: [] },
-          replication: {
-            status: "unavailable",
-            unavailable_reason: "observation_unavailable",
-            observed_at: null,
-            apply_lag: null,
-          },
-          capabilities: { replication_add: false, replication_remove: true, table_resync: false },
-          future_field: { retained: true },
-        },
+        attributes: { ...attributes, future_field: { retained: true } },
       },
     };
 
@@ -368,7 +394,45 @@ describe("generated warehouse commands", () => {
         expect(out.stdoutText).toMatch(/Observed at\s+2026-11-17T10:00:00Z/);
       });
     });
+
+    it.effect("lists every table of a large warehouse in terminal output", () => {
+      const items = Array.from({ length: 12 }, (_, index) => ({
+        id: 20000 + index,
+        schema: "public",
+        name: `table_${index}`,
+        replication_state: index === 0 ? ("error" as const) : ("following_wal" as const),
+        sync_lag:
+          index === 1
+            ? {
+                active: true,
+                feedback_age_ms: 5,
+                flush_lag_bytes: 2048,
+                flush_lag_ms: 120,
+                wal_status: "reserved" as const,
+                write_lag_ms: 80,
+              }
+            : null,
+      })) satisfies OperationOutput<"v2GetWarehouseStatus">["data"]["attributes"]["tables"]["items"];
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok({
+          data: {
+            ...body.data,
+            attributes: { ...attributes, tables: { ...attributes.tables, items } },
+          },
+        }),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toMatch(
+          /ID\s+20000\n\s+Schema\s+public\n\s+Name\s+table_0\n\s+Replication state\s+error\n/,
+        );
+        for (const item of items) expect(out.stdoutText).toContain(String(item.id));
+        expect(out.stdoutText).not.toContain("omitted");
+      });
+    });
   });
+
   describe("warehouse tables list", () => {
     const tablesPath = `/v2/projects/${VALID_REF}/warehouse/tables`;
     const table = (attributes: Readonly<Record<string, unknown>>) => ({
@@ -410,7 +474,7 @@ describe("generated warehouse commands", () => {
       ],
     };
 
-    it.effect("renders one row per table without the nested replication feedback", () => {
+    it.effect("lists tables in one row each with replication feedback in a block below", () => {
       const { out, sent, run } = setup(["warehouse", "tables", "list"], {
         route: ok(body),
         stdoutIsTty: true,
@@ -420,7 +484,9 @@ describe("generated warehouse commands", () => {
         expect(sent).toEqual([{ method: "GET", path: tablesPath, search: "", body: undefined }]);
         expect(out.stdoutText).toMatch(/16385\s.*orders.*live.*following_wal.*120/);
         expect(out.stdoutText).toMatch(/16402\s.*events.*syncing.*copying_table/);
-        expect(out.stdoutText).not.toMatch(/pipeline_apply|feedback_age|FEEDBACK/i);
+        expect(out.stdoutText).toMatch(/Warehouse table 16385\n[\s\S]*Source\s+pipeline_apply/);
+        expect(out.stdoutText).toMatch(/Feedback age ms\s+5/);
+        expect(out.stdoutText).toMatch(/Warehouse table 16402\n\s+Replication feedback\s+-\n/);
       });
     });
 
@@ -431,6 +497,151 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(decodeJson(out.stdoutText)).toEqual(body);
+      });
+    });
+  });
+  describe("warehouse inspect query-stats", () => {
+    const argv = ["warehouse", "inspect", "query-stats"];
+    const attributes = {
+      project_ref: VALID_REF,
+      metric: "query_duration_p95",
+      unit: "seconds",
+      aggregation: "p95",
+      definition:
+        "Executor duration through terminal outcome, including assignment wait and streaming.",
+      requested: { metric: "query_duration_p95", start: 1795000000, end: 1795001800 },
+      effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
+      scrape_interval_seconds: 60,
+      last_sample_at: 1795001740,
+      availability: "partial",
+      series: [
+        {
+          labels: { method: "DoGet", status: "ok" },
+          points: [
+            { timestamp: 1795001740, value: 0.2 },
+            { timestamp: 1795001800, value: null },
+          ],
+          coverage: { returned_points: 1, expected_points: 2 },
+        },
+      ],
+    } satisfies OperationOutput<"v2GetWarehouseQueryStats">["data"][number]["attributes"];
+    const response = {
+      data: [
+        {
+          type: "warehouse_metric",
+          id: "query_duration_p95",
+          attributes: { ...attributes, future_observation: { reason: null } },
+        },
+      ],
+    };
+
+    it.effect("shows the last 10 samples of a long series with an omission notice", () => {
+      const points = Array.from({ length: 12 }, (_, index) => ({
+        timestamp: 1795001000 + index * 60,
+        value: 1001 + index,
+      }));
+      const [first] = response.data;
+      const [firstSeries] = attributes.series;
+      const { out, run } = setup(argv, {
+        route: ok({
+          data: [
+            {
+              ...first,
+              attributes: {
+                ...first?.attributes,
+                series: [
+                  {
+                    ...firstSeries,
+                    points,
+                    coverage: { returned_points: 12, expected_points: 12 },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toContain(
+          "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+        );
+        expect(out.stdoutText).not.toContain("1001");
+        expect(out.stdoutText).not.toContain("1002");
+        expect(out.stdoutText).toContain("1003");
+        expect(out.stdoutText).toContain("1012");
+      });
+    });
+
+    it.effect("forwards a relative range and preserves the full JSON response", () => {
+      const { sent, out, run } = setup(
+        [
+          ...argv,
+          "--since",
+          "30m",
+          "--attributes",
+          "query_rate,query_duration_p95",
+          "--interval",
+          "5m",
+          "-o",
+          "json",
+        ],
+        {
+          route: ok(response),
+          stdoutIsTty: true,
+        },
+      );
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({
+          method: "GET",
+          path: `/v2/projects/${VALID_REF}/warehouse/query-stats`,
+          body: undefined,
+        });
+        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
+          since: "30m",
+          attributes: "query_rate,query_duration_p95",
+          interval: "5m",
+        });
+        expect(decodeJson(out.stdoutText)).toEqual(response);
+      });
+    });
+
+    it.effect("forwards fixed timestamps unchanged and preserves null samples in YAML", () => {
+      const from = "2026-11-18T09:30:00+01:00";
+      const to = "2026-11-18T10:00:00+01:00";
+      const { sent, out, run } = setup([...argv, "--from", from, "--to", to, "-o", "yaml"], {
+        route: ok(response),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({ from, to });
+        expect(parseYaml(out.stdoutText)).toEqual(response);
+      });
+    });
+
+    it.effect.each([
+      { name: "terminal default", flags: [], stdoutIsTty: true },
+      { name: "explicit text", flags: ["--output-format", "text"], stdoutIsTty: false },
+      { name: "pretty alias", flags: ["-o", "pretty"], stdoutIsTty: false },
+    ])("shows ranges, dimensions, and sample values with $name", ({ flags, stdoutIsTty }) => {
+      const { out, run } = setup([...argv, ...flags], {
+        route: ok(response),
+        stdoutIsTty,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toContain("query_duration_p95");
+        expect(out.stdoutText).toContain("partial");
+        expect(out.stdoutText).toMatch(/Requested[\s\S]*1795000000/);
+        expect(out.stdoutText).toMatch(/Effective[\s\S]*Rate window seconds\s+300/);
+        expect(out.stdoutText).toMatch(/Method\s+DoGet/);
+        expect(out.stdoutText).toMatch(/1795001740\s*[|│]?\s*0\.2/);
+        expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*-/);
+        expect(out.stdoutText.trimStart().startsWith("{")).toBe(false);
       });
     });
   });
@@ -513,7 +724,7 @@ describe("generated warehouse commands", () => {
         expect(sent).toEqual([{ method: "GET", path: layoutPath, search: "", body: undefined }]);
         expect(out.stdoutText).toMatch(/^Warehouse table layout\n/);
         expect(out.stdoutText).toMatch(/Desired\n\s+Sort by\s+-\n/);
-        expect(out.stdoutText).toMatch(/account_id \| \{"kind":"bucket","count":16\}/);
+        expect(out.stdoutText).toMatch(/Column\s+account_id[\s\S]*Kind\s+bucket[\s\S]*Count\s+16/);
         expect(out.stdoutText).toMatch(/Observation status\s+observed/);
         expect(out.stdoutText).toMatch(/account_id \| bucket\(16\)/);
         expect(out.stdoutText).toMatch(/Observed at\s+2026-11-18T09:30:00\.123456Z/);
@@ -1850,6 +2061,24 @@ describe("generated warehouse commands", () => {
         args: ["__complete", "ware"],
         features: ["warehouse"],
       },
+      { name: "inspection parent help", args: ["inspect"], features: [] },
+      {
+        name: "Warehouse inspection",
+        args: ["warehouse", "inspect", "query-stats"],
+        features: ["warehouse"],
+      },
+      { name: "database inspection", args: ["inspect", "db", "table-stats"], features: [] },
+      { name: "inspection report", args: ["inspect", "report"], features: [] },
+      {
+        name: "inspection completion",
+        args: ["__complete", "inspect", ""],
+        features: [],
+      },
+      {
+        name: "database inspection completion",
+        args: ["__complete", "inspect", "db", ""],
+        features: [],
+      },
       { name: "a command of another group", args: ["projects", "list"], features: [] },
       { name: "completion of another group", args: ["__complete", "projects", ""], features: [] },
       { name: "the root version flag", args: ["--version"], features: [] },
@@ -1864,6 +2093,9 @@ describe("generated warehouse commands", () => {
       Effect.gen(function* () {
         const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" };
         expect(yield* resolve(env, tempRoot.current, ["projects", "list"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect", "db", "table-stats"])).toEqual([]);
+        expect(yield* resolve(env, tempRoot.current, ["inspect", "report"])).toEqual([]);
       }),
     );
 

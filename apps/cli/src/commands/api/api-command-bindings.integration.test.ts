@@ -115,6 +115,7 @@ const shapeOf = (schema: unknown): unknown => {
 };
 
 const PATTERN_SAMPLES: Readonly<Record<string, string>> = {
+  "^[1-9]\\d*(s|m|h|d)$": "30m",
   "^[a-f0-9]{64}$": "ab".repeat(32),
   "^[a-z]+$": "zyxwvutsrqponmlkjihg",
   "^[1-9]\\d*$": "16385",
@@ -136,6 +137,7 @@ const sampleOf = (schema: unknown): unknown => {
     case "array":
       return [sampleOf(node["items"]), `${String(sampleOf(node["items"]))}-2`];
     case "string": {
+      if (node["format"] === "date-time") return "2026-11-18T10:00:00Z";
       const pattern = node["pattern"];
       if (pattern === undefined) return "sample";
       const sample = typeof pattern === "string" ? PATTERN_SAMPLES[pattern] : undefined;
