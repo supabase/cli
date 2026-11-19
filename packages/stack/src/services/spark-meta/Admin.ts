@@ -1,6 +1,13 @@
 import { Data, Effect, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { Description, Migration, type Row, SchemaVersion, ScratchResult } from "./Description.ts";
+import {
+  Description,
+  Migration,
+  ParseResult,
+  type Row,
+  SchemaVersion,
+  ScratchResult,
+} from "./Description.ts";
 
 /** A Postgres-shaped error Spark returned, or one the meta adapter raises for unsupported SQL. */
 export class SparkQueryError extends Data.TaggedError("SparkQueryError")<{
@@ -85,6 +92,10 @@ export const makeSparkAdmin = (client: HttpClient.HttpClient, url: string, servi
     query: (query: string, parameters: ReadonlyArray<unknown>, readOnly: boolean) =>
       request(Rows, "POST", "/_spark/v1/query", { query, parameters, read_only: readOnly }).pipe(
         Effect.map((rows): ReadonlyArray<Row> => rows),
+      ),
+    parse: (sql: string) =>
+      request(ParseResult, "POST", "/_spark/v1/parse", { sql }).pipe(
+        Effect.map(({ statements }) => statements),
       ),
     migrations: request(Schema.Array(Migration), "GET", "/_spark/v1/migrations"),
     applyMigration: (version: string, name: string, sql: string) =>

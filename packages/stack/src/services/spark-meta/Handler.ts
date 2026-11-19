@@ -10,21 +10,8 @@ import {
   roleRows,
 } from "./Catalog.ts";
 import { openApi } from "./OpenApi.ts";
-import {
-  boolLiterals,
-  coerceRows,
-  fingerprint,
-  foldConstraints,
-  isDdl,
-  isGrantDo,
-  isSession,
-  isTransactionControl,
-  oneLine,
-  rewriteEditorWrite,
-  splitSql,
-  stripComments,
-  words,
-} from "./Sql.ts";
+import type { ParsedStatement } from "./Description.ts";
+import { boolLiterals, isStudioDo, isStudioTempObject, rewriteEditorWrite } from "./StudioShims.ts";
 import { renderDump } from "./Dump.ts";
 import { type SparkTypegenError, typescript } from "./Typegen.ts";
 
@@ -92,11 +79,22 @@ const schemaList = (value: string | null | undefined) =>
 const migrationTimestamp = (millis: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
 
+const oneLine = (s: string, n = 160): string => s.replace(/\s+/gu, " ").trim().slice(0, n);
+
+/** Statements Spark keeps nothing of: Studio's `DO` loops (TEMPORARY, D23) and comments, which turso drops. */
+const isDropped = (s: ParsedStatement): boolean =>
+  (s.kind === "DoStmt" && isStudioDo(s.statement)) || s.kind === "CommentStmt";
+
+const isSchemaChange = (s: ParsedStatement): boolean =>
+  s.category === "ddl" && !isDropped(s) && !isStudioTempObject(s.statement);
+
+const script = (statements: ReadonlyArray<ParsedStatement>): string =>
+  statements.map((s) => s.statement).join(";\n");
+
 const GapRecord = Schema.Struct({
   at: Schema.String,
   source: Schema.String,
   catalog: Schema.Boolean,
-  fingerprint: Schema.String,
   error: Schema.String,
   query: Schema.String,
 });
@@ -138,7 +136,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         at,
         source,
         catalog,
-        fingerprint: fingerprint(query),
         error: `${error.code ?? ""} ${error.message}`,
         query: oneLine(query, 300),
       });
@@ -162,11 +159,9 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     yield* fs.writeFileString(path.join(settings.migrationsDir, file), `${sql.trim()}\n`);
   });
 
-  const prepareStatements = (sql: string) => {
-    // A Spark migration is atomic already, and Spark refuses transaction control inside scripts.
-    const statements = splitSql(sql).filter((s) => !isTransactionControl(s) && !isGrantDo(s));
-    return foldConstraints(statements);
-  };
+  /** The script without what Spark keeps nothing of; Spark itself folds, and ignores transaction control. */
+  const prepareStatements = (sql: string) =>
+    admin.parse(sql).pipe(Effect.map((statements) => statements.filter((s) => !isDropped(s))));
 
   /** Runs a migration in a rolled-back transaction on the current database and reports each statement. */
   const dryRunSchemaChange = Effect.fn("SparkMeta.dryRunSchemaChange")(function* (
@@ -174,23 +169,15 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     name: string,
     wanted?: string,
   ) {
-    const folded = prepareStatements(sql);
-    if ("rejected" in folded)
-      return [
-        {
-          index: 0,
-          kind: "constraint",
-          status: "error",
-          message: folded.rejected.message,
-          statement: oneLine(sql, 200),
-        },
-      ];
-    const forSpark = folded.statements;
+    const forSpark = yield* prepareStatements(sql);
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
     if (forSpark.length === 0) return [];
     const version = wanted ?? migrationTimestamp(yield* Clock.currentTimeMillis);
-    const { statuses } = yield* admin.dryRunMigration(version, name, `${forSpark.join(";\n")};`);
-    return statuses.map((s) => ({ ...s, statement: oneLine(forSpark[s.index] ?? "", 200) }));
+    const { statuses } = yield* admin.dryRunMigration(version, name, `${script(forSpark)};`);
+    return statuses.map((s) => ({
+      ...s,
+      statement: oneLine(s.statement ?? forSpark[s.index]?.statement ?? "", 200),
+    }));
   });
 
   /** Applies a schema change as a Spark migration after a dry run on a scratch copy. */
@@ -199,16 +186,11 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     name: string,
     wanted?: string,
   ) {
-    const folded = prepareStatements(sql);
-    if ("rejected" in folded) {
-      const { code, message, hint } = folded.rejected;
-      return yield* rejected(code, message, hint);
-    }
-    const forSpark = folded.statements;
+    const forSpark = yield* prepareStatements(sql);
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
     // Only Studio's grant loops: nothing for Spark, and no migration.
     if (forSpark.length === 0) return undefined;
-    const script = `${forSpark.join(";\n")};`;
+    const migration = `${script(forSpark)};`;
     const latest =
       (yield* admin.migrations)
         .map((m) => m.version)
@@ -225,25 +207,25 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       version = wanted;
     } else if (numericLatest && BigInt(version) <= BigInt(latest))
       version = (BigInt(latest) + 1n).toString();
-    const dry = yield* admin.scratch([{ name: `${version}_${name}.sql`, sql: script }]);
+    const dry = yield* admin.scratch([{ name: `${version}_${name}.sql`, sql: migration }]);
     const bad = dry.statuses.filter((s) => s.status === "unsupported" || s.status === "error");
     const first = bad[0];
     if (first !== undefined) {
       const lines = bad.map(
         (s) =>
-          `${s.status === "unsupported" ? "Not supported on Spark" : "Error"} (${s.kind}): ${oneLine(forSpark[s.index] ?? "", 100)}${s.message === null || s.message === undefined ? "" : ` -- ${s.message}`}`,
+          `${s.status === "unsupported" ? "Not supported on Spark" : "Error"} (${s.kind}): ${oneLine(s.statement ?? forSpark[s.index]?.statement ?? "", 100)}${s.message === null || s.message === undefined ? "" : ` -- ${s.message}`}`,
       );
-      yield* logGap(name, script, { code: first.status, message: lines.join("; ") }, false);
+      yield* logGap(name, migration, { code: first.status, message: lines.join("; ") }, false);
       return yield* rejected(
         first.status === "unsupported" ? "0A000" : "42000",
         lines.join("\n"),
         "spark runs tables, views, indexes, enums and RLS policies; functions, triggers and extensions are not supported",
       );
     }
-    yield* admin.applyMigration(version, name, script);
+    yield* admin.applyMigration(version, name, migration);
     yield* invalidate;
     // What Spark ran, so `db reset` replays it the same way.
-    yield* writeMigrationFile(version, name, script).pipe(
+    yield* writeMigrationFile(version, name, migration).pipe(
       Effect.mapError((cause) =>
         rejected("58030", `cannot write the migration file: ${cause.message}`),
       ),
@@ -257,18 +239,13 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     readOnly: boolean,
     source: string,
   ) {
-    const statements = splitSql(query);
-    // GRANT and REVOKE run on Spark as migrations; Spark rejects REVOKE as not supported.
-    const ignorable = (s: string) =>
-      isGrantDo(s) || isSession(s) || (isDdl(s) && (words(s)[0] ?? "") === "comment");
-    // Studio's grant loops, comments and session settings only: nothing Spark keeps.
-    if (
-      statements.length > 0 &&
-      statements.every(ignorable) &&
-      statements.some((s) => !isSession(s))
-    )
+    const statements = yield* admin.parse(query);
+    const kept = statements.filter((s) => !isDropped(s));
+    // Studio's grant loops and comments, around session settings at most: nothing Spark keeps.
+    const onlySession = kept.every((s) => s.category === "session" || s.category === "transaction");
+    if (kept.length < statements.length && onlySession)
       return { rows: [], target: "ignored" } satisfies Routed;
-    if (statements.some(isDdl)) {
+    if (kept.some(isSchemaChange)) {
       if (readOnly)
         return yield* rejected("25006", "cannot execute DDL in a read-only transaction");
       yield* applySchemaChange(query, source);
@@ -283,34 +260,32 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         params: parameters,
         spark: (q) => admin.query(q, [], true),
         migrations: admin.migrations,
-        coerce: (r, sql) => coerceRows(model, r, sql),
         boolLiterals: (sql) => boolLiterals(model, sql),
       });
       return { rows, target: `adapter:${adapter.name}` } satisfies Routed;
     }
-    const body = statements.filter(
-      (s) =>
-        !isSession(s) && !(/^do\s+\$/iu.test(s.trim()) && /pg_stat_statements\.track/u.test(s)),
-    );
-    if (body.length === 0) return { rows: [], target: "ignored" } satisfies Routed;
-    const only = statements.length === 1 ? statements[0] : undefined;
-    const rewritten = only === undefined ? undefined : rewriteEditorWrite(model, only);
-    const sql = rewritten ?? body.join(";\n");
-    if (/^\s*explain\b/iu.test(sql))
+    if (kept.length === 0) return { rows: [], target: "ignored" } satisfies Routed;
+    // TEMPORARY (D23): Studio's `EXPLAIN` probe and table-editor writes until Studio sends intents.
+    if (kept.length === 1 && kept[0]?.kind === "ExplainStmt")
       return {
         rows: [{ "QUERY PLAN": "Result  (cost=0.00..0.01 rows=1 width=0)" }],
         target: "explain",
       } satisfies Routed;
+    const rewritten =
+      statements.length === 1 && kept[0] !== undefined
+        ? rewriteEditorWrite(model, kept[0].statement)
+        : undefined;
+    const sql = rewritten ?? (kept.length === statements.length ? query : script(kept));
     return yield* admin.query(sql, parameters, readOnly).pipe(
       Effect.map((rows): Routed => ({
-        rows: coerceRows(model, rows, sql),
+        rows,
         target: rewritten === undefined ? "spark" : "spark:rewritten",
       })),
       Effect.catchTag("SparkQueryError", (error) =>
         Effect.gen(function* () {
           const catalog =
             /\b(pg_catalog|information_schema)\b|\bpg_[a-z_]+\b|::regclass|\bplpgsql\b/iu.test(
-              stripComments(query),
+              query,
             );
           yield* logGap(source, query, error, catalog);
           return yield* catalog

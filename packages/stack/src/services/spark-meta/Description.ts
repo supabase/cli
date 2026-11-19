@@ -102,8 +102,21 @@ const StatementStatus = Schema.Struct({
   status: Schema.String,
   message: Schema.optionalKey(Schema.NullOr(Schema.String)),
   line: Schema.optionalKey(Schema.Finite),
+  statement: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 export const ScratchResult = Schema.Struct({ statuses: Schema.Array(StatementStatus) });
 
 export type Row = Record<string, unknown>;
+
+/** One statement of a script as Spark's parser sees it (`POST /_spark/v1/parse`). */
+export const ParsedStatement = Schema.Struct({
+  index: Schema.Finite,
+  kind: Schema.String,
+  category: Schema.Literals(["ddl", "dml", "query", "transaction", "session", "other"]),
+  statement: Schema.String,
+  line: Schema.Finite,
+});
+export interface ParsedStatement extends Schema.Schema.Type<typeof ParsedStatement> {}
+
+export const ParseResult = Schema.Struct({ statements: Schema.Array(ParsedStatement) });

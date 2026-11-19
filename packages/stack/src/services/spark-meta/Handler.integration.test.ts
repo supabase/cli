@@ -90,6 +90,33 @@ interface SparkCall {
   readonly body: unknown;
 }
 
+const KINDS: ReadonlyArray<readonly [RegExp, string, string]> = [
+  [/^(begin|commit)\b/iu, "TransactionStmt", "transaction"],
+  [/^set\b/iu, "VariableSetStmt", "session"],
+  [/^create\s+table\b/iu, "CreateStmt", "ddl"],
+  [/^create\s+function\b/iu, "CreateFunctionStmt", "ddl"],
+  [/^alter\b/iu, "AlterTableStmt", "ddl"],
+  [/^grant\b/iu, "GrantStmt", "ddl"],
+  [/^comment\b/iu, "CommentStmt", "ddl"],
+  [/^do\b/iu, "DoStmt", "other"],
+  [/^insert\b/iu, "InsertStmt", "dml"],
+  [/^explain\b/iu, "ExplainStmt", "query"],
+];
+
+/** Stands in for Spark's `pg_query` split for the scripts these tests send (`;` only inside `$$` bodies). */
+const parse = (sql: string) =>
+  (sql.match(/(?:\$\$[\s\S]*?\$\$|[^;])+/gu) ?? [])
+    .map((statement) => statement.trim())
+    .filter((statement) => statement !== "")
+    .map((statement, index) => {
+      const [, kind, category] = KINDS.find(([pattern]) => pattern.test(statement)) ?? [
+        undefined,
+        "SelectStmt",
+        "query",
+      ];
+      return { index, kind, category, statement, line: 1 };
+    });
+
 /** A Spark admin API double: one description, recorded calls, and canned query rows. */
 const fakeSpark = (
   options: { readonly unsupported?: boolean; readonly description?: Description } = {},
@@ -97,9 +124,24 @@ const fakeSpark = (
   const description = options.description ?? todos;
   const calls: Array<SparkCall> = [];
   const reply = (body: unknown, status = 200) => Response.json(body, { status });
-  const statuses = options.unsupported
-    ? [{ index: 0, kind: "CreateFunctionStmt", status: "unsupported", message: "no" }]
-    : [{ index: 0, kind: "CreateStmt", status: "ok" }];
+  const statusesOf = (sql: unknown) =>
+    parse(typeof sql === "string" ? sql : "").map(({ index, kind, statement }) => ({
+      index,
+      kind,
+      statement,
+      status:
+        kind === "TransactionStmt"
+          ? "ignored"
+          : options.unsupported === true && kind === "CreateFunctionStmt"
+            ? "unsupported"
+            : "ok",
+    }));
+  const sqlOf = (body: unknown): unknown => {
+    const files: unknown = Reflect.get(Object(body), "files");
+    return Array.isArray(files)
+      ? Reflect.get(Object(files[0]), "sql")
+      : Reflect.get(Object(body), "sql");
+  };
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
@@ -118,11 +160,17 @@ const fakeSpark = (
         case "/_spark/v1/migrations":
           if (request.method === "GET")
             return respond(reply([{ version: "20260101000000", name: "todos", statements: null }]));
-          return respond(dryRun ? reply({ dry_run: true, statuses }) : reply({ ok: true }));
+          return respond(
+            dryRun
+              ? reply({ dry_run: true, statuses: statusesOf(sqlOf(body)) })
+              : reply({ ok: true }),
+          );
         case "/_spark/v1/scratch":
-          return respond(reply({ statuses }));
+          return respond(reply({ statuses: statusesOf(sqlOf(body)) }));
+        case "/_spark/v1/parse":
+          return respond(reply({ statements: parse(String(Reflect.get(Object(body), "sql"))) }));
         case "/_spark/v1/query":
-          return respond(reply([{ id: 1, done: 1, tags: "{a,b}" }]));
+          return respond(reply([{ id: 1, done: true, tags: ["a", "b"] }]));
         default:
           return respond(reply({ message: "not found" }, 404));
       }
@@ -165,6 +213,7 @@ const withHandler = (spark: ReturnType<typeof fakeSpark>) =>
             Effect.map((text) => ({
               status: web.status,
               contentType: web.headers.get("content-type"),
+              target: web.headers.get("x-spark-target"),
               text,
               body: web.headers.get("content-type")?.startsWith("application/sql")
                 ? text
@@ -199,19 +248,6 @@ it.live("answers Studio's pg-meta table listing from Spark's schema description"
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("types Spark's 0/1 booleans and text arrays back from the queried table's columns", () =>
-  Effect.gen(function* () {
-    const { send } = yield* withHandler(fakeSpark());
-
-    const { status, body } = yield* send("POST", "/v1/projects/default/database/query", {
-      query: "select id, done, tags from public.todos",
-    });
-
-    expect(status).toBe(201);
-    expect(body).toEqual([{ id: 1, done: true, tags: ["a", "b"] }]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
 it.live("applies DDL as a dry-run-checked Spark migration and records it as a migration file", () =>
   Effect.gen(function* () {
     const spark = fakeSpark();
@@ -228,7 +264,7 @@ it.live("applies DDL as a dry-run-checked Spark migration and records it as a mi
     );
     expect(applied?.body).toMatchObject({
       name: "studio",
-      sql: "create table public.notes (id bigint primary key, body text);",
+      sql: "begin;\ncreate table public.notes (id bigint primary key);\nalter table public.notes add column body text;\ncommit;",
     });
     const files = yield* fs.readDirectory(migrationsDir);
     expect(files).toHaveLength(1);
@@ -250,6 +286,37 @@ it.live("runs a standalone GRANT on Spark as a migration, now that Spark keeps g
       (call) => call.path === "/_spark/v1/migrations" && call.body !== undefined,
     );
     expect(applied?.body).toMatchObject({ sql: "grant select on public.todos to anon;" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("drops Studio's grant loop and a comment without creating a migration", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send, migrationsDir, fs } = yield* withHandler(spark);
+
+    const { status, target } = yield* send("POST", "/pg/query", {
+      query:
+        "do $$ begin execute format('grant select on public.todos to anon'); end $$; comment on table public.todos is 'x'",
+    });
+
+    expect(status).toBe(201);
+    expect(target).toBe("ignored");
+    expect(spark.calls.some((call) => call.path === "/_spark/v1/migrations")).toBe(false);
+    expect(yield* fs.exists(migrationsDir)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("sends session settings around a query to Spark instead of dropping them", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send } = yield* withHandler(spark);
+
+    const query = "set statement_timeout = 0; select id from public.todos";
+    yield* send("POST", "/v1/projects/default/database/query", { query });
+
+    expect(spark.calls.find((call) => call.path === "/_spark/v1/query")?.body).toMatchObject({
+      query,
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -323,12 +390,14 @@ it.live("dry-runs a migration through Spark and applies nothing", () =>
     expect(status).toBe(200);
     expect(body).toEqual({
       statuses: [
+        { index: 0, kind: "TransactionStmt", status: "ignored", statement: "begin" },
         {
-          index: 0,
+          index: 1,
           kind: "CreateStmt",
           status: "ok",
           statement: "create table public.notes (id bigint primary key)",
         },
+        { index: 2, kind: "TransactionStmt", status: "ignored", statement: "commit" },
       ],
     });
     const migrationCalls = spark.calls.filter((call) => call.path === "/_spark/v1/migrations");

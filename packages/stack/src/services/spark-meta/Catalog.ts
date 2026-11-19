@@ -351,7 +351,6 @@ interface AdapterContext<E> {
   /** Runs a read-only query on Spark. */
   readonly spark: (query: string) => Effect.Effect<ReadonlyArray<Row>, E>;
   readonly migrations: Effect.Effect<ReadonlyArray<Migration>, E>;
-  readonly coerce: (rows: ReadonlyArray<Row>, sql: string) => ReadonlyArray<Row>;
   readonly boolLiterals: (sql: string) => string;
 }
 
@@ -484,7 +483,7 @@ const tableRows = <E>(context: AdapterContext<E>) =>
     if (match?.[1] === undefined || match[2] === undefined)
       return yield* shape("table editor query shape changed");
     const inner = context.boolLiterals(match[1]);
-    const rows = context.coerce(yield* context.spark(inner), inner);
+    const rows = yield* context.spark(inner);
     const truncated = [
       ...match[2].matchAll(/when octet_length\((\w+|"[^"]+")::text\) > (\d+)/giu),
     ].map((x) => [(x[1] ?? "").replace(/"/gu, ""), Number(x[2])] as const);
@@ -516,7 +515,7 @@ const authUsers = <E>(context: AdapterContext<E>) =>
   Effect.gen(function* () {
     const inner = /users_data as \(([\s\S]*?)\)\s*select/iu.exec(context.sql)?.[1];
     if (inner === undefined) return yield* shape("auth users query shape changed");
-    const users = context.coerce(yield* context.spark(inner), "from auth.users");
+    const users = yield* context.spark(inner);
     const identities = yield* context.spark("select user_id, provider from auth.identities");
     return users.map((user) => ({
       ...user,
