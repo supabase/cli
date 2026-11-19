@@ -143,7 +143,23 @@ const runProbes = (baseUrl: string, probes: ReadonlyArray<Probe>) =>
               (name) =>
                 !(probe.path.startsWith("/rest/") && name === "access-control-expose-headers"),
             )
-            .map((name) => [name, response.headers[name] ?? null]),
+            .map((name) => {
+              const value = response.headers[name] ?? null;
+              if (
+                name === "access-control-allow-headers" &&
+                probe.method === "OPTIONS" &&
+                probe.path.startsWith("/rest/") &&
+                probe.headers["Access-Control-Request-Headers"] === undefined
+              ) {
+                // Gateways may omit allowed headers when the preflight requests none.
+                expect(
+                  [null, "accept-profile,apikey,authorization,x-client-info"],
+                  `${probe.name}: ${name}`,
+                ).toContain(value);
+                return [name, null];
+              }
+              return [name, value];
+            }),
         ),
       };
     }),
