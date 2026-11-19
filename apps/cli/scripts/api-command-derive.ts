@@ -943,7 +943,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       ...(description === undefined ? {} : { description }),
       readOnly: operation.method === "GET",
       ...policy,
-      feature: noun.feature,
       ...(body === undefined ? {} : { body }),
       ...(positional === undefined
         ? {}

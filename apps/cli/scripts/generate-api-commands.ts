@@ -106,7 +106,7 @@ const main = Effect.gen(function* () {
     },
     {
       relative: "src/commands/api/generated.md",
-      source: renderApiCommandReference({ entries, pollTargets, successStatuses }),
+      source: renderApiCommandReference({ entries, pollTargets, successStatuses, nouns }),
     },
   ];
 

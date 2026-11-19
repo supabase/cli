@@ -398,7 +398,7 @@ export const withApiCommands = <const C extends ReadonlyArray<Command.Command.An
 ): ReadonlyArray<C[number] | ApiGroup> => {
   const merged: Array<C[number] | ApiGroup> = [...handWritten];
   for (const [name, noun] of Object.entries(nouns)) {
-    if (!enabledFeatures.includes(noun.feature)) continue;
+    if (!enabledFeatures.includes(noun.experimental)) continue;
     const position = merged.findIndex((command) => command.name > name);
     merged.splice(position < 0 ? merged.length : position, 0, groupAt([name], noun));
   }

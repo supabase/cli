@@ -6,12 +6,14 @@ import type {
   ApiCommandWait,
   ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
+import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
 
 export interface ApiCommandReferenceInput {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
   readonly pollTargets: ReadonlyArray<ApiPollTarget>;
   /** Success status code per operation id. */
   readonly successStatuses: ReadonlyMap<string, number>;
+  readonly nouns: Readonly<Record<string, ApiNoun>>;
 }
 
 const code = (text: string): string => `\`${text}\``;
@@ -129,6 +131,18 @@ const bodyLine = (entry: ApiCommandEntry): string | undefined => {
   return `JSON envelope ${code(`data.type = ${body.type}`)}, fields under ${code("data.attributes")}`;
 };
 
+const experimentalLine = (
+  entry: ApiCommandEntry,
+  input: ApiCommandReferenceInput,
+): ReadonlyArray<string> => {
+  const flag = input.nouns[entry.command[0] ?? ""]?.experimental;
+  return flag === undefined
+    ? []
+    : [
+        `- Experimental: enable with ${code(`experimental.${flag}`)} or ${code(`SUPABASE_EXPERIMENTAL_${flag.toUpperCase()}=1`)}.`,
+      ];
+};
+
 const commandSection = (
   entry: ApiCommandEntry,
   input: ApiCommandReferenceInput,
@@ -143,7 +157,7 @@ const commandSection = (
     "",
     ...(entry.description === undefined ? [] : [prose(entry.description), ""]),
     `- Access: ${entry.readOnly ? "read-only, no consent" : "mutation, consent defaults to No (`--yes` when it cannot prompt)"}.`,
-    `- Feature: ${code(entry.feature)}.`,
+    ...experimentalLine(entry, input),
     ...(entry.confirmDescription
       ? ["- Consent: prints the API description before the interactive confirmation."]
       : []),

@@ -4,8 +4,8 @@ import type { ExperimentalFeature } from "../../shared/config/experimental-featu
 export interface ApiNoun {
   /** Help text of the noun's group. */
   readonly description: string;
-  /** Feature that gates every command under the noun. */
-  readonly feature: ExperimentalFeature;
+  /** Experimental flag (`experimental.<name>`) that gates every command under the noun. */
+  readonly experimental: ExperimentalFeature;
   /** Help text of each sub-group, keyed by its dotted path below the noun, e.g. `"tables.layout"`. */
   readonly groups?: Readonly<Record<string, string>>;
 }
@@ -44,7 +44,7 @@ export const commandPolicies = {
 export const nouns = {
   warehouse: {
     description: "Manage the data warehouse for a project",
-    feature: "warehouse",
+    experimental: "warehouse",
     groups: {
       replication: "Manage Warehouse replication selections and rebuilds",
       inspect: "Inspect Warehouse workload metrics",

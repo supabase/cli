@@ -10,9 +10,10 @@ import {
 import { nouns } from "./api-command-policy.ts";
 
 const nounFeatures = (noun: string | undefined): ReadonlyArray<ExperimentalFeature> => {
-  if (noun === undefined) return [...new Set(Object.values(nouns).map(({ feature }) => feature))];
+  if (noun === undefined)
+    return [...new Set(Object.values(nouns).map(({ experimental }) => experimental))];
   const definition = Object.entries(nouns).find(([name]) => name === noun)?.[1];
-  return definition === undefined ? [] : [definition.feature];
+  return definition === undefined ? [] : [definition.experimental];
 };
 
 /**

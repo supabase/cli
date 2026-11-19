@@ -65,7 +65,7 @@ const closedBranch = (properties: Record<string, unknown>, required: ReadonlyArr
 
 const thingNoun: ApiNoun = {
   description: "Manage things",
-  feature: "warehouse",
+  experimental: "warehouse",
   groups: { sub: "Manage sub things", "sub.deep": "Manage deep things", status: "Status" },
 };
 
@@ -1543,7 +1543,11 @@ describe("deriveApiCommands", () => {
           "create-thing": operation({ "x-operation": { group: "thing.sub", method: "create" } }),
         },
         undefined,
-        { overrides: { nouns: { thing: { description: "Manage things", feature: "warehouse" } } } },
+        {
+          overrides: {
+            nouns: { thing: { description: "Manage things", experimental: "warehouse" } },
+          },
+        },
       );
 
       expect(result.problems).toContain(
