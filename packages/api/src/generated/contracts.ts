@@ -14320,6 +14320,161 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2GetWarehouseCapacityInput = Schema.Struct({
+  attributes: Schema.optionalKey(Schema.String),
+  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  interval: Schema.optionalKey(Schema.Literals(["10m", "1d", "1h", "1m", "30m", "5m"])),
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  since: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[1-9]\\d*(s|m|h|d)$", "u")).annotate({
+        expected: "a string matching the RegExp ^[1-9]\\d*(s|m|h|d)$",
+      }),
+    ),
+  ),
+  to: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
+export const V2GetWarehouseCapacityOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      attributes: Schema.Struct({
+        aggregation: Schema.Union([
+          Schema.Literals(["mean", "occupied", "p50", "p95", "p99", "rate", "sum"]),
+          OpenString,
+        ]),
+        availability: Schema.Union([
+          Schema.Literals([
+            "disabled",
+            "insufficient_data",
+            "no_data",
+            "not_provisioned",
+            "ok",
+            "partial",
+            "stale",
+            "unavailable",
+          ]),
+          OpenString,
+        ]),
+        definition: Schema.String,
+        effective: Schema.Struct({
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          rate_window_seconds: Schema.Number.check(
+            Schema.isFinite().annotate({ expected: "a finite number" }),
+          ),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        }),
+        last_sample_at: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "Latest observed source sample timestamp in Unix seconds; not the query evaluation timestamp.",
+          }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          Schema.Null,
+        ]),
+        metric: Schema.Union([
+          Schema.Literals([
+            "activation_duration_mean",
+            "activation_duration_p95",
+            "activation_rate",
+            "admission_rejection_rate",
+            "assignment_wait_mean",
+            "assignment_wait_p95",
+            "query_in_flight",
+            "worker_admission_active",
+            "worker_admission_limit",
+            "worker_admission_occupied",
+            "worker_admission_pending",
+          ]),
+          OpenString,
+        ]),
+        project_ref: Schema.String,
+        requested: Schema.Struct({
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          metric: Schema.Union([
+            Schema.Literals([
+              "activation_duration_mean",
+              "activation_duration_p95",
+              "activation_rate",
+              "admission_rejection_rate",
+              "assignment_wait_mean",
+              "assignment_wait_p95",
+              "query_in_flight",
+              "worker_admission_active",
+              "worker_admission_limit",
+              "worker_admission_occupied",
+              "worker_admission_pending",
+            ]),
+            OpenString,
+          ]),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
+        }),
+        scrape_interval_seconds: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        series: Schema.Array(
+          Schema.Struct({
+            coverage: Schema.Struct({
+              expected_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+              returned_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+            }).annotate({
+              description: "Grid point coverage, not proof that every worker was scraped.",
+            }),
+            labels: Schema.Record(Schema.String, Schema.String),
+            points: Schema.Array(
+              Schema.Struct({
+                timestamp: Schema.Number.check(
+                  Schema.isFinite().annotate({ expected: "a finite number" }),
+                ),
+                value: Schema.Union([
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                  Schema.Null,
+                ]),
+              }),
+            ),
+          }),
+        ),
+        unit: Schema.Union([
+          Schema.Literals(["grants", "per_second", "queries", "seconds"]),
+          OpenString,
+        ]),
+      }),
+      id: Schema.Union([
+        Schema.Literals([
+          "activation_duration_mean",
+          "activation_duration_p95",
+          "activation_rate",
+          "admission_rejection_rate",
+          "assignment_wait_mean",
+          "assignment_wait_p95",
+          "query_in_flight",
+          "worker_admission_active",
+          "worker_admission_limit",
+          "worker_admission_occupied",
+          "worker_admission_pending",
+        ]),
+        OpenString,
+      ]),
+      type: Schema.Literal("warehouse_metric").annotate({ description: "Resource type." }),
+    }),
+  ),
+});
 export const V2GetWarehouseConnectionInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -20971,6 +21126,7 @@ export const openApiOperationIdMap = {
   "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
+  "v2-get-warehouse-capacity": "v2GetWarehouseCapacity",
   "v2-get-warehouse-connection": "v2GetWarehouseConnection",
   "v2-get-warehouse-query-stats": "v2GetWarehouseQueryStats",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
@@ -24151,6 +24307,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
+  },
+  v2GetWarehouseCapacity: {
+    id: "v2GetWarehouseCapacity",
+    description:
+      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/capacity",
+    pathParams: ["ref"],
+    queryParams: ["attributes", "from", "interval", "since", "to"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseCapacityInput,
+    outputSchema: V2GetWarehouseCapacityOutput,
   },
   v2GetWarehouseConnection: {
     id: "v2GetWarehouseConnection",

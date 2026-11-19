@@ -645,6 +645,106 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse inspect capacity", () => {
+    const argv = ["warehouse", "inspect", "capacity"];
+    const attributes = {
+      project_ref: VALID_REF,
+      metric: "activation_duration_p95",
+      unit: "seconds",
+      aggregation: "p95",
+      definition: "Activation duration by kind and result.",
+      requested: { metric: "activation_duration_p95", start: 1795000000, end: 1795001800 },
+      effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
+      scrape_interval_seconds: 60,
+      last_sample_at: 1795001740,
+      availability: "partial",
+      series: [
+        {
+          labels: { kind: "cold", result: "success" },
+          points: [
+            { timestamp: 1795001740, value: 0.2 },
+            { timestamp: 1795001800, value: null },
+          ],
+          coverage: { returned_points: 1, expected_points: 2 },
+        },
+        {
+          labels: { kind: "warm", result: "success" },
+          points: [{ timestamp: 1795001800, value: 0.01 }],
+          coverage: { returned_points: 1, expected_points: 2 },
+        },
+      ],
+    } satisfies OperationOutput<"v2GetWarehouseCapacity">["data"][number]["attributes"];
+    const response = {
+      data: [
+        {
+          type: "warehouse_metric",
+          id: "activation_duration_p95",
+          attributes: { ...attributes, future_observation: { reason: null } },
+        },
+      ],
+    };
+
+    it.effect("leaves default selection to the API and preserves all JSON bytes when piped", () => {
+      const rawResponse = `\n${encodeJson(response).replace('"value":0.2', '"value":0.20')}\n`;
+      const { sent, out, run } = setup([...argv, "--since", "30m", "--interval", "5m"], {
+        route: ok(rawResponse),
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({
+          method: "GET",
+          path: `/v2/projects/${VALID_REF}/warehouse/capacity`,
+          body: undefined,
+        });
+        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
+          since: "30m",
+          interval: "5m",
+        });
+        expect(out.stdoutText).toBe(rawResponse);
+      });
+    });
+
+    it.effect(
+      "renders both capacity series, their dimensions, unit, availability, and null sample",
+      () => {
+        const { out, run } = setup(argv, { route: ok(response), stdoutIsTty: true });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(out.stdoutText).toMatch(/Kind\s+cold/);
+          expect(out.stdoutText).toMatch(/Kind\s+warm/);
+          expect(out.stdoutText.match(/Result\s+success/g)).toHaveLength(2);
+          expect(out.stdoutText).toMatch(/\bUNIT\b[\s\S]*\bseconds\b/);
+          expect(out.stdoutText).toMatch(/\bAVAILABILITY\b[\s\S]*\bpartial\b/);
+          expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*-/);
+          expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*0\.01/);
+        });
+      },
+    );
+
+    it.effect(
+      "forwards fixed timestamps and metric selection and keeps all dimensions in YAML",
+      () => {
+        const from = "2026-11-18T09:30:00+01:00";
+        const to = "2026-11-18T10:00:00+01:00";
+        const selection = "activation_duration_p95,worker_admission_occupied";
+        const { sent, out, run } = setup(
+          [...argv, "--from", from, "--to", to, "--attributes", selection, "-o", "yaml"],
+          { route: ok(response), stdoutIsTty: true },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toHaveLength(1);
+          expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
+            from,
+            to,
+            attributes: selection,
+          });
+          expect(parseYaml(out.stdoutText)).toEqual(response);
+        });
+      },
+    );
+  });
   describe("warehouse tables get", () => {
     const tablePath = `/v2/projects/${VALID_REF}/warehouse/tables/16385`;
     const body = {
@@ -2065,6 +2165,11 @@ describe("generated warehouse commands", () => {
       {
         name: "Warehouse inspection",
         args: ["warehouse", "inspect", "query-stats"],
+        features: ["warehouse"],
+      },
+      {
+        name: "Warehouse capacity inspection",
+        args: ["warehouse", "inspect", "capacity"],
         features: ["warehouse"],
       },
       { name: "database inspection", args: ["inspect", "db", "table-stats"], features: [] },

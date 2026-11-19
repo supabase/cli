@@ -2956,5 +2956,396 @@
       }
     },
     "$comment": "Public Warehouse workload metrics generate warehouse inspect query-stats."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseCapacityResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "items": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "aggregation": {
+                    "enum": ["mean", "occupied", "p50", "p95", "p99", "rate", "sum"],
+                    "type": "string"
+                  },
+                  "availability": {
+                    "enum": [
+                      "disabled",
+                      "insufficient_data",
+                      "no_data",
+                      "not_provisioned",
+                      "ok",
+                      "partial",
+                      "stale",
+                      "unavailable"
+                    ],
+                    "type": "string"
+                  },
+                  "definition": {
+                    "type": "string"
+                  },
+                  "effective": {
+                    "properties": {
+                      "end": {
+                        "type": "number"
+                      },
+                      "rate_window_seconds": {
+                        "type": "number"
+                      },
+                      "start": {
+                        "type": "number"
+                      },
+                      "step": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["end", "rate_window_seconds", "start", "step"],
+                    "type": "object"
+                  },
+                  "last_sample_at": {
+                    "description": "Latest observed source sample timestamp in Unix seconds; not the query evaluation timestamp.",
+                    "nullable": true,
+                    "type": "number"
+                  },
+                  "metric": {
+                    "enum": [
+                      "activation_duration_mean",
+                      "activation_duration_p95",
+                      "activation_rate",
+                      "admission_rejection_rate",
+                      "assignment_wait_mean",
+                      "assignment_wait_p95",
+                      "query_in_flight",
+                      "worker_admission_active",
+                      "worker_admission_limit",
+                      "worker_admission_occupied",
+                      "worker_admission_pending"
+                    ],
+                    "type": "string"
+                  },
+                  "project_ref": {
+                    "type": "string"
+                  },
+                  "requested": {
+                    "properties": {
+                      "end": {
+                        "type": "number"
+                      },
+                      "metric": {
+                        "enum": [
+                          "activation_duration_mean",
+                          "activation_duration_p95",
+                          "activation_rate",
+                          "admission_rejection_rate",
+                          "assignment_wait_mean",
+                          "assignment_wait_p95",
+                          "query_in_flight",
+                          "worker_admission_active",
+                          "worker_admission_limit",
+                          "worker_admission_occupied",
+                          "worker_admission_pending"
+                        ],
+                        "type": "string"
+                      },
+                      "start": {
+                        "type": "number"
+                      },
+                      "step": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["end", "metric", "start"],
+                    "type": "object"
+                  },
+                  "scrape_interval_seconds": {
+                    "type": "number"
+                  },
+                  "series": {
+                    "items": {
+                      "properties": {
+                        "coverage": {
+                          "description": "Grid point coverage, not proof that every worker was scraped.",
+                          "properties": {
+                            "expected_points": {
+                              "type": "number"
+                            },
+                            "returned_points": {
+                              "type": "number"
+                            }
+                          },
+                          "required": ["expected_points", "returned_points"],
+                          "type": "object"
+                        },
+                        "labels": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "points": {
+                          "items": {
+                            "properties": {
+                              "timestamp": {
+                                "type": "number"
+                              },
+                              "value": {
+                                "nullable": true,
+                                "type": "number"
+                              }
+                            },
+                            "required": ["timestamp", "value"],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": ["coverage", "labels", "points"],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "unit": {
+                    "enum": ["grants", "per_second", "queries", "seconds"],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "aggregation",
+                  "availability",
+                  "definition",
+                  "effective",
+                  "last_sample_at",
+                  "metric",
+                  "project_ref",
+                  "requested",
+                  "scrape_interval_seconds",
+                  "series",
+                  "unit"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "enum": [
+                  "activation_duration_mean",
+                  "activation_duration_p95",
+                  "activation_rate",
+                  "admission_rejection_rate",
+                  "assignment_wait_mean",
+                  "assignment_wait_p95",
+                  "query_in_flight",
+                  "worker_admission_active",
+                  "worker_admission_limit",
+                  "worker_admission_occupied",
+                  "worker_admission_pending"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["warehouse_metric"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1capacity",
+    "value": {
+      "get": {
+        "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project\u2019s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-warehouse-capacity",
+        "parameters": [
+          {
+            "description": "Up to eight distinct measurements. Defaults to `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_p95`, `activation_duration_p95`. Supply a comma-separated list. Allowed measurements: `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_mean`, `assignment_wait_p95`, `activation_rate`, `activation_duration_mean`, `activation_duration_p95`.",
+            "in": "query",
+            "name": "attributes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires `--to`; cannot be combined with `--since`.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to `1m`. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least `5m`.",
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "enum": ["10m", "1d", "1h", "1m", "30m", "5m"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Look back from server time, for example `30m`, `2h`, or `1d`. Defaults to `30m` when `--from`/`--to` are omitted. Maximum `30d`. Cannot be combined with `--from`/`--to`.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "pattern": "^[1-9]\\d*(s|m|h|d)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires `--from`; cannot be combined with `--since`. The service tolerates up to 60 seconds of request delay or clock skew.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseCapacityResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "validation_failed: Invalid measurement selection, range, interval, or query parameter"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Project not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "warehouse_metrics_unavailable: Metrics query capacity is temporarily unavailable; retry after a short delay. warehouse_setup_unavailable: Warehouse feature or project metadata unavailable."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Inspect Warehouse capacity diagnostics",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_read"]],
+        "x-oauth-scope": "database:read",
+        "x-operation": {
+          "group": "warehouse.inspect",
+          "method": "capacity"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "$comment": "Public Warehouse capacity metrics generate warehouse inspect capacity."
   }
 ]
