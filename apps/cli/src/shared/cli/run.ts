@@ -853,13 +853,12 @@ export const runCli = Effect.fnUntraced(function* <
         }
         const exitCode = exitCodeForFailure(cause);
         if (usesStandardErrors && exitCode !== 0) {
-          const tty = yield* Tty;
           const mapped = standardFailureFor(cause, suggestionContext);
           return {
             exitCode: mapped.exitCode,
             pending: {
               ...mapped,
-              machine: isMachineFailureMode(args, tty.stdoutIsTty, outputFormat),
+              machine: isMachineFailureMode(args, output.interactive),
             },
           } satisfies RunOutcome;
         }

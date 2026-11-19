@@ -32,7 +32,6 @@ import {
   CliErrorKind,
 } from "../telemetry/error-actionability.ts";
 import { isMachineResourceFormat } from "../output/resource-format.ts";
-import type { OutputFormat } from "../output/types.ts";
 import { readOutputFlag } from "./agent-output.ts";
 import {
   findCommand,
@@ -258,18 +257,9 @@ export const errorsContractForRun = (
   return node === undefined ? "legacy" : readCommandErrorsContract(node);
 };
 
-/** Whether output is machine-readable: stdout is not a TTY or the resolved output format is not text. */
-export const isMachineOutput = (stdoutIsTty: boolean, outputFormat: OutputFormat): boolean =>
-  !stdoutIsTty || outputFormat !== "text";
-
-/** Whether failures render as the JSON document: a machine `-o` or machine output. */
-export const isMachineFailureMode = (
-  args: ReadonlyArray<string>,
-  stdoutIsTty: boolean,
-  outputFormat: OutputFormat,
-): boolean =>
-  isMachineOutput(stdoutIsTty, outputFormat) ||
-  isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)));
+/** Whether failures render as the JSON document: a machine `-o` or output that is not interactive. */
+export const isMachineFailureMode = (args: ReadonlyArray<string>, interactive: boolean): boolean =>
+  !interactive || isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)));
 
 /** Renders the failure as the stderr text: a leading blank line plus JSON, or a human message and hint. */
 const renderStandardFailure = (pending: PendingStandardFailure): string => {

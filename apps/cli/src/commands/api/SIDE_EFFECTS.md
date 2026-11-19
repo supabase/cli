@@ -110,7 +110,7 @@ before any command request.
 - The failure and timeout hint names the command that re-reads the state. When the polled read is a
   generated command, the hint names it with the identity the wait polled with, for example
   `supabase <noun> <read> --<identity-flag> <id> --remote=<ref>`. When the polled read is a hidden
-  read, the hint names the command its `poll.inspect` operation generates, with only `--remote=<ref>`.
+  read, the hint names the command its `x-operation.poll.inspect` operation generates, with only `--remote=<ref>`.
 - With `--wait`, stdout carries the final read response instead of the change response.
 
 ## Exit Codes
@@ -119,7 +119,7 @@ before any command request.
 | ----- | ----------------------------------------------------------------------------------------------- |
 | `0`   | success: the request was accepted, the dry run printed, or the wait ended on a succeeded status |
 | `2`   | `usage_error`: invalid flags, body or timeout, or consent needed without `--yes`                |
-| `130` | consent declined at the prompt (`cancelled`)                                                    |
+| `130` | consent declined at the prompt, or the run interrupted with Ctrl-C (`cancelled`)                |
 | `1`   | API error (non-2xx)                                                                             |
 | `1`   | with `--wait`: `operation_failed` (a failed status) or `wait_timeout`                           |
 
@@ -127,6 +127,9 @@ A 4xx `entitlement_required` body (`{"error":{"code":"entitlement_required","fea
 adds `entitlement: {feature, upgrade_url}` to the stderr error document in place of the
 token-permission hint; a terminal run prints the upgrade hint, and `cli_upgrade_suggested` fires.
 Other statuses and bodies carry no `entitlement` key.
+
+An interrupt (Ctrl-C) during the request or a `--wait` poll prints the `cancelled` failure with the
+message `Interrupted` and exits `130`; it stops local work only and does not change server state.
 
 Errors use the standard stderr envelope. `wait_timeout` includes `timeout_ms`, a nullable
 `last_status` and the hint command; terminal text includes the last status. `operation_failed`

@@ -5,7 +5,11 @@ import { CommandPlatformApiFactory } from "../../auth/command-platform-api-facto
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
 import { withStandardErrors } from "../../command-internal/command-errors/command-errors.annotation.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { compose, type OperationEntry } from "../../command-internal/command-permissions/model.ts";
+import {
+  compose,
+  type OperationEntry,
+  withCondition,
+} from "../../command-internal/command-permissions/model.ts";
 import { parseDuration } from "../../command-internal/duration.ts";
 import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
@@ -17,10 +21,8 @@ import { resolveProjectTarget } from "../../command-internal/target/resolve-proj
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { projectRefPicker } from "../../config/project-ref.layer.ts";
-import { isMachineOutput } from "../../shared/cli/standard-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
-import { Tty } from "../../shared/runtime/tty.service.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
@@ -196,9 +198,7 @@ const handle = Effect.fn("api-command.run")(function* (
   const cache = yield* LinkedProjectCache;
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
-  const format: ApiOutputFormat = isMachineOutput((yield* Tty).stdoutIsTty, output.format)
-    ? "json"
-    : "text";
+  const format: ApiOutputFormat = output.interactive ? "text" : "json";
   const progress = format === "text";
   yield* Effect.annotateCurrentSpan("output.presentation", format);
   yield* Effect.gen(function* () {
@@ -275,35 +275,32 @@ const handle = Effect.fn("api-command.run")(function* (
 
 const exampleFor = (entry: ApiCommandEntry): string => {
   const required = entry.flags
-    .filter(
-      (flag) =>
-        flag.required &&
-        !entry.bindings.some(
-          (binding) => binding.location === "body" && binding.flag === flag.name,
-        ),
-    )
+    .filter((flag) => flag.required)
     .map((flag) => `--${flag.name}${flag.type === "boolean" ? "" : ` <${flag.name}>`}`);
   const positional = entry.argument === undefined ? [] : [`<${entry.argument.name}>`];
-  const body = entry.body === undefined ? [] : ["--file <path>"];
+  const body = entry.body === undefined || required.length > 0 ? [] : ["--file <path>"];
   return ["supabase", ...entry.command, ...positional, ...required, ...body].join(" ");
 };
+
+// `--dry-run` returns before the API client exists, so the command, the poll and the cache lookup
+// run only without it.
+const sendsRequests = { flag: "dry-run", is: false } as const;
 
 const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefined) => {
   const polled = resolved?.readEntry.operationId;
   const operations: ReadonlyArray<OperationEntry> = [
-    { operationId: entry.operationId, kind: "required" },
+    { operationId: entry.operationId, kind: "required", when: [sendsRequests] },
     ...(polled === undefined || polled === entry.operationId
       ? []
       : [
           {
             operationId: polled,
             kind: "required" as const,
-            when: [{ flag: "wait", is: true }],
+            when: [sendsRequests, { flag: "wait", is: true }],
           },
         ]),
   ];
   const noApiEffectFlags = [
-    "dry-run",
     ...(entry.body === undefined ? [] : ["body", "file"]),
     ...(resolved === undefined ? [] : ["timeout"]),
     ...(polled === entry.operationId ? ["wait"] : []),
@@ -312,7 +309,7 @@ const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefine
   return compose(
     { operations, noApiEffectFlags },
     projectRefPicker,
-    linkedProjectCache,
+    withCondition(linkedProjectCache, sendsRequests),
     branchResolution,
   );
 };

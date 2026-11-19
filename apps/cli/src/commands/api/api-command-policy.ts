@@ -34,6 +34,8 @@ export interface ApiCommandPolicy {
 
 /** CLI presentation choices, independent of the API's operation metadata. */
 export const commandPolicies = {
+  "v2-disable-warehouse": { confirmDescription: true },
+  "v2-update-warehouse-table-layout": { confirmDescription: true },
   "v2-add-warehouse-replication": { confirmDescription: true },
   "v2-remove-warehouse-replication": { confirmDescription: true },
   "v2-resync-warehouse-replication": { confirmDescription: true },

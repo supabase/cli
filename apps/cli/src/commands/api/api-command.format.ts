@@ -19,11 +19,14 @@ const CONTROL_ESCAPES: Readonly<Record<string, string>> = {
   "\t": "\\t",
 };
 
-/** Keeps a value on one line by escaping line breaks, tabs and other control characters. */
-const singleLine = (text: string): string =>
+/**
+ * Keeps a value on one line and inert in a terminal: line breaks, tabs and the other control
+ * characters (C0, DEL, C1), bidi controls and line separators become visible `\uXXXX` escapes.
+ */
+export const singleLine = (text: string): string =>
   text.replace(
     // oxlint-disable-next-line no-control-regex -- escaping control characters is the purpose
-    /[\u0000-\u001f\u007f]/gu,
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu,
     (char) => CONTROL_ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 
@@ -231,7 +234,7 @@ export const renderDryRunText = (preview: ApiRequestPreview): string => {
           "Body",
           ...JSON.stringify(preview.body, null, 2)
             .split("\n")
-            .map((line) => `${INDENT}${line}`),
+            .map((line) => `${INDENT}${singleLine(line)}`),
         ];
   return `${[
     `Dry run: ${singleLine(preview.method)} ${singleLine(preview.path)}`,

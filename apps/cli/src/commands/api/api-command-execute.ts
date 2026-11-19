@@ -5,7 +5,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as Headers from "effect/http/Headers";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { parsePlanGateEnvelope, sanitizeErrorBody } from "../../command-internal/http-errors.ts";
+import { planGateFromResponse, sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
 import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
@@ -101,8 +101,7 @@ const statusError = Effect.fnUntraced(function* (
   );
   const body = Option.getOrUndefined(decodeJsonText(text));
   const fields = apiErrorFields(body);
-  const entitlement =
-    response.status >= 400 && response.status < 500 ? parsePlanGateEnvelope(body) : undefined;
+  const { entitlement } = planGateFromResponse(response.status, text);
   return yield* new ApiCommandStatusError({
     status: response.status,
     message:
@@ -111,8 +110,11 @@ const statusError = Effect.fnUntraced(function* (
         : sanitizeErrorBody(fields.message),
     apiCode: fields.apiCode,
     hint:
-      fields.hint ??
-      (entitlement === undefined ? statusHint(operationId, response.status) : undefined),
+      fields.hint === undefined
+        ? entitlement === undefined
+          ? statusHint(operationId, response.status)
+          : undefined
+        : sanitizeErrorBody(fields.hint),
     ...(entitlement === undefined ? {} : { entitlement }),
   });
 });

@@ -12,6 +12,12 @@ describe("renderResponseText", () => {
     expect(renderResponseText({ message: "a\nb\tc\u0001d" })).toBe("Message  a\\nb\\tc\\u0001d\n");
   });
 
+  it("escapes C1, bidi and line-separator characters so terminals cannot reorder or split a value", () => {
+    expect(renderResponseText({ message: "a\u202eb\u009bc\u2028d" })).toBe(
+      "Message  a\\u202eb\\u009bc\\u2028d\n",
+    );
+  });
+
   it("escapes control characters in keys so labels stay on one line", () => {
     expect(renderResponseText({ "a\nb\u001bc": 1 })).toBe("A\\nb\\u001bc  1\n");
   });

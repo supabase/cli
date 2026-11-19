@@ -55,6 +55,7 @@ import {
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { assembleInput, decodeInput, previewRequest } from "./api-command-request.ts";
 import { apiCommands } from "./generated.ts";
+import { readPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withApiCommands } from "./runtime.ts";
 import { isMachineFailureMode, standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
@@ -286,9 +287,10 @@ const execute = (argv: ReadonlyArray<string>, opts: CliOpts) => {
 
 const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
   const interactive = opts.confirmResponses !== undefined;
+  const stdoutIsTty = opts.stdoutIsTty ?? interactive;
   const out = mockOutput({
     format: opts.outputFormat ?? "text",
-    interactive,
+    interactive: stdoutIsTty && (opts.outputFormat ?? "text") === "text",
     ...(interactive ? { promptConfirmResponses: opts.confirmResponses } : {}),
   });
   const { args, sent, seen, run } = execute(argv, opts);
@@ -298,7 +300,7 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
       api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      tty: mockTty({ stdinIsTty: interactive, stdoutIsTty: opts.stdoutIsTty ?? interactive }),
+      tty: mockTty({ stdinIsTty: interactive, stdoutIsTty }),
       stdin: mockStdin(false),
       cliArgs: args,
     }),
@@ -1793,6 +1795,20 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("neutralizes terminal control characters in an API-provided hint", () => {
+      const { run } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({
+          status: 401,
+          body: { message: "Expired", hint: "Rotate\u202e the\u009b token\u2028" },
+        }),
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toMatchObject({ hint: "Rotate the token" });
+      });
+    });
+
     it.effect("reports a plan-gated 403 with its entitlement in the document and telemetry", () => {
       const analytics = mockAnalytics();
       const planGate = {
@@ -1854,6 +1870,45 @@ describe("generated warehouse commands", () => {
     });
   });
 
+  describe("permissions", () => {
+    const tree = commandTreeFor({ apiFeatures: ["warehouse"] });
+    const operationsOf = (path: string) => {
+      const command = tree.get(path)?.command;
+      const permissions = Option.getOrUndefined(
+        command === undefined ? Option.none() : readPermissions(command),
+      );
+      return permissions?.status === "mapped" ? permissions.operations : [];
+    };
+    const sendsRequests = (entry: {
+      readonly when?: ReadonlyArray<{ flag?: string; is?: boolean }>;
+    }) =>
+      entry.when?.some((condition) => condition.flag === "dry-run" && condition.is === false) ===
+      true;
+
+    it.each(["warehouse enable", "warehouse disable", "warehouse tables layout update"])(
+      "%s needs no API operation beyond target resolution on a dry run",
+      (path) => {
+        const operations = operationsOf(path);
+        expect(operations.some((entry) => entry.source === undefined)).toBe(true);
+        const unconditional = operations.filter((entry) => !sendsRequests(entry));
+        expect(unconditional.length).toBeGreaterThan(0);
+        expect(
+          unconditional.every(
+            (entry) => entry.source === "project-ref" || entry.source === "branch-resolution",
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it("requires the wait poll operation only for a request that is sent", () => {
+      const poll = operationsOf("warehouse enable").find((entry) =>
+        entry.when?.some((condition) => condition.flag === "wait"),
+      );
+      expect(poll).toBeDefined();
+      expect(poll !== undefined && sendsRequests(poll)).toBe(true);
+    });
+  });
+
   describe("help", () => {
     it.effect("shows a body file in the layout update example", () => {
       const { console, calls } = fakeConsole();
@@ -1865,6 +1920,15 @@ describe("generated warehouse commands", () => {
         expect(calls.join("\n")).toContain(
           "supabase warehouse tables layout update <table-id> --file <path>",
         );
+      });
+    });
+
+    it.effect("lists a required body-bound flag in the usage example", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "replication", "add", "--help"], { route: accepted });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        expect(calls.join("\n")).toContain("supabase warehouse replication add --schema <schema>");
       });
     });
 
@@ -2136,7 +2200,7 @@ describe("generated warehouse commands", () => {
         const exit = yield* Effect.exit(failed.run);
         expect(failureOf(exit)).toBeInstanceOf(ApiCommandStatusError);
         expect(failed.out.stdoutText).toBe("");
-        expect(isMachineFailureMode(failed.args, false, "text")).toBe(true);
+        expect(isMachineFailureMode(failed.args, false)).toBe(true);
       });
     });
 
@@ -2437,7 +2501,7 @@ describe("hosted consent details", () => {
     {
       name: "a disable that deletes data",
       argv: ["warehouse", "disable", "--delete-data"],
-      shown: ["delete_data: true"],
+      shown: ["delete_data: true", "permanently delete the managed catalog schema"],
     },
     {
       name: "a layout update with a reset",
@@ -2455,7 +2519,17 @@ describe("hosted consent details", () => {
           },
         }),
       ],
-      shown: ["table_id: 16385", "sort_by: null", "reset_table: true"],
+      shown: [
+        "table_id: 16385",
+        "sort_by: null",
+        "reset_table: true",
+        "Reads are disrupted during the copy",
+      ],
+    },
+    {
+      name: "a body field with terminal control characters",
+      argv: ["warehouse", "replication", "add", "--schema", "a\u202eb\u009bc"],
+      shown: ["schema: a\\u202eb\\u009bc"],
     },
   ])("lists what $name will send before asking", ({ argv, shown }) => {
     const { out, sent, run } = setup(argv, { route: accepted, confirmResponses: [false] });

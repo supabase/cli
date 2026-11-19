@@ -22,6 +22,7 @@ Stops replication and removes the Warehouse publication, FDW and dependent forei
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Feature: `warehouse`.
+- Consent: prints the API description before the interactive confirmation.
 - Request: `DELETE /v2/projects/{ref}/warehouse` (`v2-disable-warehouse`), success 202 json.
 
 ### Flags
@@ -212,6 +213,7 @@ Updates saved sorting and partitioning rules for one source table object identif
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Feature: `warehouse`.
+- Consent: prints the API description before the interactive confirmation.
 - Request: `PATCH /v2/projects/{ref}/warehouse/tables/{table_id}/layout` (`v2-update-warehouse-table-layout`), success 202 json.
 - Body: JSON envelope `data.type = warehouse_table_layout`, fields under `data.attributes`.
 - Positional argument `<table-id>`, bound to path parameter `table_id`.
