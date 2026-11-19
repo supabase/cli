@@ -42,7 +42,7 @@ import {
 import { SparkBackendError, SparkMigrationRefusedError } from "./spark-project.ts";
 import {
   attributeDryRunStatuses,
-  findDeclaration,
+  locateInSchemaFiles,
   withoutBaselineFiles,
 } from "./spark-schema-files.ts";
 import { acquireSparkShadows, loadSparkDump } from "./spark-shadow.ts";
@@ -189,16 +189,18 @@ export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (flags: {
       const statuses = yield* dryRunSparkMigration(ref, { query: plan.sql, name });
       const refused = statuses.filter(isRefused);
       if (refused.length > 0) {
+        // A location is a hint; the refusal is reported without one if the analysis fails.
+        const declared = yield* locateInSchemaFiles(
+          refused.map((status) => status.statement),
+          files,
+        ).pipe(Effect.orElseSucceed(() => []));
         yield* reportRefusals(
           "the generated migration",
-          refused.map((status) => {
-            const declared = findDeclaration(status.statement, files, status.message);
+          refused.map((status, i) => {
+            const at = declared[i];
             return {
               status,
-              at:
-                declared === undefined
-                  ? undefined
-                  : `supabase/schemas/${declared.file}:${declared.line}`,
+              at: at === undefined ? undefined : `supabase/schemas/${at.file}:${at.line}`,
             };
           }),
         );
@@ -265,13 +267,11 @@ export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
         })),
       );
       // One dry run of all pending files, so nothing is applied when a later file is refused.
-      const { refused, silent } = attributeDryRunStatuses(
-        yield* dryRunSparkMigration(ref, {
-          query: files.map((m) => m.query).join("\n;\n"),
-          name: "pending",
-        }),
-        files,
-      );
+      const statuses = yield* dryRunSparkMigration(ref, {
+        query: files.map((m) => m.query).join("\n;\n"),
+        name: "pending",
+      });
+      const { refused, silent } = yield* attributeDryRunStatuses(statuses, files);
       if (refused.length > 0) {
         for (const [file, items] of Map.groupBy(refused, (r) => r.file))
           yield* reportRefusals(

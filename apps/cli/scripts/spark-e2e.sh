@@ -189,7 +189,7 @@ history_before="$(sb migration list 2>&1)"
 printf 'create table public.notes (id bigint primary key);\n' >supabase/migrations/20990101000000_notes.sql
 printf -- '-- a date column\ncreate table public.events (\n  id bigint primary key,\n  day date\n);\n' >supabase/migrations/20990101000001_events.sql
 if sb db push >"$LOG" 2>&1; then fail "db push applied a migration Spark refuses"; fi
-grep -q 'supabase/migrations/20990101000001_events.sql:4' "$LOG" || fail "the push refusal does not name the date column's file and line"
+grep -q 'supabase/migrations/20990101000001_events.sql:2' "$LOG" || fail "the push refusal does not name the refused statement's file and line"
 [ "$(rest 'notes?select=id' -o /dev/null -w '%{http_code}')" != 200 ] || fail "db push applied the good file before the refused one"
 rm supabase/migrations/20990101000000_notes.sql supabase/migrations/20990101000001_events.sql
 [ "$(sb migration list 2>&1)" = "$history_before" ] || fail "migration history changed after a refused push"

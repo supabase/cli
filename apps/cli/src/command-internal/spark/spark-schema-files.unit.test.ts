@@ -1,94 +1,63 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 
 import {
   attributeDryRunStatuses,
-  findDeclaration,
+  locateInSchemaFiles,
   withoutBaselineFiles,
 } from "./spark-schema-files.ts";
 
-describe("findDeclaration", () => {
+describe("locateInSchemaFiles", () => {
   const files = [
-    { name: "public/tables/todos.sql", sql: 'create table "public"."todos" (id int);\n' },
+    {
+      name: "public/tables/events.sql",
+      sql: '-- events\r\n\r\nCREATE TABLE "public"."events" (\r\n  "id" bigint NOT NULL,\r\n  /* legacy */ "day" date\r\n);\r\n\r\nCREATE INDEX events_day_idx ON public.events (day);\r\nALTER TABLE public.events ALTER COLUMN day TYPE date;\r\n',
+    },
     {
       name: "public/functions.sql",
       sql: '-- helpers\n\nCREATE OR REPLACE FUNCTION "public"."add" (a int, b int) returns int\n  language sql as $$ select 1 $$;\n',
     },
     {
       name: "public/policies.sql",
-      sql: 'create policy "Own rows" on public.todos for all using (true);\ngrant usage on schema public to anon;\ncreate extension if not exists pgcrypto;\n',
+      sql: 'create policy "Own rows" on public.events for all using (true);\ngrant usage on schema public to anon;\ncreate extension if not exists pgcrypto;\n',
     },
   ];
+  const at = (file: string, line: number) => ({ file, line });
 
-  it.each([
-    ["CREATE OR REPLACE FUNCTION public.add (a integer, b integer)", "public/functions.sql", 3],
-    ["create function add(a int)", "public/functions.sql", 3],
-    ['CREATE POLICY "Own rows" ON "public"."todos"', "public/policies.sql", 1],
-    ["GRANT USAGE ON SCHEMA public TO anon", "public/policies.sql", 2],
-    ['CREATE EXTENSION "pgcrypto" SCHEMA "extensions"', "public/policies.sql", 3],
-  ])("finds %s", (statement, file, line) => {
-    expect(findDeclaration(statement, files)).toEqual({ file, line });
-  });
-
-  it("locates every statement pg-delta generates for a table at the table's declaration", () => {
-    const tables = [
-      {
-        name: "public/tables/events.sql",
-        sql: 'CREATE TABLE "public"."events" (\n  "id" bigint NOT NULL,\n  "day" date\n);\n\nCREATE INDEX events_day_idx ON public.events (day);\nCOMMENT ON COLUMN public.events.day IS \'when\';\n',
-      },
-    ];
-    const at = (line: number) => ({ file: "public/tables/events.sql", line });
-
-    expect
-      .soft(
-        findDeclaration(
-          'CREATE TABLE "public"."events" ( "id" bigint NOT NULL, "day" date )',
-          tables,
-          'type "date" is not supported',
+  it.effect("locates each refused statement by the object it creates or acts on", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* locateInSchemaFiles(
+          [
+            'CREATE TABLE "public"."events" ( "id" bigint NOT NULL, "day" date, CONSTRAINT "events_pkey" PRIMARY KEY (id) )',
+            'GRANT DELETE, INSERT ON TABLE "public"."events" TO "anon", "authenticated"',
+            'REVOKE ALL ON TABLE "public"."events" FROM "postgres"',
+            "CREATE INDEX events_day_idx ON public.events USING btree (day)",
+            "CREATE UNIQUE INDEX other_idx ON public.events (id)",
+            "ALTER TABLE public.events ALTER COLUMN day TYPE date",
+            "CREATE OR REPLACE FUNCTION public.add(a integer, b integer) RETURNS integer LANGUAGE sql AS $function$ select 1 $function$",
+            'CREATE POLICY "Own rows" ON "public"."events" FOR ALL USING (true)',
+            "GRANT USAGE ON SCHEMA public TO anon",
+            'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
+            "CREATE TABLE public.other (id int)",
+          ],
+          files,
         ),
-      )
-      .toEqual(at(3));
-
-    expect
-      .soft(
-        findDeclaration(
-          'CREATE TABLE "public"."events" ( "id" bigint NOT NULL, "day" date )',
-          tables,
-        ),
-      )
-      .toEqual(at(1));
-    expect
-      .soft(
-        findDeclaration("CREATE INDEX events_day_idx ON public.events USING btree (day)", tables),
-      )
-      .toEqual(at(6));
-    expect
-      .soft(findDeclaration("CREATE UNIQUE INDEX other_idx ON public.events (id)", tables))
-      .toEqual(at(1));
-    expect
-      .soft(findDeclaration('ALTER TABLE "public"."events" ENABLE ROW LEVEL SECURITY', tables))
-      .toEqual(at(1));
-    expect
-      .soft(findDeclaration('GRANT SELECT ON TABLE "public"."events" TO "anon"', tables))
-      .toEqual(at(1));
-    expect
-      .soft(findDeclaration('REVOKE ALL ON TABLE "public"."events" FROM "postgres"', tables))
-      .toEqual(at(1));
-    expect
-      .soft(findDeclaration("COMMENT ON COLUMN public.events.day IS 'when'", tables))
-      .toEqual(at(7));
-    expect
-      .soft(
-        findDeclaration("SELECT public.events_count()", [
-          { name: "f.sql", sql: "create function public.events_count() returns int;" },
-        ]),
-      )
-      .toEqual({ file: "f.sql", line: 1 });
-  });
-
-  it("finds nothing for an object the files do not declare", () => {
-    expect(findDeclaration("create function other.add()", files)).toBeUndefined();
-    expect(findDeclaration("create table public.t (id int)", files)).toBeUndefined();
-  });
+      ).toEqual([
+        at("public/tables/events.sql", 3),
+        at("public/tables/events.sql", 3),
+        at("public/tables/events.sql", 3),
+        at("public/tables/events.sql", 8),
+        at("public/tables/events.sql", 3),
+        at("public/tables/events.sql", 9),
+        at("public/functions.sql", 3),
+        at("public/policies.sql", 1),
+        at("public/policies.sql", 2),
+        at("public/policies.sql", 3),
+        undefined,
+      ]);
+    }),
+  );
 });
 
 describe("withoutBaselineFiles", () => {
@@ -127,79 +96,109 @@ describe("attributeDryRunStatuses", () => {
     message: null as string | null,
   });
 
-  it("keeps identical refused statements in different files apart", () => {
-    const files = [
-      { file: "1_a.sql", query: "create function f() returns int;\n" },
-      { file: "2_b.sql", query: "create function f() returns int;\n" },
-    ];
-    const { refused, silent } = attributeDryRunStatuses(
-      [
-        status(0, "unsupported", "create function f() returns int"),
-        status(1, "unsupported", "create function f() returns int"),
-      ],
-      files,
-    );
-    expect(refused.map((r) => r.file)).toEqual(["1_a.sql", "2_b.sql"]);
-    expect(silent).toEqual([]);
-  });
+  it.effect("keeps identical refused statements in different files apart", () =>
+    Effect.gen(function* () {
+      const files = [
+        { file: "1_a.sql", query: "create function f() returns int;\n" },
+        { file: "2_b.sql", query: "create function f() returns int;\n" },
+      ];
+      const { refused, silent } = yield* attributeDryRunStatuses(
+        [
+          status(0, "unsupported", "create function f() returns int"),
+          status(1, "unsupported", "create function f() returns int"),
+        ],
+        files,
+      );
+      expect(refused.map((r) => [r.file, r.line])).toEqual([
+        ["1_a.sql", 1],
+        ["2_b.sql", 1],
+      ]);
+      expect(silent).toEqual([]);
+    }),
+  );
 
-  it("refuses a fold into a table another earlier file creates, not one in the same file", () => {
-    const fold = "ALTER TABLE public.t ADD CONSTRAINT c CHECK (id > 0)";
-    const files = [
-      { file: "1_a.sql", query: "create table public.t (id int);\n" },
-      { file: "2_b.sql", query: `${fold};\n` },
-    ];
-    const { refused } = attributeDryRunStatuses(
-      [status(0, "ok", "create table public.t (id int)"), status(1, "rewritten", fold)],
-      files,
-    );
-    expect(refused).toHaveLength(1);
-    expect(refused[0]?.file).toBe("2_b.sql");
-    expect(refused[0]?.status.message).toContain("folds into a table created in 1_a.sql");
-
-    const same = attributeDryRunStatuses(
-      [status(0, "ok", "create table public.t (id int)"), status(1, "rewritten", fold)],
-      [{ file: "1_a.sql", query: `create table public.t (id int);\n${fold};\n` }],
-    );
-    expect(same.refused).toEqual([]);
-  });
-
-  it("gives the line of each refused statement in its own file", () => {
-    const files = [
-      { file: "1_a.sql", query: "create table t (id int);\n" },
-      {
-        file: "2_b.sql",
-        query:
-          "-- events\n\ncreate table e (\n  id int,\n  day date\n);\ncreate   index i on e (day);\n",
-      },
-    ];
-    const { refused } = attributeDryRunStatuses(
-      [
-        status(0, "ok", "create table t (id int)"),
+  it.effect("gives each refused statement its own line, past comments, in CRLF files too", () =>
+    Effect.gen(function* () {
+      const files = [
+        { file: "1_a.sql", query: "create table t (id int);\n" },
         {
-          ...status(1, "unsupported", "-- events create table e ( id int, day date )"),
-          message: 'type "date" is not supported',
+          file: "2_b.sql",
+          query:
+            "-- events\r\n\r\ncreate table e (\r\n  id int,\r\n  day date\r\n);\r\ncreate   index i on e (day);\r\n",
         },
-        status(2, "error", "create index i on e (day)"),
-      ],
-      files,
-    );
-    expect(refused.map((r) => [r.file, r.line])).toEqual([
-      ["2_b.sql", 5],
-      ["2_b.sql", 7],
-    ]);
-  });
+      ];
+      const { refused } = yield* attributeDryRunStatuses(
+        [
+          status(0, "ok", "create table t (id int)"),
+          status(1, "unsupported", "-- events create table e ( id int, day date )"),
+          status(2, "error", "create index i on e (day)"),
+        ],
+        files,
+      );
+      expect(refused.map((r) => [r.file, r.line])).toEqual([
+        ["2_b.sql", 3],
+        ["2_b.sql", 7],
+      ]);
+    }),
+  );
 
-  it("lists a file that received no status", () => {
-    const files = [
-      { file: "1_a.sql", query: "create table t (id int);\n" },
-      { file: "2_b.sql", query: "-- nothing\n" },
-    ];
-    const { refused, silent } = attributeDryRunStatuses(
-      [status(0, "ok", "create table t (id int)")],
-      files,
-    );
-    expect(refused).toEqual([]);
-    expect(silent).toEqual(["2_b.sql"]);
-  });
+  it.effect(
+    "locates a refused CREATE TABLE that Spark merged with a later ALTER TABLE ... ADD",
+    () =>
+      Effect.gen(function* () {
+        const files = [
+          {
+            file: "1_a.sql",
+            query:
+              "create table public.b1 (id int primary key);\nalter table public.b1 add column day date;\n",
+          },
+        ];
+        const { refused, silent } = yield* attributeDryRunStatuses(
+          [status(0, "unsupported", "create table public.b1 (id int primary key, day date)")],
+          files,
+        );
+        expect(refused.map((r) => [r.file, r.line])).toEqual([["1_a.sql", 1]]);
+        expect(silent).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    "refuses a fold into a table another earlier file creates, not one in the same file",
+    () =>
+      Effect.gen(function* () {
+        const fold = "ALTER TABLE public.t ADD CONSTRAINT c CHECK (id > 0)";
+        const files = [
+          { file: "1_a.sql", query: "create table public.t (id int);\n" },
+          { file: "2_b.sql", query: `${fold};\n` },
+        ];
+        const { refused } = yield* attributeDryRunStatuses(
+          [status(0, "ok", "create table public.t (id int)"), status(1, "rewritten", fold)],
+          files,
+        );
+        expect(refused).toHaveLength(1);
+        expect(refused[0]?.file).toBe("2_b.sql");
+        expect(refused[0]?.status.message).toContain("folds into a table created in 1_a.sql");
+
+        const same = yield* attributeDryRunStatuses(
+          [status(0, "ok", "create table public.t (id int)"), status(1, "rewritten", fold)],
+          [{ file: "1_a.sql", query: `create table public.t (id int);\n${fold};\n` }],
+        );
+        expect(same.refused).toEqual([]);
+      }),
+  );
+
+  it.effect("lists a file that received no status", () =>
+    Effect.gen(function* () {
+      const files = [
+        { file: "1_a.sql", query: "create table t (id int);\n" },
+        { file: "2_b.sql", query: "-- nothing\n" },
+      ];
+      const { refused, silent } = yield* attributeDryRunStatuses(
+        [status(0, "ok", "create table t (id int)")],
+        files,
+      );
+      expect(refused).toEqual([]);
+      expect(silent).toEqual(["2_b.sql"]);
+    }),
+  );
 });
