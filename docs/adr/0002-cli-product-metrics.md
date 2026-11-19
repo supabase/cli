@@ -64,6 +64,8 @@ We define 5 metric categories with specific signals to track. All metrics are de
 
 ### Infrastructure
 
+> This section records the original design. The CLI now sends product analytics to PostHog and exports traces only on opt-in; see [CLI Analytics](../../apps/cli/docs/analytics.md) and [CLI Tracing and Monitoring](../../apps/cli/docs/tracing-monitoring.md).
+
 A single OpenTelemetry-based pipeline handles all concerns — product analytics, performance traces, and error diagnostics. The backend evolves in phases:
 
 | Phase       | Backend                        | Purpose                                                          | Status |
