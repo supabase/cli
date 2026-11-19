@@ -976,6 +976,26 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect.each([
+      { flags: ["--reset-table"] },
+      { flags: ["--reset-table", "--dry-run"] },
+      { flags: [] },
+    ])(
+      "rejects a patch with neither --sort-by nor --partition-by ($flags) and sends nothing",
+      ({ flags }) => {
+        const { sent, run } = setup([...argv, ...flags], { yes: true, route: accepted });
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandUsageError);
+          expect(failure).toMatchObject({
+            message: "Pass at least one of --sort-by, --partition-by",
+            hint: "Pass one of the flags, or include one of the fields in --body/--file.",
+          });
+          expect(sent).toEqual([]);
+        });
+      },
+    );
+
     it.effect("rejects a non-boolean reset before making a hosted request", () => {
       const reset = {
         data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },

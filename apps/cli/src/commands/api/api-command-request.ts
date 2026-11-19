@@ -164,25 +164,47 @@ export const assembleInput = Effect.fnUntraced(function* (
 
 type Path = ReadonlyArray<PropertyKey>;
 
-/** Paths of the required keys an issue tree reports missing; `undefined` when it holds any other failure. */
-const missingKeyPaths = (issue: SchemaIssue.Issue, path: Path): ReadonlyArray<Path> | undefined => {
+/** Input fields of which a request needs at least one; a single path means that field is required. */
+type Requirement = ReadonlyArray<Path>;
+
+const pathKey = (path: Path) => path.map(String).join("/");
+
+/**
+ * Requirements an issue tree reports missing: every required key is one requirement, and a union
+ * whose branches each miss one key is one requirement of alternatives. `undefined` when the tree
+ * holds any other failure.
+ */
+const missingKeyPaths = (
+  issue: SchemaIssue.Issue,
+  path: Path,
+): ReadonlyArray<Requirement> | undefined => {
   switch (issue._tag) {
     case "MissingKey":
-      return [path];
+      return [[path]];
     case "Pointer":
       return missingKeyPaths(issue.issue, [...path, ...issue.path]);
     case "Filter":
     case "Encoding":
       return missingKeyPaths(issue.issue, path);
-    case "Composite":
-    case "AnyOf": {
-      const paths: Path[] = [];
+    case "Composite": {
+      const requirements: Requirement[] = [];
       for (const child of issue.issues) {
-        const childPaths = missingKeyPaths(child, path);
-        if (childPaths === undefined) return undefined;
-        paths.push(...childPaths);
+        const childRequirements = missingKeyPaths(child, path);
+        if (childRequirements === undefined) return undefined;
+        requirements.push(...childRequirements);
       }
-      return paths.length === 0 ? undefined : paths;
+      return requirements.length === 0 ? undefined : requirements;
+    }
+    case "AnyOf": {
+      const alternatives = new Map<string, Path>();
+      for (const child of issue.issues) {
+        const childRequirements = missingKeyPaths(child, path);
+        if (childRequirements?.length !== 1) return undefined;
+        for (const alternative of childRequirements[0]!) {
+          alternatives.set(pathKey(alternative), alternative);
+        }
+      }
+      return alternatives.size === 0 ? undefined : [[...alternatives.values()]];
     }
     default:
       return undefined;
@@ -207,7 +229,23 @@ const flagAt = (entry: ApiCommandEntry, path: Path) => {
 };
 
 const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
-  const paths = missingKeyPaths(error.issue, []);
+  const requirements = missingKeyPaths(error.issue, []);
+  const alternatives = requirements?.length === 1 ? requirements[0]! : undefined;
+  if (alternatives !== undefined && alternatives.length > 1) {
+    const bindings = alternatives.map((path) => flagAt(entry, path));
+    if (bindings.every((binding) => binding !== undefined)) {
+      const names = bindings.map((binding) => `--${binding.flag}`).join(", ");
+      return new ApiCommandUsageError({
+        message: `Pass at least one of ${names}`,
+        hint: bindings.every((binding) => binding.location === "body")
+          ? "Pass one of the flags, or include one of the fields in --body/--file."
+          : "Pass one of the flags.",
+      });
+    }
+  }
+  const paths = requirements?.every((requirement) => requirement.length === 1)
+    ? requirements.map((requirement) => requirement[0]!)
+    : undefined;
   const missing = paths?.map((path) => flagAt(entry, path));
   if (missing !== undefined && missing.every((binding) => binding !== undefined)) {
     const names = missing.map((binding) => `--${binding.flag}`).join(", ");

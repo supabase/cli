@@ -1,4 +1,5 @@
 import type { OperationId } from "@supabase/api/effect";
+import { isDeepStrictEqual } from "node:util";
 import { Cause, Exit, Predicate, Schema } from "effect";
 import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
 import type {
@@ -189,6 +190,56 @@ const resolve = (spec: JsonObject, value: unknown): unknown => {
     current = lookupRef(spec, ref);
   }
   return undefined;
+};
+
+const COMPOSITION_KEYWORDS = ["anyOf", "oneOf", "allOf"];
+
+/**
+ * The fields of an envelope's attributes: a plain object, or an `anyOf` of closed objects that
+ * share identical properties and differ only in what they require. A field is required only when
+ * every branch requires it.
+ */
+const deriveAttributeFields = (
+  spec: JsonObject,
+  attributes: JsonObject | undefined,
+): { readonly properties: JsonObject; readonly required: ReadonlyArray<unknown> } | undefined => {
+  if (attributes === undefined) return undefined;
+  const properties = asRecord(attributes.properties);
+  const composed = COMPOSITION_KEYWORDS.filter((keyword) => keyword in attributes);
+  if (composed.length === 0) {
+    return attributes.type === "object" && properties !== undefined
+      ? { properties, required: asArray(attributes.required) }
+      : undefined;
+  }
+  if (composed.length !== 1 || composed[0] !== "anyOf" || properties !== undefined) {
+    return undefined;
+  }
+  const branches = asArray(attributes.anyOf).map((branch) => asRecord(resolve(spec, branch)));
+  const resolvedProperties = (branch: JsonObject | undefined) =>
+    Object.entries(asRecord(branch?.properties) ?? {}).map(
+      ([field, schema]) => [field, resolve(spec, schema)] as const,
+    );
+  const [first] = branches;
+  const firstProperties = asRecord(first?.properties);
+  if (
+    first === undefined ||
+    firstProperties === undefined ||
+    branches.length < 2 ||
+    !branches.every(
+      (branch) =>
+        branch?.type === "object" &&
+        branch.additionalProperties === false &&
+        isDeepStrictEqual(resolvedProperties(branch), resolvedProperties(first)),
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    properties: firstProperties,
+    required: asArray(first.required).filter((field) =>
+      branches.every((branch) => asArray(branch?.required).includes(field)),
+    ),
+  };
 };
 
 const JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
@@ -934,14 +985,25 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
         const typeEnum = asArray(asRecord(resolve(spec, dataProperties?.type))?.enum);
         const attributes = asRecord(resolve(spec, dataProperties?.attributes));
         const envelopeType = asString(typeEnum[0]);
-        const isEnvelope =
+        const hasEnvelopeShape =
           Object.keys(properties).length === 1 &&
           typeEnum.length === 1 &&
-          envelopeType !== undefined &&
-          attributes?.type === "object" &&
-          asRecord(attributes.properties) !== undefined;
-        const fieldProperties = isEnvelope ? asRecord(attributes?.properties) : properties;
-        const required = asArray(isEnvelope ? asRecord(attributes)?.required : bodySchema.required);
+          envelopeType !== undefined;
+        const attributeFields = hasEnvelopeShape
+          ? deriveAttributeFields(spec, attributes)
+          : undefined;
+        if (
+          hasEnvelopeShape &&
+          attributeFields === undefined &&
+          COMPOSITION_KEYWORDS.some((keyword) => attributes !== undefined && keyword in attributes)
+        ) {
+          fail(
+            "unsupported in this runtime: envelope attributes use a schema composition other than an anyOf of closed objects over identical properties",
+          );
+        }
+        const isEnvelope = hasEnvelopeShape && attributeFields !== undefined;
+        const fieldProperties = isEnvelope ? attributeFields.properties : properties;
+        const required = isEnvelope ? attributeFields.required : asArray(bodySchema.required);
         requestSchema = asRecord(content["application/json"])?.schema;
         body = isEnvelope
           ? { contentType: "application/json", kind: "json-envelope", type: envelopeType }

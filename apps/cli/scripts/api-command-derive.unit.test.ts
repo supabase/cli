@@ -39,6 +39,32 @@ const envelope = (attributes: Record<string, unknown>) => ({
   },
 });
 
+const unionEnvelope = (branches: ReadonlyArray<Record<string, unknown>>) => ({
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["thing"] },
+              attributes: { anyOf: branches },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+const closedBranch = (properties: Record<string, unknown>, required: ReadonlyArray<string>) => ({
+  type: "object",
+  additionalProperties: false,
+  properties,
+  required,
+});
+
 const thingNoun: ApiNoun = {
   description: "Manage things",
   feature: "warehouse",
@@ -136,6 +162,55 @@ describe("deriveApiCommands", () => {
         flag: "tag",
       },
     ]);
+  });
+
+  it("derives envelope fields from an anyOf of closed objects and requires only what every branch requires", () => {
+    const properties = { name: { type: "string" }, a: { type: "string" }, b: { type: "string" } };
+    const result = derive({
+      "create-thing": operation({
+        ...create,
+        requestBody: unionEnvelope([
+          closedBranch(properties, ["name", "a"]),
+          closedBranch(properties, ["name", "b"]),
+        ]),
+      }),
+    });
+
+    expect(result.problems).toEqual([]);
+    const [entry] = result.entries;
+    expect(entry?.body).toEqual({
+      contentType: "application/json",
+      kind: "json-envelope",
+      type: "thing",
+    });
+    expect(entry?.flags.map((flag) => [flag.name, flag.required])).toEqual([
+      ["name", true],
+      ["a", false],
+      ["b", false],
+    ]);
+    expect(entry?.bindings).toContainEqual({
+      location: "body",
+      name: "a",
+      pointer: "/data/attributes/a",
+      source: "flag",
+      flag: "a",
+    });
+  });
+
+  it("rejects envelope attributes whose anyOf branches differ in properties", () => {
+    const result = derive({
+      "create-thing": operation({
+        ...create,
+        requestBody: unionEnvelope([
+          closedBranch({ a: { type: "string" } }, ["a"]),
+          closedBranch({ c: { type: "string" } }, ["c"]),
+        ]),
+      }),
+    });
+
+    expect(result.problems.join("\n")).toContain(
+      "unsupported in this runtime: envelope attributes use a schema composition",
+    );
   });
 
   it("binds plain body fields at the body root and inlines referenced schemas", () => {

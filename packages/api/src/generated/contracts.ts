@@ -357,6 +357,68 @@ export const ThirdPartyAuth_Output = Schema.Struct({
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 }).annotate({ identifier: "ThirdPartyAuth_Output" });
+export const V2WarehouseTableLayoutPartitionBy = Schema.Union([
+  Schema.Array(
+    Schema.Struct({
+      column: Schema.String.annotate({ description: "Source column name." }).check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      transform: Schema.Union(
+        [
+          Schema.Struct({ kind: Schema.Literal("identity") }),
+          Schema.Struct({ kind: Schema.Literal("year") }),
+          Schema.Struct({ kind: Schema.Literal("month") }),
+          Schema.Struct({ kind: Schema.Literal("day") }),
+          Schema.Struct({ kind: Schema.Literal("hour") }),
+          Schema.Struct({
+            count: Schema.Number.annotate({ description: "Number of hash buckets." })
+              .check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isLessThanOrEqualTo(2147483647).annotate({
+                  expected: "a value less than or equal to 2147483647",
+                }),
+              )
+              .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+            kind: Schema.Literal("bucket"),
+          }),
+        ],
+        { mode: "oneOf" },
+      ),
+    }),
+  ).annotate({
+    description:
+      "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+  }),
+  Schema.Null,
+]).annotate({ identifier: "V2WarehouseTableLayoutPartitionBy" });
+export const V2WarehouseTableLayoutSortBy = Schema.Union(
+  [
+    Schema.Struct({ kind: Schema.Literal("none") }),
+    Schema.Struct({ kind: Schema.Literal("primary_key") }),
+    Schema.Struct({
+      columns: Schema.Array(
+        Schema.Struct({
+          direction: Schema.Literals(["asc", "desc"]),
+          name: Schema.String.annotate({ description: "Source column name." }).check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          nulls: Schema.optionalKey(
+            Schema.Union([Schema.Literals(["first", "last"]), Schema.Null]).annotate({
+              description: "Null placement. Null uses DuckLake's default placement.",
+            }),
+          ),
+        }),
+      ).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      kind: Schema.Literal("columns"),
+    }),
+    Schema.Null,
+  ],
+  { mode: "oneOf" },
+).annotate({
+  description:
+    "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+  identifier: "V2WarehouseTableLayoutSortBy",
+});
 // recursive definitions
 export type JsonValue_Output =
   | string
@@ -20669,85 +20731,28 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
     }),
   ),
   data: Schema.Struct({
-    attributes: Schema.Struct({
-      partition_by: Schema.optionalKey(
-        Schema.Union([
-          Schema.Array(
-            Schema.Struct({
-              column: Schema.String.annotate({ description: "Source column name." }).check(
-                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-              ),
-              transform: Schema.Union(
-                [
-                  Schema.Struct({ kind: Schema.Literal("identity") }),
-                  Schema.Struct({ kind: Schema.Literal("year") }),
-                  Schema.Struct({ kind: Schema.Literal("month") }),
-                  Schema.Struct({ kind: Schema.Literal("day") }),
-                  Schema.Struct({ kind: Schema.Literal("hour") }),
-                  Schema.Struct({
-                    count: Schema.Number.annotate({ description: "Number of hash buckets." })
-                      .check(Schema.isInt().annotate({ expected: "an integer" }))
-                      .check(
-                        Schema.isLessThanOrEqualTo(2147483647).annotate({
-                          expected: "a value less than or equal to 2147483647",
-                        }),
-                      )
-                      .check(
-                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
-                      ),
-                    kind: Schema.Literal("bucket"),
-                  }),
-                ],
-                { mode: "oneOf" },
-              ),
-            }),
-          ).annotate({
+    attributes: Schema.Union([
+      Schema.Struct({
+        partition_by: Schema.optionalKey(V2WarehouseTableLayoutPartitionBy),
+        reset_table: Schema.optionalKey(
+          Schema.Boolean.annotate({
             description:
-              "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+              "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
           }),
-          Schema.Null,
-        ]),
-      ),
-      reset_table: Schema.optionalKey(
-        Schema.Boolean.annotate({
-          description:
-            "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
-        }),
-      ),
-      sort_by: Schema.optionalKey(
-        Schema.Union(
-          [
-            Schema.Struct({ kind: Schema.Literal("none") }),
-            Schema.Struct({ kind: Schema.Literal("primary_key") }),
-            Schema.Struct({
-              columns: Schema.Array(
-                Schema.Struct({
-                  direction: Schema.Literals(["asc", "desc"]),
-                  name: Schema.String.annotate({ description: "Source column name." }).check(
-                    Schema.isMinLength(1).annotate({
-                      expected: "a value with a length of at least 1",
-                    }),
-                  ),
-                  nulls: Schema.optionalKey(
-                    Schema.Union([Schema.Literals(["first", "last"]), Schema.Null]).annotate({
-                      description: "Null placement. Null uses DuckLake's default placement.",
-                    }),
-                  ),
-                }),
-              ).check(
-                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-              ),
-              kind: Schema.Literal("columns"),
-            }),
-            Schema.Null,
-          ],
-          { mode: "oneOf" },
-        ).annotate({
-          description:
-            "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
-        }),
-      ),
-    }),
+        ),
+        sort_by: V2WarehouseTableLayoutSortBy,
+      }),
+      Schema.Struct({
+        partition_by: V2WarehouseTableLayoutPartitionBy,
+        reset_table: Schema.optionalKey(
+          Schema.Boolean.annotate({
+            description:
+              "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+          }),
+        ),
+        sort_by: Schema.optionalKey(V2WarehouseTableLayoutSortBy),
+      }),
+    ]),
     type: Schema.Literal("warehouse_table_layout").annotate({ description: "Resource type." }),
   }),
 });

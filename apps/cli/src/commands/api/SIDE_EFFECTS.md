@@ -73,6 +73,8 @@ With `--wait`, the command also polls the read operation named in its reference 
   outside the declared request-body fields, an unknown nested field or a missing required flag
   fails with no command request sent. Target resolution runs first, so the project picker and
   branch lookups in the table above can still run.
+- A body whose fields form alternatives (the request needs one of several fields) reports a missing
+  choice as `Pass at least one of --a, --b`.
 - `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
   consent. The linked-project cache read in the table above can still run. It shows the local
   request, not a server-resolved impact.

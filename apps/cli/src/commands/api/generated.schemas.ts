@@ -2116,177 +2116,356 @@ export const apiCommandSchemas = {
           data: {
             properties: {
               attributes: {
-                additionalProperties: false,
-                properties: {
-                  partition_by: {
-                    description:
-                      "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
-                    items: {
-                      additionalProperties: false,
-                      properties: {
-                        column: {
-                          description: "Source column name.",
-                          minLength: 1,
-                          type: "string",
+                anyOf: [
+                  {
+                    additionalProperties: false,
+                    properties: {
+                      partition_by: {
+                        description:
+                          "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                        items: {
+                          additionalProperties: false,
+                          properties: {
+                            column: {
+                              description: "Source column name.",
+                              minLength: 1,
+                              type: "string",
+                            },
+                            transform: {
+                              oneOf: [
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["identity"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["year"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["month"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["day"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["hour"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    count: {
+                                      description: "Number of hash buckets.",
+                                      maximum: 2147483647,
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                    },
+                                    kind: {
+                                      enum: ["bucket"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["count", "kind"],
+                                  type: "object",
+                                },
+                              ],
+                            },
+                          },
+                          required: ["column", "transform"],
+                          type: "object",
                         },
-                        transform: {
-                          oneOf: [
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                kind: {
-                                  enum: ["identity"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                kind: {
-                                  enum: ["year"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                kind: {
-                                  enum: ["month"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                kind: {
-                                  enum: ["day"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                kind: {
-                                  enum: ["hour"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["kind"],
-                              type: "object",
-                            },
-                            {
-                              additionalProperties: false,
-                              properties: {
-                                count: {
-                                  description: "Number of hash buckets.",
-                                  maximum: 2147483647,
-                                  type: "integer",
-                                  exclusiveMinimum: 0,
-                                },
-                                kind: {
-                                  enum: ["bucket"],
-                                  type: "string",
-                                },
-                              },
-                              required: ["count", "kind"],
-                              type: "object",
-                            },
-                          ],
-                        },
+                        type: ["array", "null"],
                       },
-                      required: ["column", "transform"],
-                      type: "object",
+                      reset_table: {
+                        description:
+                          "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+                        type: "boolean",
+                      },
+                      sort_by: {
+                        description:
+                          "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                        oneOf: [
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              kind: {
+                                enum: ["none"],
+                                type: "string",
+                              },
+                            },
+                            required: ["kind"],
+                            type: "object",
+                          },
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              kind: {
+                                enum: ["primary_key"],
+                                type: "string",
+                              },
+                            },
+                            required: ["kind"],
+                            type: "object",
+                          },
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              columns: {
+                                items: {
+                                  additionalProperties: false,
+                                  properties: {
+                                    direction: {
+                                      enum: ["asc", "desc"],
+                                      type: "string",
+                                    },
+                                    name: {
+                                      description: "Source column name.",
+                                      minLength: 1,
+                                      type: "string",
+                                    },
+                                    nulls: {
+                                      description:
+                                        "Null placement. Null uses DuckLake's default placement.",
+                                      enum: ["first", "last", null],
+                                      type: ["string", "null"],
+                                    },
+                                  },
+                                  required: ["direction", "name"],
+                                  type: "object",
+                                },
+                                minItems: 1,
+                                type: "array",
+                              },
+                              kind: {
+                                enum: ["columns"],
+                                type: "string",
+                              },
+                            },
+                            required: ["columns", "kind"],
+                            type: "object",
+                          },
+                          {
+                            type: ["object", "null"],
+                            enum: [null],
+                          },
+                        ],
+                      },
                     },
-                    type: ["array", "null"],
+                    required: ["sort_by"],
+                    type: "object",
                   },
-                  reset_table: {
-                    description:
-                      "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
-                    type: "boolean",
-                  },
-                  sort_by: {
-                    description:
-                      "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
-                    oneOf: [
-                      {
-                        additionalProperties: false,
-                        properties: {
-                          kind: {
-                            enum: ["none"],
-                            type: "string",
-                          },
-                        },
-                        required: ["kind"],
-                        type: "object",
-                      },
-                      {
-                        additionalProperties: false,
-                        properties: {
-                          kind: {
-                            enum: ["primary_key"],
-                            type: "string",
-                          },
-                        },
-                        required: ["kind"],
-                        type: "object",
-                      },
-                      {
-                        additionalProperties: false,
-                        properties: {
-                          columns: {
-                            items: {
-                              additionalProperties: false,
-                              properties: {
-                                direction: {
-                                  enum: ["asc", "desc"],
-                                  type: "string",
-                                },
-                                name: {
-                                  description: "Source column name.",
-                                  minLength: 1,
-                                  type: "string",
-                                },
-                                nulls: {
-                                  description:
-                                    "Null placement. Null uses DuckLake's default placement.",
-                                  enum: ["first", "last", null],
-                                  type: ["string", "null"],
-                                },
-                              },
-                              required: ["direction", "name"],
-                              type: "object",
+                  {
+                    additionalProperties: false,
+                    properties: {
+                      partition_by: {
+                        description:
+                          "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                        items: {
+                          additionalProperties: false,
+                          properties: {
+                            column: {
+                              description: "Source column name.",
+                              minLength: 1,
+                              type: "string",
                             },
-                            minItems: 1,
-                            type: "array",
+                            transform: {
+                              oneOf: [
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["identity"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["year"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["month"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["day"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    kind: {
+                                      enum: ["hour"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["kind"],
+                                  type: "object",
+                                },
+                                {
+                                  additionalProperties: false,
+                                  properties: {
+                                    count: {
+                                      description: "Number of hash buckets.",
+                                      maximum: 2147483647,
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                    },
+                                    kind: {
+                                      enum: ["bucket"],
+                                      type: "string",
+                                    },
+                                  },
+                                  required: ["count", "kind"],
+                                  type: "object",
+                                },
+                              ],
+                            },
                           },
-                          kind: {
-                            enum: ["columns"],
-                            type: "string",
-                          },
+                          required: ["column", "transform"],
+                          type: "object",
                         },
-                        required: ["columns", "kind"],
-                        type: "object",
+                        type: ["array", "null"],
                       },
-                      {
-                        type: ["object", "null"],
-                        enum: [null],
+                      reset_table: {
+                        description:
+                          "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+                        type: "boolean",
                       },
-                    ],
+                      sort_by: {
+                        description:
+                          "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                        oneOf: [
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              kind: {
+                                enum: ["none"],
+                                type: "string",
+                              },
+                            },
+                            required: ["kind"],
+                            type: "object",
+                          },
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              kind: {
+                                enum: ["primary_key"],
+                                type: "string",
+                              },
+                            },
+                            required: ["kind"],
+                            type: "object",
+                          },
+                          {
+                            additionalProperties: false,
+                            properties: {
+                              columns: {
+                                items: {
+                                  additionalProperties: false,
+                                  properties: {
+                                    direction: {
+                                      enum: ["asc", "desc"],
+                                      type: "string",
+                                    },
+                                    name: {
+                                      description: "Source column name.",
+                                      minLength: 1,
+                                      type: "string",
+                                    },
+                                    nulls: {
+                                      description:
+                                        "Null placement. Null uses DuckLake's default placement.",
+                                      enum: ["first", "last", null],
+                                      type: ["string", "null"],
+                                    },
+                                  },
+                                  required: ["direction", "name"],
+                                  type: "object",
+                                },
+                                minItems: 1,
+                                type: "array",
+                              },
+                              kind: {
+                                enum: ["columns"],
+                                type: "string",
+                              },
+                            },
+                            required: ["columns", "kind"],
+                            type: "object",
+                          },
+                          {
+                            type: ["object", "null"],
+                            enum: [null],
+                          },
+                        ],
+                      },
+                    },
+                    required: ["partition_by"],
+                    type: "object",
                   },
-                },
-                type: "object",
+                ],
               },
               type: {
                 description: "Resource type.",

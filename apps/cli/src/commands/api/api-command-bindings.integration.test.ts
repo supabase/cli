@@ -202,7 +202,9 @@ const inputsOf = (
     "attributes",
   ]);
   const envelope = Object.keys(attributes).length > 0;
-  const container = envelope ? attributes : operation.requestSchema;
+  // Union attributes share their properties across branches; the first branch is one valid choice.
+  const [firstBranch] = asList(attributes["anyOf"]).map(resolveRef);
+  const container = firstBranch ?? (envelope ? attributes : operation.requestSchema);
   const required = asList(container["required"]);
   const scalarTypes = ["boolean", "integer", "number", "string"];
   const fields = Object.entries(asRecord(container["properties"])).map(([field, schema]): Input => {
