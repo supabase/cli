@@ -15,17 +15,13 @@ const scalarFlag = (flag: ApiCommandFlag): Flag.Flag<string | number | boolean> 
       return Flag.String(flag.name);
     case "json":
       return Flag.String(flag.name).pipe(Flag.withMetavar("json"));
-    case "integer":
-      return Flag.Int(flag.name);
-    case "number":
-      return Flag.Finite(flag.name);
     case "boolean":
       return Flag.Boolean(flag.name);
   }
 };
 
 /** Where a generated flag's value lands in the request. */
-export type ApiFlagLocation = "query" | "header" | "body";
+export type ApiFlagLocation = "query" | "body";
 
 const describedFlag = (flag: ApiCommandFlag, location: ApiFlagLocation): string => {
   const base = flag.description ?? `Set ${flag.name}.`;

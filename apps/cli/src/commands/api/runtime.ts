@@ -60,16 +60,13 @@ interface ResolvedWait {
   readonly statusEntry: ApiCommandEntry;
 }
 
-const resolveWait = (
-  entry: ApiCommandEntry,
-  entries: ReadonlyArray<ApiCommandEntry>,
-): ResolvedWait | undefined => {
+const resolveWait = (entry: ApiCommandEntry): ResolvedWait | undefined => {
   const { wait } = entry;
   if (wait === undefined) return undefined;
-  const publicRead = entries.find((candidate) => candidate.operationId === wait.read);
+  const publicRead = apiCommands.find((candidate) => candidate.operationId === wait.read);
   if (publicRead !== undefined) return { wait, readEntry: publicRead, statusEntry: publicRead };
   const hidden = apiPollTargets.find((candidate) => candidate.operationId === wait.read);
-  const inspect = entries.find((candidate) => candidate.operationId === hidden?.inspect);
+  const inspect = apiCommands.find((candidate) => candidate.operationId === hidden?.inspect);
   return hidden === undefined || inspect === undefined
     ? undefined
     : { wait, readEntry: hidden, statusEntry: inspect };
@@ -265,13 +262,13 @@ const handle = Effect.fn("api-command.run")(function* (
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");
-        return yield* writeApiResponse(resolved.readEntry, settled, format);
+        return yield* writeApiResponse(settled, format);
       }
       const response = yield* withTask(progress, summaryText(entry), () =>
         sendApiRequest(api, entry, decoded),
       );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
-      return yield* writeApiResponse(entry, response, format);
+      return yield* writeApiResponse(response, format);
     }).pipe(Effect.ensuring(flags.dryRun ? Effect.void : cache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
@@ -320,9 +317,9 @@ const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefine
   );
 };
 
-const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>) => {
+const leafOf = (entry: ApiCommandEntry) => {
   const verb = entry.command[entry.command.length - 1] ?? entry.operationId;
-  const resolved = resolveWait(entry, entries);
+  const resolved = resolveWait(entry);
   const config = flagConfig(entry, resolved !== undefined);
   return Command.make(verb, config).pipe(
     Command.withDescription(entry.description ?? entry.summary),
@@ -354,21 +351,15 @@ type ApiLeaf = ReturnType<typeof leafOf>;
 /** A generated group: it fails and requires what its generated leaves do. */
 type ApiGroup = Command.Command<string, {}, {}, Command.Error<ApiLeaf>, Command.Services<ApiLeaf>>;
 
-/** The noun definitions and entries the generated commands are built from. */
-interface ApiCommandSource {
-  readonly nouns: Readonly<Record<string, ApiNoun>>;
-  readonly entries: ReadonlyArray<ApiCommandEntry>;
-}
-
 const startsWith = (command: ReadonlyArray<string>, prefix: ReadonlyArray<string>): boolean =>
   prefix.every((word, index) => command[index] === word);
 
 const leafCache = new WeakMap<ApiCommandEntry, ApiLeaf>();
 
-const cachedLeaf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>): ApiLeaf => {
+const cachedLeaf = (entry: ApiCommandEntry): ApiLeaf => {
   const cached = leafCache.get(entry);
   if (cached !== undefined) return cached;
-  const leaf = leafOf(entry, entries);
+  const leaf = leafOf(entry);
   leafCache.set(entry, leaf);
   return leaf;
 };
@@ -377,13 +368,9 @@ const groupDescription = (path: ReadonlyArray<string>, noun: ApiNoun): string | 
   path.length === 1 ? noun.description : noun.groups?.[path.slice(1).join(".")];
 
 /** The group at `path`, holding the generated commands below it. */
-const groupAt = (
-  path: ReadonlyArray<string>,
-  noun: ApiNoun,
-  entries: ReadonlyArray<ApiCommandEntry>,
-): ApiGroup => {
+const groupAt = (path: ReadonlyArray<string>, noun: ApiNoun): ApiGroup => {
   const name = path[path.length - 1] ?? "";
-  const under = entries.filter((entry) => startsWith(entry.command, path));
+  const under = apiCommands.filter((entry) => startsWith(entry.command, path));
   const childNames = new Set(
     under.flatMap((entry) =>
       entry.command.length > path.length + 1
@@ -393,8 +380,8 @@ const groupAt = (
   );
   const leaves = under
     .filter((entry) => entry.command.length === path.length + 1)
-    .map((entry) => cachedLeaf(entry, entries));
-  const groups = [...childNames].map((child) => groupAt([...path, child], noun, entries));
+    .map((entry) => cachedLeaf(entry));
+  const groups = [...childNames].map((child) => groupAt([...path, child], noun));
   const description = `${groupDescription(path, noun) ?? name} (experimental)`;
   return Command.make(name).pipe(
     Command.withDescription(description),
@@ -410,17 +397,12 @@ const groupAt = (
 export const withApiCommands = <const C extends ReadonlyArray<Command.Command.Any>>(
   handWritten: C,
   enabledFeatures: ReadonlyArray<string>,
-  source: ApiCommandSource = { nouns, entries: apiCommands },
 ): ReadonlyArray<C[number] | ApiGroup> => {
   const merged: Array<C[number] | ApiGroup> = [...handWritten];
-  for (const [name, noun] of Object.entries(source.nouns)) {
+  for (const [name, noun] of Object.entries(nouns)) {
     if (!enabledFeatures.includes(noun.feature)) continue;
     const position = merged.findIndex((command) => command.name > name);
-    merged.splice(
-      position < 0 ? merged.length : position,
-      0,
-      groupAt([name], noun, source.entries),
-    );
+    merged.splice(position < 0 ? merged.length : position, 0, groupAt([name], noun));
   }
   return merged;
 };

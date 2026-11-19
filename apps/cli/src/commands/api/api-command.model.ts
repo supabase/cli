@@ -26,13 +26,6 @@ export type ApiCommandBinding =
       readonly flag: string;
     }
   | {
-      readonly location: "header";
-      /** Header name as declared in the spec. */
-      readonly name: string;
-      readonly source: "flag";
-      readonly flag: string;
-    }
-  | {
       readonly location: "body";
       /** Body field name. */
       readonly name: string;
@@ -42,12 +35,12 @@ export type ApiCommandBinding =
       readonly flag: string;
     };
 
-/** One flag of a generated command, derived from a query parameter, a header parameter or a request body field. */
+/** One flag of a generated command, derived from a query parameter or a request body field. */
 export interface ApiCommandFlag {
   /** Kebab-case flag name without the leading dashes. */
   readonly name: string;
   /** `json` takes a JSON value for a body field that is not a scalar or an array of scalars. */
-  readonly type: "string" | "integer" | "number" | "boolean" | "json";
+  readonly type: "string" | "boolean" | "json";
   readonly choices?: readonly string[];
   readonly repeatable: boolean;
   readonly required: boolean;
@@ -85,17 +78,11 @@ export interface ApiCommandEntry {
   readonly confirmDescription?: true;
   /** Feature that gates the command's noun. */
   readonly feature: string;
-  /** Request body shape; `json-envelope` bodies wrap fields in `data.attributes`. */
+  /** Request body: an envelope that wraps the fields in `data.attributes`. */
   readonly body?: {
     readonly contentType: "application/json";
-    readonly kind: "json-object" | "json-envelope";
     /** The envelope's `data.type` value. */
-    readonly type?: string;
-  };
-  /** Success response shape from the first 2xx response. */
-  readonly response: {
-    readonly status: number;
-    readonly kind: "json" | "text" | "empty";
+    readonly type: string;
   };
   /** The positional argument that carries the operation's one non-`ref` path parameter. */
   readonly argument?: {
@@ -108,10 +95,7 @@ export interface ApiCommandEntry {
 }
 
 /** The operation a wait polls: a generated command's entry or a hidden {@link ApiPollTarget}. */
-export type ApiPollRead = Pick<
-  ApiCommandEntry,
-  "operationId" | "definition" | "summary" | "response"
->;
+export type ApiPollRead = Pick<ApiCommandEntry, "operationId" | "definition" | "summary">;
 
 /** A response-linked read used for polling without registering a CLI command. */
 export interface ApiPollTarget extends ApiPollRead {

@@ -70,7 +70,6 @@ const entryOf = (path: string): ApiCommandEntry => {
 };
 
 const enable = entryOf("warehouse enable");
-const status = entryOf("warehouse status");
 
 const ENABLE_PATH = `/v2/projects/${VALID_REF}/warehouse/enable`;
 const STATUS_PATH = `/v2/projects/${VALID_REF}/warehouse/status`;
@@ -914,6 +913,19 @@ describe("generated warehouse commands", () => {
           expect(out.stdoutText).toMatch(/Replication state\s+following_wal/);
           expect(out.stdoutText).toMatch(/Replication feedback\n\s+Source\s+pipeline_apply/);
           expect(out.stdoutText).toMatch(/Flush lag bytes\s+2048/);
+        });
+      },
+    );
+
+    it.effect.each(["", ".."])(
+      "rejects the table id %j as a usage error and sends nothing",
+      (value) => {
+        const { sent, run } = setup(["warehouse", "tables", "get", value], { route: ok(body) });
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandUsageError);
+          expect(failure).toMatchObject({ message: '<table-id> must not be empty, "." or "..".' });
+          expect(sent).toEqual([]);
         });
       },
     );
@@ -2266,52 +2278,25 @@ describe("generated warehouse commands", () => {
   });
 
   describe("generic response writing", () => {
-    const fixture: ApiCommandEntry = {
-      ...status,
-      command: ["fixture", "read"],
-    };
-    const fixtureRoot = (entry: ApiCommandEntry) =>
-      Command.make("supabase").pipe(
-        Command.withSubcommands(
-          withApiCommands([], ["warehouse"], {
-            nouns: { fixture: { description: "Fixture commands", feature: "warehouse" } },
-            entries: [entry],
-          }),
-        ),
-        Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
-      );
-
-    it.effect.each([
-      {
-        name: "a text body as one JSON string",
-        kind: "text" as const,
-        reply: { status: 200, body: "plain text\nsecond line" },
-        stdout: '"plain text\\nsecond line"\n',
-      },
-      {
-        name: "an empty body as null",
-        kind: "empty" as const,
-        reply: { status: 204 },
-        stdout: "null\n",
-      },
-      {
-        name: "a JSON body byte for byte, unknown fields and spacing included",
-        kind: "json" as const,
-        reply: { status: 200, body: '{"z": 1,  "known": {"future": [1, 2]}}' },
-        stdout: '{"z": 1,  "known": {"future": [1, 2]}}',
-      },
-    ])("writes $name", ({ kind, reply, stdout }) => {
-      const entry: ApiCommandEntry = {
-        ...fixture,
-        response: { status: reply.status, kind },
-      };
-      const { out, run } = setup(["fixture", "read"], {
-        root: fixtureRoot(entry),
-        route: () => reply,
+    it.effect("writes a JSON body byte for byte, unknown fields and spacing included", () => {
+      const raw = '{"z": 1,  "known": {"future": [1, 2]}}';
+      const { out, run } = setup(["warehouse", "status"], {
+        route: () => ({ status: 200, body: raw }),
       });
       return Effect.gen(function* () {
         yield* run;
-        expect(out.stdoutText).toBe(stdout);
+        expect(out.stdoutText).toBe(raw);
+      });
+    });
+
+    it.effect("writes an empty accepted body as null", () => {
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({ status: 202 }),
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe("null\n");
       });
     });
   });

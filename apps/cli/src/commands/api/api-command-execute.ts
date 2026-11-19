@@ -149,31 +149,22 @@ const parseResponse = (response: ApiCommandResponse): unknown =>
   Option.getOrUndefined(decodeJsonText(textDecoder.decode(response.bytes)));
 
 /**
- * Writes a success response. `json` passes JSON bytes through untouched, prints text as a JSON
- * string and an empty body as `null`; `text` renders the response for a person.
+ * Writes a success response. JSON bytes pass through untouched in machine output; a 2xx without a
+ * body prints as `null` there and as `Done.` for a person.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
-  entry: Pick<ApiCommandEntry, "response">,
   response: ApiCommandResponse,
   format: ApiOutputFormat,
 ) {
   const output = yield* Output;
-  const hasBody = response.bytes.length > 0;
-  const text = textDecoder.decode(response.bytes);
-  if (format === "text") {
-    if (!hasBody || entry.response.kind === "empty") return yield* output.raw("Done.\n");
-    const parsed = entry.response.kind === "json" ? decodeJsonText(text) : Option.none();
-    if (Option.isNone(parsed)) return yield* output.raw(text.endsWith("\n") ? text : `${text}\n`);
-    return yield* output.raw(renderResponseText(parsed.value));
+  if (response.bytes.length === 0) {
+    return yield* output.raw(format === "text" ? "Done.\n" : "null\n");
   }
-  if (entry.response.kind === "json" && hasBody) return yield* output.rawBytes(response.bytes);
-  const document =
-    !hasBody || entry.response.kind === "empty"
-      ? null
-      : entry.response.kind === "text"
-        ? text
-        : Option.getOrElse(decodeJsonText(text), () => text);
-  return yield* output.raw(`${encodeJsonValue(document)}\n`);
+  if (format === "json") return yield* output.rawBytes(response.bytes);
+  const text = textDecoder.decode(response.bytes);
+  const parsed = decodeJsonText(text);
+  if (Option.isNone(parsed)) return yield* output.raw(text.endsWith("\n") ? text : `${text}\n`);
+  return yield* output.raw(renderResponseText(parsed.value));
 });
 
 interface WaitInput {

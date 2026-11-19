@@ -82,10 +82,7 @@ export const readBodyOverride = Effect.fn("api-command.read-body")(function* (in
 
 const initialBody = (entry: ApiCommandEntry): Readonly<Record<string, unknown>> | undefined => {
   if (entry.body === undefined) return undefined;
-  if (entry.body.kind === "json-envelope") {
-    return { data: { type: entry.body.type, attributes: {} } };
-  }
-  return {};
+  return { data: { type: entry.body.type, attributes: {} } };
 };
 
 const parseJsonFlag = (flag: string, text: ApiFlagValue) =>
@@ -100,7 +97,7 @@ const parseJsonFlag = (flag: string, text: ApiFlagValue) =>
   );
 
 /**
- * The flat operation input `{...bodyFields, ...query, ...headers, ref, <path parameter>}`. A body
+ * The flat operation input `{...bodyFields, ...query, ref, <path parameter>}`. A body
  * override is the starting point when given, else the synthesized envelope; only flags that were
  * passed are written, each at its own pointer. An override may only carry top-level fields the
  * request body declares, and the path values are applied last so body data cannot retarget the
@@ -132,7 +129,6 @@ export const assembleInput = Effect.fnUntraced(function* (
   );
   let body: unknown = Option.getOrElse(bodyOverride, () => initialBody(entry));
   const query: Record<string, unknown> = {};
-  const headers: Record<string, unknown> = {};
   const positional: Record<string, unknown> = {};
   for (const binding of entry.bindings) {
     if (binding.source === "argument") {
@@ -151,7 +147,6 @@ export const assembleInput = Effect.fnUntraced(function* (
     const value = flagValues[binding.flag];
     if (value === undefined || Option.isNone(value)) continue;
     if (binding.location === "query") query[binding.name] = value.value;
-    if (binding.location === "header") headers[binding.name] = value.value;
     if (binding.location === "body") {
       const parsed = jsonFlagNames.has(binding.flag)
         ? yield* parseJsonFlag(binding.flag, value.value)
@@ -159,7 +154,7 @@ export const assembleInput = Effect.fnUntraced(function* (
       body = writePointer(body, binding.pointer, parsed);
     }
   }
-  return { ...(isRecord(body) ? body : {}), ...query, ...headers, ref, ...positional };
+  return { ...(isRecord(body) ? body : {}), ...query, ref, ...positional };
 });
 
 type Path = ReadonlyArray<PropertyKey>;
@@ -217,11 +212,7 @@ const flagAt = (entry: ApiCommandEntry, path: Path) => {
   for (const binding of entry.bindings) {
     if (binding.source !== "flag") continue;
     if (binding.location === "body" && binding.pointer === pointer) return binding;
-    if (
-      (binding.location === "query" || binding.location === "header") &&
-      path.length === 1 &&
-      path[0] === binding.name
-    ) {
+    if (binding.location === "query" && path.length === 1 && path[0] === binding.name) {
       return binding;
     }
   }
@@ -331,12 +322,7 @@ export const consentDetails = (entry: ApiCommandEntry, decoded: object): Readonl
   const { pathParams } = definitionOf(entry);
   const preview = previewRequest(entry, decoded);
   const attributes = readPointer(preview.body, "/data/attributes");
-  const bodyFields =
-    entry.body?.kind === "json-envelope" && isRecord(attributes)
-      ? attributes
-      : isRecord(preview.body)
-        ? preview.body
-        : {};
+  const bodyFields = isRecord(attributes) ? attributes : {};
   return [
     ...pathParams
       .filter((name) => name !== "ref")

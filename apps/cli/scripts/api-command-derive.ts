@@ -36,9 +36,8 @@ const CREDENTIAL_TOKENS: ReadonlySet<string> = new Set([
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/u;
-/** Headers the request builder owns; a spec that declares them gets no flag. */
-const UNMAPPED_HEADERS: ReadonlySet<string> = new Set(["authorization", "content-type", "accept"]);
-const NON_SECRET_HEADERS: ReadonlySet<string> = new Set(["idempotency-key"]);
+/** Headers the request builder owns; a spec may declare them, and they get no flag. */
+const CLIENT_HEADERS: ReadonlySet<string> = new Set(["authorization", "content-type", "accept"]);
 
 export class ApiCommandGenerationError extends Schema.TaggedError<ApiCommandGenerationError>()(
   "ApiCommandGenerationError",
@@ -128,6 +127,8 @@ interface DeriveInput {
 interface DeriveResult {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
   readonly pollTargets: ReadonlyArray<ApiPollTarget>;
+  /** Success status code of each generated command's operation, for the reference. */
+  readonly successStatuses: ReadonlyMap<string, number>;
   readonly problems: ReadonlyArray<string>;
 }
 
@@ -235,19 +236,14 @@ const SCHEMA_LIST_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const escapePointer = (segment: string): string =>
   segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
-interface SuccessResponse {
-  readonly status: number;
-  readonly kind: "json" | "text" | "empty";
-}
-
-/** Classifies the 2xx responses; the first one by status code is the one commands report. */
-const classifySuccess = (
+/** The first 2xx status code; every command and poll target needs its success response to be JSON. */
+const successStatus = (
   spec: JsonObject,
   operation: Operation,
   fail: (reason: string) => void,
-): SuccessResponse | undefined => {
+): number | undefined => {
   const responses = asRecord(operation.node.responses) ?? {};
-  const classified: Array<SuccessResponse> = [];
+  const statuses: Array<number> = [];
   for (const code of Object.keys(responses).sort()) {
     if (!code.startsWith("2")) continue;
     const status = Number(code);
@@ -256,24 +252,18 @@ const classifySuccess = (
       continue;
     }
     const content = asRecord(asRecord(resolve(spec, responses[code]))?.content) ?? {};
-    const types = Object.keys(content);
-    const json = jsonMediaType(content);
-    if (types.length === 0) {
-      classified.push({ status, kind: "empty" });
-    } else if (json !== undefined) {
-      classified.push({ status, kind: "json" });
-    } else if (types.every((type) => type.startsWith("text/") && type !== "text/event-stream")) {
-      classified.push({ status, kind: "text" });
-    } else {
+    if (jsonMediaType(content) === undefined) {
       fail(
-        `unsupported in this runtime: ${code} response is binary or streaming (${types.join(", ")})`,
+        `unsupported in this runtime: ${code} response is not JSON (${Object.keys(content).join(", ") || "no content"})`,
       );
+      continue;
     }
+    statuses.push(status);
   }
-  if (classified.length === 0 && !Object.keys(responses).some((code) => code.startsWith("2"))) {
+  if (statuses.length === 0 && !Object.keys(responses).some((code) => code.startsWith("2"))) {
     fail("operation has no 2xx response");
   }
-  return classified[0];
+  return statuses[0];
 };
 
 const STABILITY_NOTICE = /\s*This endpoint is currently in its \*\*[^*]+\*\* stage\.\s*$/u;
@@ -310,9 +300,7 @@ const describeScalar = (
   if (schema === undefined) return undefined;
   if (["anyOf", "oneOf", "allOf", "not"].some((keyword) => keyword in schema)) return undefined;
   const type = schema.type;
-  if (type !== "string" && type !== "integer" && type !== "number" && type !== "boolean") {
-    return undefined;
-  }
+  if (type !== "string" && type !== "boolean") return undefined;
   if (schema.enum === undefined) return { type };
   const choices = asArray(schema.enum);
   if (type !== "string" || !choices.every((choice) => typeof choice === "string")) {
@@ -329,6 +317,13 @@ const describeFlagSchema = (spec: JsonObject, raw: unknown): FlagShape | undefin
   }
   const scalar = describeScalar(spec, raw);
   return scalar === undefined ? undefined : { ...scalar, repeatable: false };
+};
+
+/** Whether a schema is a number or integer, or an array of them. */
+const isNumeric = (spec: JsonObject, raw: unknown): boolean => {
+  const schema = asRecord(resolve(spec, raw));
+  const item = schema?.type === "array" ? asRecord(resolve(spec, schema.items)) : schema;
+  return item?.type === "integer" || item?.type === "number";
 };
 
 const isSecretField = (spec: JsonObject, raw: unknown): boolean => {
@@ -652,6 +647,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
   const metadata = readMetadata(operations, generated, problems);
   const hidden = new Map<string, HiddenRead>();
   const entries: Array<ApiCommandEntry> = [];
+  const successStatuses = new Map<string, number>();
   const commandOwners = new Map<string, string>();
   const groupPaths = new Set<string>();
 
@@ -703,7 +699,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     if (summary === undefined) fail("operation has no summary");
 
     const fields: Array<{
-      readonly location: "query" | "header" | "body";
+      readonly location: "query" | "body";
       readonly key: string;
       readonly pointer?: string;
       readonly shape: FlagShape;
@@ -744,30 +740,8 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
           break;
         }
         case "header": {
-          const lowerName = parameterName.toLowerCase();
-          if (UNMAPPED_HEADERS.has(lowerName)) break;
-          const shape = describeFlagSchema(spec, parameter.schema);
-          if (
-            isSecretField(spec, parameter.schema) ||
-            (credentialLike(parameterName) && !NON_SECRET_HEADERS.has(lowerName))
-          ) {
-            fail(
-              `unsupported in this runtime: header parameter "${parameterName}" carries a credential, and the dry-run preview masks only body fields`,
-            );
-          } else if (shape === undefined || shape.repeatable) {
-            fail(
-              `unsupported in this runtime: header parameter "${parameterName}" is not a scalar`,
-            );
-          } else {
-            fields.push({
-              location: "header",
-              key: parameterName,
-              shape,
-              required: parameter.required === true,
-              description:
-                asString(parameter.description) ?? schemaDescription(spec, parameter.schema),
-              writeOnly: false,
-            });
+          if (!CLIENT_HEADERS.has(parameterName.toLowerCase())) {
+            fail(`unsupported in this runtime: header parameter "${parameterName}"`);
           }
           break;
         }
@@ -837,17 +811,19 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
             "unsupported in this runtime: envelope attributes use a schema composition other than an anyOf of closed objects over identical properties",
           );
         }
-        const isEnvelope = hasEnvelopeShape && attributeFields !== undefined;
-        const fieldProperties = isEnvelope ? attributeFields.properties : properties;
-        const required = isEnvelope ? attributeFields.required : asArray(bodySchema.required);
-        body = isEnvelope
-          ? { contentType: "application/json", kind: "json-envelope", type: envelopeType }
-          : { contentType: "application/json", kind: "json-object" };
-        for (const [field, schema] of Object.entries(fieldProperties ?? {})) {
+        const required = attributeFields?.required ?? [];
+        if (attributeFields === undefined) {
+          fail("unsupported in this runtime: request body is not a data envelope");
+        } else if (envelopeType !== undefined) {
+          body = { contentType: "application/json", type: envelopeType };
+        }
+        for (const [field, schema] of Object.entries(attributeFields?.properties ?? {})) {
           const scalarShape = describeFlagSchema(spec, schema);
           const secret = findSecret(spec, schema, field);
           if (field === "dry_run") {
             fail('unsupported in this runtime: server-side "dry_run" body field');
+          } else if (scalarShape === undefined && isNumeric(spec, schema)) {
+            fail(`unsupported in this runtime: numeric body field "${field}"`);
           } else if (scalarShape === undefined && secret !== undefined) {
             fail(
               `unsupported in this runtime: body field "${field}" ${secret === field ? "is a secret" : `holds the secret "${secret}"`}, and the dry-run preview masks only scalar flag values`,
@@ -856,9 +832,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
           fields.push({
             location: "body",
             key: field,
-            pointer: isEnvelope
-              ? `/data/attributes/${escapePointer(field)}`
-              : `/${escapePointer(field)}`,
+            pointer: `/data/attributes/${escapePointer(field)}`,
             shape: scalarShape ?? { type: "json", repeatable: false },
             required: required.includes(field),
             description: schemaDescription(spec, schema),
@@ -926,7 +900,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
               flag: flagName,
             }
           : {
-              location: field.location === "header" ? "header" : "query",
+              location: "query",
               name: field.key,
               source: "flag",
               flag: flagName,
@@ -951,15 +925,16 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       lintWait({ spec, operations, operation, wait, fail });
     }
 
-    const response = classifySuccess(spec, operation, fail);
+    const status = successStatus(spec, operation, fail);
     if (problems.length > failuresBefore || summary === undefined) continue;
-    if (response === undefined) continue;
+    if (status === undefined) continue;
     const description = stripStabilityNotice(asString(operation.node.description));
     const policy = input.policies?.[operationId];
     if (policy?.confirmDescription && (operation.method === "GET" || !description)) {
       fail("confirmation details require a mutation with an API description");
       continue;
     }
+    successStatuses.set(operationId, status);
     entries.push({
       command,
       operationId,
@@ -970,7 +945,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       ...policy,
       feature: noun.feature,
       ...(body === undefined ? {} : { body }),
-      response: { status: response.status, kind: response.kind },
       ...(positional === undefined
         ? {}
         : {
@@ -1024,21 +998,10 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       fail("polling target is missing a summary");
       continue;
     }
-    const response = classifySuccess(spec, operation, fail);
-    if (response === undefined) continue;
-    if (response.kind !== "json") {
-      fail("polling target must return JSON");
-      continue;
-    }
-    pollTargets.push({
-      operationId,
-      definition,
-      summary,
-      response: { status: response.status, kind: response.kind },
-      inspect: inspectId,
-    });
+    if (successStatus(spec, operation, fail) === undefined) continue;
+    pollTargets.push({ operationId, definition, summary, inspect: inspectId });
   }
-  return { entries, pollTargets, problems };
+  return { entries, pollTargets, successStatuses, problems };
 }
 
 function lintWait(input: {

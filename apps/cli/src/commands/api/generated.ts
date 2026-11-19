@@ -11,10 +11,6 @@ export const apiCommands = [
       "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: usql -W 'flightsql://postgres@<host>:443?tls=enabled'.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [],
     bindings: [
       {
@@ -33,10 +29,6 @@ export const apiCommands = [
       "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.",
     readOnly: false,
     feature: "warehouse",
-    response: {
-      status: 202,
-      kind: "json",
-    },
     flags: [
       {
         name: "delete-data",
@@ -82,12 +74,7 @@ export const apiCommands = [
     feature: "warehouse",
     body: {
       contentType: "application/json",
-      kind: "json-envelope",
       type: "warehouse_setup",
-    },
-    response: {
-      status: 202,
-      kind: "json",
     },
     flags: [
       {
@@ -193,10 +180,6 @@ export const apiCommands = [
       "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [
       {
         name: "attributes",
@@ -287,10 +270,6 @@ export const apiCommands = [
       "Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [
       {
         name: "attributes",
@@ -384,12 +363,7 @@ export const apiCommands = [
     feature: "warehouse",
     body: {
       contentType: "application/json",
-      kind: "json-envelope",
       type: "warehouse_replication_change",
-    },
-    response: {
-      status: 202,
-      kind: "json",
     },
     flags: [
       {
@@ -441,12 +415,7 @@ export const apiCommands = [
     feature: "warehouse",
     body: {
       contentType: "application/json",
-      kind: "json-envelope",
       type: "warehouse_replication_change",
-    },
-    response: {
-      status: 202,
-      kind: "json",
     },
     flags: [
       {
@@ -498,12 +467,7 @@ export const apiCommands = [
     feature: "warehouse",
     body: {
       contentType: "application/json",
-      kind: "json-envelope",
       type: "warehouse_replication_resync",
-    },
-    response: {
-      status: 202,
-      kind: "json",
     },
     flags: [
       {
@@ -552,10 +516,6 @@ export const apiCommands = [
       "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [],
     bindings: [
       {
@@ -574,10 +534,6 @@ export const apiCommands = [
       "Returns one source table selected for Warehouse replication by its source OID, from the same observations and with the same status and freshness attributes as the Warehouse tables list. Returns 404 when the table is not selected for replication, including when Warehouse is not set up, its publication is missing, or it is being disabled.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     argument: {
       name: "table-id",
       description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
@@ -606,10 +562,6 @@ export const apiCommands = [
       "Returns the sorting and partitioning rules saved for one replicated table, by source OID, beside the layout the DuckLake catalog records for it. The two are reported separately and can differ: the replicator applies saved rules when it starts and then hourly, and a stopped pipeline applies them on its next start. observation_status reports whether the catalog was read; desired rules are returned even when it was not. A catalog layout governs files written after it changes and does not establish that existing files are sorted or partitioned. Returns 404 when the table is not replicated, including when Warehouse is not set up, is being disabled or failed to clean up.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     argument: {
       name: "table-id",
       description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
@@ -640,12 +592,7 @@ export const apiCommands = [
     feature: "warehouse",
     body: {
       contentType: "application/json",
-      kind: "json-envelope",
       type: "warehouse_table_layout",
-    },
-    response: {
-      status: 202,
-      kind: "json",
     },
     argument: {
       name: "table-id",
@@ -721,10 +668,6 @@ export const apiCommands = [
       "Lists the source tables selected for Warehouse replication with their replication status and freshness, from the same observations as the Warehouse status. Freshness comes from the replication slot that carries each table: its own sync slot until it follows changes, then the pipeline apply slot; one slot never stands in for the other. lag_ms is that slot's flush lag. Postgres reports no lag time for a caught-up slot without new WAL, so lag_ms can be null while replication_feedback.flush_lag_bytes is 0; neither is ever filled with zero when unknown. observed_at is when the API read the replication state, not when data last synchronized. A stopped, failed or unreadable pipeline reports its tables as stopped or unknown rather than live, and keeps each table's last recorded state. Returns an empty list when Warehouse is not set up, its publication is missing, or it is being disabled or failed to clean up.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [],
     bindings: [
       {
@@ -743,10 +686,6 @@ export const apiCommands = [
       "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.",
     readOnly: true,
     feature: "warehouse",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     flags: [
       {
         name: "operation-id",
@@ -786,10 +725,6 @@ export const apiPollTargets = [
     operationId: "v2-get-warehouse-setup",
     definition: "v2GetWarehouseSetup",
     summary: "Get Warehouse initial synchronization status",
-    response: {
-      status: 200,
-      kind: "json",
-    },
     inspect: "v2-get-warehouse-status",
   },
 ] as const satisfies readonly ApiPollTarget[];

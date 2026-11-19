@@ -89,7 +89,7 @@ const main = Effect.gen(function* () {
     return yield* new ApiCommandGenerationError({ problems: ["openapi.json is not an object"] });
   }
 
-  const { entries, pollTargets, problems } = deriveApiCommands({
+  const { entries, pollTargets, successStatuses, problems } = deriveApiCommands({
     spec,
     generated: generatedOperations,
     policies: commandPolicies,
@@ -106,7 +106,7 @@ const main = Effect.gen(function* () {
     },
     {
       relative: "src/commands/api/generated.md",
-      source: renderApiCommandReference({ entries, pollTargets }),
+      source: renderApiCommandReference({ entries, pollTargets, successStatuses }),
     },
   ];
 

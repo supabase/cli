@@ -94,9 +94,6 @@ const sampleOf = (schema: unknown): unknown => {
   switch (node["type"]) {
     case "boolean":
       return true;
-    case "integer":
-    case "number":
-      return 1;
     case "array":
       return [sampleOf(node["items"]), `${String(sampleOf(node["items"]))}-2`];
     case "string": {
@@ -167,7 +164,7 @@ const inputsOf = (
   const [firstBranch] = asList(attributes["anyOf"]).map(resolveRef);
   const container = firstBranch ?? (envelope ? attributes : operation.requestSchema);
   const required = asList(container["required"]);
-  const scalarTypes = ["boolean", "integer", "number", "string"];
+  const scalarTypes = ["boolean", "string"];
   const fields = Object.entries(asRecord(container["properties"])).map(([field, schema]): Input => {
     const node = resolveRef(schema);
     const scalar =

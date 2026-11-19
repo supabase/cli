@@ -149,12 +149,8 @@ describe("deriveApiCommands", () => {
 
     expect(result.problems).toEqual([]);
     const [entry] = result.entries;
-    expect(entry?.body).toEqual({
-      contentType: "application/json",
-      kind: "json-envelope",
-      type: "thing",
-    });
-    expect(entry?.response).toEqual({ status: 200, kind: "json" });
+    expect(entry?.body).toEqual({ contentType: "application/json", type: "thing" });
+    expect([...result.successStatuses]).toEqual([["create-thing", 200]]);
     expect(entry?.flags.map((flag) => [flag.name, flag.required, flag.repeatable])).toEqual([
       ["name", true, false],
       ["tag", false, true],
@@ -192,11 +188,7 @@ describe("deriveApiCommands", () => {
 
     expect(result.problems).toEqual([]);
     const [entry] = result.entries;
-    expect(entry?.body).toEqual({
-      contentType: "application/json",
-      kind: "json-envelope",
-      type: "thing",
-    });
+    expect(entry?.body).toEqual({ contentType: "application/json", type: "thing" });
     expect(entry?.flags.map((flag) => [flag.name, flag.required])).toEqual([
       ["name", true],
       ["a", false],
@@ -227,36 +219,27 @@ describe("deriveApiCommands", () => {
     );
   });
 
-  it("binds plain body fields at the body root", () => {
+  it("rejects a JSON body that is not a data envelope", () => {
     const result = derive({
       "create-thing": operation({
         ...create,
         requestBody: {
           content: {
             "application/json": {
-              schema: {
-                type: "object",
-                properties: { display_name: { type: "string" } },
-              },
+              schema: { type: "object", properties: { display_name: { type: "string" } } },
             },
           },
         },
-        responses: jsonResponse({ $ref: "#/components/schemas/Tags" }),
       }),
     });
 
-    expect(result.problems).toEqual([]);
-    expect(result.entries[0]?.body?.kind).toBe("json-object");
-    expect(result.entries[0]?.bindings).toContainEqual({
-      location: "body",
-      name: "display_name",
-      pointer: "/display_name",
-      source: "flag",
-      flag: "display-name",
-    });
+    expect(result.entries).toEqual([]);
+    expect(result.problems).toEqual([
+      "create-thing: unsupported in this runtime: request body is not a data envelope",
+    ]);
   });
 
-  it("turns a string enum query parameter into flag choices and records an empty response", () => {
+  it("turns a string enum query parameter into flag choices", () => {
     const result = derive({
       "list-things": operation({
         ...named("list"),
@@ -264,13 +247,11 @@ describe("deriveApiCommands", () => {
           { name: "ref", in: "path", required: true, schema: { type: "string" } },
           { name: "sort", in: "query", schema: { type: "string", enum: ["asc", "desc"] } },
         ],
-        responses: { "204": { description: "none" } },
       }),
     });
 
     expect(result.problems).toEqual([]);
     expect(result.entries[0]?.flags[0]).toMatchObject({ name: "sort", choices: ["asc", "desc"] });
-    expect(result.entries[0]?.response).toEqual({ status: 204, kind: "empty" });
   });
 
   it("derives a plain token-named query parameter as a flag", () => {
@@ -288,16 +269,48 @@ describe("deriveApiCommands", () => {
     expect(result.entries[0]?.flags[0]).toMatchObject({ name: "page-token" });
   });
 
-  it("rejects a binary success response", () => {
+  it.each([
+    ["a binary", { "200": { description: "file", content: { "application/octet-stream": {} } } }],
+    ["a text", { "200": { description: "text", content: { "text/plain": {} } } }],
+    ["an empty", { "204": { description: "none" } }],
+  ])("rejects %s success response", (_label, responses) => {
+    const result = derive({ "create-thing": operation({ ...create, responses }) });
+
+    expect(result.entries).toEqual([]);
+    expect(result.problems.join("\n")).toContain("response is not JSON");
+  });
+
+  it.each([
+    ["a numeric body field", { requestBody: envelope({ size: { type: "integer" } }) }, "size"],
+    [
+      "an array of numbers in a body field",
+      { requestBody: envelope({ sizes: { type: "array", items: { type: "number" } } }) },
+      "sizes",
+    ],
+  ])("rejects %s", (_label, node, field) => {
+    const result = derive({ "create-thing": operation({ ...create, ...node }) });
+
+    expect(result.entries).toEqual([]);
+    expect(result.problems).toEqual([
+      `create-thing: unsupported in this runtime: numeric body field "${field}"`,
+    ]);
+  });
+
+  it("rejects a numeric query parameter", () => {
     const result = derive({
-      "create-thing": operation({
-        ...create,
-        responses: { "200": { description: "file", content: { "application/octet-stream": {} } } },
+      "get-thing": operation({
+        ...named("get"),
+        parameters: [
+          { name: "ref", in: "path", required: true, schema: { type: "string" } },
+          { name: "limit", in: "query", schema: { type: "integer" } },
+        ],
       }),
     });
 
     expect(result.entries).toEqual([]);
-    expect(result.problems.join("\n")).toContain("binary or streaming");
+    expect(result.problems).toEqual([
+      'get-thing: unsupported in this runtime: query parameter "limit" is not a scalar',
+    ]);
   });
 
   describe("nested body fields", () => {
@@ -739,10 +752,21 @@ describe("deriveApiCommands", () => {
           operationId: "get-thing",
           definition: "v2EnableWarehouse",
           summary: "Do the thing",
-          response: { status: 200, kind: "json" },
           inspect: "get-inspect",
         },
       ]);
+    });
+
+    it("rejects a poll-only read whose success response is not JSON", () => {
+      const result = deriveHidden({
+        "create-thing": changeThing(
+          link({ ref: "$request.path.ref", thing_id: "$response.body#/data/id" }),
+        ),
+        "get-thing": hiddenWith(poll, { "200": { description: "none" } }),
+      });
+
+      expect(result.pollTargets).toEqual([]);
+      expect(result.problems.join("\n")).toContain("get-thing: unsupported in this runtime");
     });
 
     it("records a poll-only read once when several mutations link to it", () => {
@@ -1212,7 +1236,7 @@ describe("deriveApiCommands", () => {
       ],
       [
         "a path parameter that is not a string",
-        withParameters(pathParameter("version", { schema: { type: "integer" } })),
+        withParameters(pathParameter("version", { schema: { type: "boolean" } })),
         'unsupported in this runtime: path parameter "version" is not a string',
       ],
       [
@@ -1255,46 +1279,16 @@ describe("deriveApiCommands", () => {
       ...extra,
     });
 
-    it("turns a header parameter into a flag that is required only when the header is", () => {
-      const result = derive({
-        "create-thing": withHeaders(
-          header("Idempotency-Key", { description: "Deduplicates retries." }),
-          header("X-Trace-Id", { required: true }),
-        ),
-      });
-
-      expect(result.problems).toEqual([]);
-      const [entry] = result.entries;
-      expect(entry?.flags).toEqual([
-        {
-          name: "idempotency-key",
-          type: "string",
-          repeatable: false,
-          required: false,
-          description: "Deduplicates retries.",
-        },
-        { name: "x-trace-id", type: "string", repeatable: false, required: true },
-      ]);
-      expect(entry?.bindings).toContainEqual({
-        location: "header",
-        name: "Idempotency-Key",
-        source: "flag",
-        flag: "idempotency-key",
-      });
-    });
-
     it.each([
+      ["a header parameter", header("Idempotency-Key")],
+      ["a required header parameter", header("X-Trace-Id", { required: true })],
       ["a credential-named header", header("X-Api-Key")],
-      [
-        "a password-format header",
-        header("X-Pin", { schema: { type: "string", format: "password" } }),
-      ],
-    ])("rejects %s because the dry-run preview masks only body fields", (_label, parameter) => {
+    ])("rejects %s", (_label, parameter) => {
       const result = derive({ "create-thing": withHeaders(parameter) });
 
       expect(result.entries).toEqual([]);
       expect(result.problems).toEqual([
-        `create-thing: unsupported in this runtime: header parameter "${parameter.name}" carries a credential, and the dry-run preview masks only body fields`,
+        `create-thing: unsupported in this runtime: header parameter "${parameter.name}"`,
       ]);
     });
 
@@ -1311,31 +1305,21 @@ describe("deriveApiCommands", () => {
       expect(result.entries[0]?.flags).toEqual([]);
     });
 
-    it.each([
-      [
-        "a cookie parameter",
-        { name: "session", in: "cookie", schema: { type: "string" } },
-        'unsupported in this runtime: cookie parameter "session"',
-      ],
-      [
-        "a header that is not a scalar",
-        header("X-Tags", { schema: { type: "array", items: { type: "string" } } }),
-        'header parameter "X-Tags" is not a scalar',
-      ],
-      ["a header named like a body field", header("name"), '"name" is used by more than one of'],
-    ])("rejects %s", (_label, parameter, message) => {
+    it("rejects a cookie parameter", () => {
       const result = derive({
         "create-thing": operation({
           ...create,
           requestBody: envelope({}),
           parameters: [
             { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            parameter,
+            { name: "session", in: "cookie", schema: { type: "string" } },
           ],
         }),
       });
 
-      expect(result.problems.join("\n")).toContain(message);
+      expect(result.problems.join("\n")).toContain(
+        'unsupported in this runtime: cookie parameter "session"',
+      );
     });
   });
 

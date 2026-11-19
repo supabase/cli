@@ -10,6 +10,8 @@ import type {
 export interface ApiCommandReferenceInput {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
   readonly pollTargets: ReadonlyArray<ApiPollTarget>;
+  /** Success status code per operation id. */
+  readonly successStatuses: ReadonlyMap<string, number>;
 }
 
 const code = (text: string): string => `\`${text}\``;
@@ -124,9 +126,7 @@ const waitSection = (
 const bodyLine = (entry: ApiCommandEntry): string | undefined => {
   const { body } = entry;
   if (body === undefined) return undefined;
-  return body.kind === "json-envelope"
-    ? `JSON envelope ${code(`data.type = ${body.type ?? ""}`)}, fields under ${code("data.attributes")}`
-    : "JSON object";
+  return `JSON envelope ${code(`data.type = ${body.type}`)}, fields under ${code("data.attributes")}`;
 };
 
 const commandSection = (
@@ -147,7 +147,7 @@ const commandSection = (
     ...(entry.confirmDescription
       ? ["- Consent: prints the API description before the interactive confirmation."]
       : []),
-    `- Request: ${route(entry)} (${code(entry.operationId)}), success ${entry.response.status} ${entry.response.kind}.`,
+    `- Request: ${route(entry)} (${code(entry.operationId)}), success ${input.successStatuses.get(entry.operationId)} json.`,
     ...(body === undefined ? [] : [`- Body: ${body}.`]),
     ...(argument === undefined ? [] : [`- ${argument}`]),
     ...(flags.length === 0
