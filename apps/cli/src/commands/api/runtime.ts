@@ -170,7 +170,6 @@ const presentationOf = (input: {
   readonly args: ReadonlyArray<string>;
   readonly outputFormat: OutputFormat;
   readonly stdoutIsTty: boolean;
-  readonly defaultOutput?: "json";
 }): ApiOutputFormat => {
   const flag = Option.getOrUndefined(input.outputFlag);
   if (flag === "yaml") return "yaml";
@@ -178,9 +177,7 @@ const presentationOf = (input: {
   if (flag === "pretty") return "text";
   const explicit = readExplicitOutputFormat(input.args);
   if (Option.isSome(explicit)) return explicit.value === "text" ? "text" : "json";
-  return (
-    input.defaultOutput ?? (input.outputFormat === "text" && input.stdoutIsTty ? "text" : "json")
-  );
+  return input.outputFormat === "text" && input.stdoutIsTty ? "text" : "json";
 };
 
 /**
@@ -231,7 +228,6 @@ const handle = Effect.fn("api-command.run")(function* (
   const cache = yield* LinkedProjectCache;
   const output = yield* Output;
   const format = presentationOf({
-    ...(entry.defaultOutput === undefined ? {} : { defaultOutput: entry.defaultOutput }),
     outputFlag: yield* OutputFlag,
     args: (yield* CliArgs).args,
     outputFormat: output.format,

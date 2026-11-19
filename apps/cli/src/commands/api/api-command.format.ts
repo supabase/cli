@@ -2,6 +2,7 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import type { ApiRequestPreview } from "./api-command-request.ts";
 
 const INDENT = "  ";
+const ARRAY_PREVIEW_LIMIT = 10;
 const ACRONYMS: ReadonlySet<string> = new Set(["id", "url", "fdw", "dns", "api", "sql", "tls"]);
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -85,8 +86,9 @@ const inlineText = (value: unknown): string | undefined => {
   if (isScalar(value) || value === undefined) return scalarText(value);
   if (Array.isArray(value)) {
     if (value.length === 0) return "-";
-    if (value.every(isScalar)) return value.map(scalarText).join(", ");
-    return isObjectArray(value) ? undefined : compactJson(value);
+    if (value.length <= ARRAY_PREVIEW_LIMIT && value.every(isScalar))
+      return value.map(scalarText).join(", ");
+    return undefined;
   }
   return isObject(value) && Object.keys(value).length > 0 ? undefined : "-";
 };
@@ -108,13 +110,48 @@ const blockLines = (entries: ReadonlyArray<readonly [string, unknown]>, indent: 
       continue;
     }
     lines.push(`${indent}${label}`);
-    if (isObjectArray(value)) {
-      lines.push(...objectTable(value, unionKeys(value), indent));
+    if (Array.isArray(value)) {
+      lines.push(...arrayLines(value, indent));
     } else if (isObject(value)) {
       lines.push(...blockLines(Object.entries(value), `${indent}${INDENT}`));
     }
   }
   return lines;
+};
+
+const isFlatObjectArray = (value: unknown): value is ReadonlyArray<JsonObject> =>
+  isObjectArray(value) && value.every((item) => Object.values(item).every(isScalar));
+
+const arrayLines = (
+  items: ReadonlyArray<unknown>,
+  indent: string,
+  bounded = true,
+): ReadonlyArray<string> => {
+  const offset = bounded ? Math.max(0, items.length - ARRAY_PREVIEW_LIMIT) : 0;
+  const preview = items.slice(offset);
+  const notice =
+    offset === 0
+      ? []
+      : [
+          `${indent}${INDENT}Showing last ${preview.length} of ${items.length} items; ${offset} omitted; use -o json for all items.`,
+        ];
+  if (isFlatObjectArray(preview)) {
+    return [...notice, ...objectTable(preview, unionKeys(preview), indent)];
+  }
+  if (preview.every(isScalar))
+    return [...notice, `${indent}${INDENT}${preview.map(scalarText).join(", ")}`];
+  return [
+    ...notice,
+    ...preview.flatMap((item, index) => {
+      const label = `Item ${offset + index + 1}`;
+      return isObject(item)
+        ? [
+            `${indent}${INDENT}${label}`,
+            ...blockLines(Object.entries(item), `${indent}${INDENT}${INDENT}`),
+          ]
+        : blockLines([[label, item]], `${indent}${INDENT}`);
+    }),
+  ];
 };
 
 const isResource = (value: unknown): value is JsonObject & { readonly attributes: JsonObject } =>
@@ -138,9 +175,15 @@ const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined 
   }
   if (Array.isArray(data) && data.every(isResource)) {
     const rows = data.map((resource) => Object.fromEntries(resourceEntries(resource)));
-    const columns = unionKeys(rows).filter(
-      (column) =>
-        rows.every((row) => isScalar(row[column])) && rows.some((row) => row[column] !== undefined),
+    if (rows.some((row) => Object.values(row).some((value) => !isScalar(value)))) {
+      return data.flatMap((resource, index) => [
+        ...(index === 0 ? [] : [""]),
+        humanize(String(resource["type"])),
+        ...blockLines(resourceEntries(resource), INDENT),
+      ]);
+    }
+    const columns = unionKeys(rows).filter((column) =>
+      rows.some((row) => row[column] !== undefined),
     );
     return [humanize(String(data[0]?.["type"])), ...objectTable(rows, columns, "")];
   }
@@ -153,8 +196,8 @@ export const renderResponseText = (value: unknown): string => {
     const lines = resourceLines(value) ?? blockLines(Object.entries(value), "");
     return `${(lines.length === 0 ? ["-"] : lines).join("\n")}\n`;
   }
-  if (isObjectArray(value)) {
-    return `${objectTable(value, unionKeys(value), "").join("\n")}\n`;
+  if (Array.isArray(value) && value.length > 0) {
+    return `${arrayLines(value, "", false).join("\n")}\n`;
   }
   return `${inlineText(value) ?? compactJson(value)}\n`;
 };

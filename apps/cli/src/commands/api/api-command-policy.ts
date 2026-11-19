@@ -6,8 +6,6 @@ export interface ApiNoun {
   readonly description?: string;
   /** Feature that gates every command under the noun. */
   readonly feature: ExperimentalFeature;
-  /** Default presentation by dotted sub-group path below the noun. */
-  readonly defaultOutputByGroup?: Readonly<Record<string, "json">>;
   /**
    * Help text of each sub-group the generator creates, keyed by its dotted path below the noun,
    * e.g. `"tables.layout"`; a sub-group that exists in a hand-written group has no entry.
@@ -33,7 +31,6 @@ export const nouns = {
   warehouse: {
     description: "Manage the data warehouse for a project",
     feature: "warehouse",
-    defaultOutputByGroup: { inspect: "json" },
     groups: {
       inspect: "Inspect Warehouse workload metrics",
       tables: "Inspect tables replicated to Warehouse",

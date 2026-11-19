@@ -75,7 +75,6 @@ Returns aggregate workload measurements over a bounded time range, using the pro
 
 - Access: read-only, no consent.
 - Feature: `warehouse`.
-- Default output: `json`; explicit output flags take precedence.
 - Request: `GET /v2/projects/{ref}/warehouse/query-stats` (`v2-get-warehouse-query-stats`), success 200 json.
 
 ### Flags

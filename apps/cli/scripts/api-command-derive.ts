@@ -1096,7 +1096,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     if (response === undefined || schemaSet === undefined) continue;
     schemas[operationId] = schemaSet;
     const description = stripStabilityNotice(asString(operation.node.description));
-    const defaultOutput = noun.defaultOutputByGroup?.[command.slice(1, -1).join(".")];
     entries.push({
       command,
       operationId,
@@ -1107,7 +1106,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       ...(description === undefined ? {} : { description }),
       readOnly: operation.method === "GET",
       feature: noun.feature,
-      ...(defaultOutput === undefined ? {} : { defaultOutput }),
       ...(body === undefined ? {} : { body }),
       response: { status: response.status, kind: response.kind },
       ...(positional === undefined

@@ -139,9 +139,6 @@ const commandSection = (
     ...(entry.description === undefined ? [] : [prose(entry.description), ""]),
     `- Access: ${entry.readOnly ? "read-only, no consent" : "mutation, consent defaults to No (`--yes` when it cannot prompt)"}.`,
     `- Feature: ${code(entry.feature)}.`,
-    ...(entry.defaultOutput === undefined
-      ? []
-      : [`- Default output: ${code(entry.defaultOutput)}; explicit output flags take precedence.`]),
     `- Request: ${route({ method: entry.method, path: entry.apiPath })} (${code(entry.operationId)}), success ${entry.response.status} ${entry.response.kind}.`,
     ...(body === undefined ? [] : [`- Body: ${body}.`]),
     ...(argument === undefined ? [] : [`- ${argument}`]),

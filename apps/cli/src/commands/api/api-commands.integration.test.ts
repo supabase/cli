@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import type { OperationOutput } from "@supabase/api/effect";
 import { parse as parseYaml } from "yaml";
 import {
   Cause,
@@ -411,7 +412,7 @@ describe("generated warehouse commands", () => {
       ],
     };
 
-    it.effect("renders one row per table without the nested replication feedback", () => {
+    it.effect("renders each table with its nested replication feedback", () => {
       const { out, sent, run } = setup(["warehouse", "tables", "list"], {
         route: ok(body),
         stdoutIsTty: true,
@@ -419,9 +420,12 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(sent).toEqual([{ method: "GET", path: tablesPath, search: "", body: undefined }]);
-        expect(out.stdoutText).toMatch(/16385\s.*orders.*live.*following_wal.*120/);
-        expect(out.stdoutText).toMatch(/16402\s.*events.*syncing.*copying_table/);
-        expect(out.stdoutText).not.toMatch(/pipeline_apply|feedback_age|FEEDBACK/i);
+        expect(out.stdoutText).toMatch(
+          /16385[\s\S]*orders[\s\S]*live[\s\S]*following_wal[\s\S]*120/,
+        );
+        expect(out.stdoutText).toMatch(/16402[\s\S]*events[\s\S]*syncing[\s\S]*copying_table/);
+        expect(out.stdoutText).toMatch(/Replication feedback[\s\S]*Source\s+pipeline_apply/);
+        expect(out.stdoutText).toMatch(/Feedback age ms\s+5/);
       });
     });
 
@@ -437,39 +441,40 @@ describe("generated warehouse commands", () => {
   });
   describe("warehouse inspect query-stats", () => {
     const argv = ["warehouse", "inspect", "query-stats"];
+    const attributes = {
+      project_ref: VALID_REF,
+      metric: "query_duration_p95",
+      unit: "seconds",
+      aggregation: "p95",
+      definition:
+        "Executor duration through terminal outcome, including assignment wait and streaming.",
+      requested: { metric: "query_duration_p95", start: 1795000000, end: 1795001800 },
+      effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
+      scrape_interval_seconds: 60,
+      last_sample_at: 1795001740,
+      availability: "partial",
+      series: [
+        {
+          labels: { method: "DoGet", status: "ok" },
+          points: [
+            { timestamp: 1795001740, value: 0.2 },
+            { timestamp: 1795001800, value: null },
+          ],
+          coverage: { returned_points: 1, expected_points: 2 },
+        },
+      ],
+    } satisfies OperationOutput<"v2GetWarehouseQueryStats">["data"][number]["attributes"];
     const response = {
       data: [
         {
           type: "warehouse_metric",
           id: "query_duration_p95",
-          attributes: {
-            metric: "query_duration_p95",
-            unit: "seconds",
-            aggregation: "p95",
-            definition:
-              "Executor duration through terminal outcome, including assignment wait and streaming.",
-            requested: { metric: "query_duration_p95", start: 1795000000, end: 1795001800 },
-            effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
-            scrape_interval_seconds: 60,
-            last_sample_at: 1795001740,
-            availability: "partial",
-            series: [
-              {
-                labels: {},
-                points: [
-                  { timestamp: 1795001740, value: 0.2 },
-                  { timestamp: 1795001800, value: null },
-                ],
-                coverage: { returned_points: 1, expected_points: 2 },
-              },
-            ],
-            future_observation: { reason: null },
-          },
+          attributes: { ...attributes, future_observation: { reason: null } },
         },
       ],
     };
 
-    it.effect("forwards a relative range and prints the full JSON response on a terminal", () => {
+    it.effect("forwards a relative range and preserves the full JSON response", () => {
       const { sent, out, run } = setup(
         [
           ...argv,
@@ -479,6 +484,8 @@ describe("generated warehouse commands", () => {
           "query_rate,query_duration_p95",
           "--interval",
           "5m",
+          "-o",
+          "json",
         ],
         {
           route: ok(response),
@@ -516,8 +523,12 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("honors an explicit text format over the inspection JSON default", () => {
-      const { out, run } = setup([...argv, "--output-format", "text"], {
+    it.effect.each([
+      { name: "terminal default", flags: [] },
+      { name: "explicit text", flags: ["--output-format", "text"] },
+      { name: "pretty alias", flags: ["-o", "pretty"] },
+    ])("shows ranges, dimensions, and sample values with $name", ({ flags }) => {
+      const { out, run } = setup([...argv, ...flags], {
         route: ok(response),
         stdoutIsTty: true,
       });
@@ -525,6 +536,11 @@ describe("generated warehouse commands", () => {
         yield* run;
         expect(out.stdoutText).toContain("query_duration_p95");
         expect(out.stdoutText).toContain("partial");
+        expect(out.stdoutText).toMatch(/Requested[\s\S]*1795000000/);
+        expect(out.stdoutText).toMatch(/Effective[\s\S]*Rate window seconds\s+300/);
+        expect(out.stdoutText).toMatch(/Method\s+DoGet/);
+        expect(out.stdoutText).toMatch(/1795001740\s*[|│]?\s*0\.2/);
+        expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*-/);
         expect(out.stdoutText.trimStart().startsWith("{")).toBe(false);
       });
     });
@@ -608,7 +624,7 @@ describe("generated warehouse commands", () => {
         expect(sent).toEqual([{ method: "GET", path: layoutPath, search: "", body: undefined }]);
         expect(out.stdoutText).toMatch(/^Warehouse table layout\n/);
         expect(out.stdoutText).toMatch(/Desired\n\s+Sort by\s+-\n/);
-        expect(out.stdoutText).toMatch(/account_id \| \{"kind":"bucket","count":16\}/);
+        expect(out.stdoutText).toMatch(/Column\s+account_id[\s\S]*Kind\s+bucket[\s\S]*Count\s+16/);
         expect(out.stdoutText).toMatch(/Observation status\s+observed/);
         expect(out.stdoutText).toMatch(/account_id \| bucket\(16\)/);
         expect(out.stdoutText).toMatch(/Observed at\s+2026-11-18T09:30:00\.123456Z/);

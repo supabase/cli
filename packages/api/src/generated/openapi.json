@@ -33459,7 +33459,7 @@
                 }
               }
             },
-            "description": "Invalid measurement selection, range, interval, or query parameter"
+            "description": "validation_failed: Invalid measurement selection, range, interval, or query parameter"
           },
           "401": {
             "content": {
@@ -33519,7 +33519,7 @@
                 }
               }
             },
-            "description": "Warehouse feature, project metadata, or metrics query capacity unavailable"
+            "description": "warehouse_metrics_unavailable: Metrics query capacity is temporarily unavailable; retry after a short delay. warehouse_setup_unavailable: Warehouse feature or project metadata unavailable."
           }
         },
         "security": [
