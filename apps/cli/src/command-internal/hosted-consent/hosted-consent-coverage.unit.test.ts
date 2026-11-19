@@ -137,6 +137,7 @@ describe("hosted consent coverage", () => {
         "vanity-subdomains delete": "no",
         "warehouse disable": "no",
         "warehouse enable": "no",
+        "warehouse tables layout update": "no",
       }
     `);
   });

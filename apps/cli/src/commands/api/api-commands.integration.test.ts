@@ -2142,3 +2142,21 @@ describeHostedConsent("warehouse disable", {
     };
   },
 });
+
+const layoutUpdateConsentCommand = commandTreeFor({ apiFeatures: ["warehouse"] }).get(
+  "warehouse tables layout update",
+)?.command;
+describeHostedConsent("warehouse tables layout update", {
+  ...(layoutUpdateConsentCommand === undefined ? {} : { command: layoutUpdateConsentCommand }),
+  invoke: ({ workdir, yes }) => {
+    const body = { data: { type: "warehouse_table_layout", attributes: { sort_by: null } } };
+    const { args, sent, run } = execute(
+      ["warehouse", "tables", "layout", "update", "16385", "--body", encodeJson(body)],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(Effect.provide(cliServices(workdir, args))),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
