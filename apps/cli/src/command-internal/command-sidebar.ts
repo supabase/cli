@@ -42,7 +42,7 @@ export type DocsSidebarCategory = (typeof DOCS_SIDEBAR_CATEGORIES)[number]["id"]
  */
 export type CommandSidebar =
   | { readonly category: DocsSidebarCategory; readonly title?: string }
-  | { readonly title: string };
+  | { readonly title: string; readonly category?: never };
 
 export class CommandSidebarAnnotation extends Context.Service<
   CommandSidebarAnnotation,

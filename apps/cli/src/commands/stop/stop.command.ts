@@ -53,7 +53,7 @@ const stopRuntimeLayer = Layer.mergeAll(
 );
 
 export const stopCommand = Command.make("stop", config).pipe(
-  withSidebar({ category: "general", title: "Stop all containers" }),
+  withSidebar({ category: "general" }),
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
   Command.withExamples([

@@ -136,6 +136,17 @@ describe("buildDocsSidebar", () => {
     expect(() => buildDocsSidebar(root)).toThrow(/"supabase-wordy" sidebar title is 51 chars/);
   });
 
+  it("rejects a blank sidebar title", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([
+        ...categoryStubs("general"),
+        Command.make("blank").pipe(withSidebar({ category: "general", title: "  " })),
+      ]),
+    );
+
+    expect(() => buildDocsSidebar(root)).toThrow(/"supabase-blank" has an empty sidebar title/);
+  });
+
   it("rejects an unused category", () => {
     const root = Command.make("supabase").pipe(Command.withSubcommands(categoryStubs("testing")));
 

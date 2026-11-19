@@ -91,7 +91,7 @@ const startRuntimeLayer = Layer.mergeAll(
 );
 
 export const startCommand = Command.make("start", config).pipe(
-  withSidebar({ category: "general", title: "Start a container" }),
+  withSidebar({ category: "general" }),
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
   withPermissions({

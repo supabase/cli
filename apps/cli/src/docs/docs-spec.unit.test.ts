@@ -270,7 +270,7 @@ describe("buildDocsSpec", () => {
     expect(byId.get("supabase-issue")?.subcommands).toContain("supabase-issue-bug");
   });
 
-  it("includes the top-level whoami command in the Management API reference", () => {
+  it("includes the top-level whoami command with its usage and description", () => {
     const whoami = builtSpec().byId.get("supabase-whoami");
     expect(whoami).toBeDefined();
     expect(whoami?.usage).toBe("supabase whoami [flags]");

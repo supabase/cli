@@ -15,7 +15,7 @@ import { dbRemoteCommand } from "./remote/remote.command.ts";
 import { dbSchemaCommand } from "./schema/schema.command.ts";
 
 export const dbCommand = Command.make("db").pipe(
-  withSidebar({ category: "database", title: "Manage local databases" }),
+  withSidebar({ category: "database" }),
   Command.withDescription("Manage Postgres databases."),
   Command.withShortDescription("Manage databases"),
   Command.withSubcommands([

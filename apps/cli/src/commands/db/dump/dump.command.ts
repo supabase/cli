@@ -1,4 +1,3 @@
-import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -98,7 +97,6 @@ const config = {
 export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbDumpCommand = Command.make("dump", config).pipe(
-  withSidebar({ title: "Dump schema from remote database" }),
   Command.withDescription("Dumps data or schemas from a database."),
   Command.withShortDescription("Dumps data or schemas from a database"),
   Command.withExamples([

@@ -67,7 +67,11 @@ export function buildDocsSidebar(root: Command.Command.Any): ReadonlyArray<DocsS
       Option.isSome(sidebar) && sidebar.value.title !== undefined
         ? sidebar.value.title
         : docsSummary(command);
-    if (title.length > DOCS_SIDEBAR_TITLE_MAX_LENGTH) {
+    if (title.trim() === "") {
+      problems.push(
+        `"${id}" has an empty sidebar title: set withSidebar({ title }) or a short description.`,
+      );
+    } else if (title.length > DOCS_SIDEBAR_TITLE_MAX_LENGTH) {
       problems.push(
         `"${id}" sidebar title is ${title.length} chars (max ${DOCS_SIDEBAR_TITLE_MAX_LENGTH}): set withSidebar({ title }) instead of changing the short description.`,
       );
@@ -105,5 +109,5 @@ export function buildDocsSidebar(root: Command.Command.Any): ReadonlyArray<DocsS
 }
 
 export function stringifyDocsSidebar(sidebar: ReadonlyArray<DocsSidebarEntry>): string {
-  return `${JSON.stringify(sidebar, null, 2)}\n`;
+  return JSON.stringify(sidebar, null, 2);
 }
