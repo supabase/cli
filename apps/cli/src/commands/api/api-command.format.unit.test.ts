@@ -40,38 +40,32 @@ describe("renderResponseText", () => {
 
   it.each([
     { name: "scalar", item: (index: number): unknown => `sample-${index}` },
-    { name: "flat object", item: (index: number): unknown => ({ value: `sample-${index}` }) },
-    {
-      name: "nested object",
-      item: (index: number): unknown => ({ value: { name: `sample-${index}` } }),
-    },
-    {
-      name: "mixed",
-      item: (index: number): unknown =>
-        index % 2 ? { value: `sample-${index}` } : `sample-${index}`,
-    },
-  ])("bounds nested $name arrays and retains source order", ({ name, item }) => {
-    const values = Array.from({ length: 12 }, (_, index) => item(index));
-    const output = renderResponseText({ values });
+    { name: "object", item: (index: number): unknown => ({ value: `sample-${index}` }) },
+  ])("shows the latest 10 $name samples of a points series in source order", ({ item }) => {
+    const points = Array.from({ length: 12 }, (_, index) => item(index));
+    const output = renderResponseText({ points });
     expect(output).not.toMatch(/sample-[01]\b/);
-    expect(output).toContain("sample-2");
-    expect(output).toContain("sample-11");
+    expect(output.indexOf("sample-2")).toBeGreaterThanOrEqual(0);
     expect(output.indexOf("sample-2")).toBeLessThan(output.indexOf("sample-11"));
-    expect(output).toContain("last 10 of 12 items; 2 omitted; use -o json for all items");
-    if (name === "nested object" || name === "mixed") expect(output).toContain("Item 3");
-    expect(renderResponseText({ values: values.slice(2) })).not.toContain("omitted");
+    expect(output).toContain(
+      "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+    );
+    expect(renderResponseText({ points: points.slice(2) })).not.toContain("omitted");
   });
 
-  it.each([
-    { name: "object collection", wrap: (points: ReadonlyArray<string>) => [{ points }] },
-    { name: "mixed collection", wrap: (points: ReadonlyArray<string>) => ["header", { points }] },
-  ])("bounds nested arrays inside a top-level $name", ({ wrap }) => {
-    const output = renderResponseText(
-      wrap(Array.from({ length: 12 }, (_, index) => `point-${index}`)),
-    );
+  it("bounds points series nested inside a top-level array of objects", () => {
+    const points = Array.from({ length: 12 }, (_, index) => `point-${index}`);
+    const output = renderResponseText([{ points }]);
     expect(output).not.toMatch(/point-[01]\b/);
-    expect(output).toContain("point-2");
     expect(output).toContain("point-11");
-    expect(output).toContain("last 10 of 12 items; 2 omitted; use -o json for all items");
+    expect(output).toContain("2 omitted");
+  });
+
+  it("renders every item of an array that is not a points series", () => {
+    const tables = Array.from({ length: 12 }, (_, index) => ({ name: `table-${index}` }));
+    const output = renderResponseText({ tables });
+    expect(output).toContain("table-0");
+    expect(output).toContain("table-11");
+    expect(output).not.toContain("omitted");
   });
 });

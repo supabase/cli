@@ -370,7 +370,31 @@ describe("generated warehouse commands", () => {
         expect(out.stdoutText).toMatch(/Observed at\s+2026-11-17T10:00:00Z/);
       });
     });
+
+    it.effect("lists every table of a large warehouse in terminal output", () => {
+      const items = Array.from({ length: 12 }, (_, index) => ({
+        id: String(20000 + index),
+        name: `table_${index}`,
+        replication_state: index === 0 ? "error" : "following_wal",
+      }));
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok({
+          data: {
+            ...body.data,
+            attributes: { ...body.data.attributes, tables: { status: "available", items } },
+          },
+        }),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toMatch(/20000\s.*table_0.*error/);
+        expect(out.stdoutText).toMatch(/20011\s.*table_11/);
+        expect(out.stdoutText).not.toContain("omitted");
+      });
+    });
   });
+
   describe("warehouse tables list", () => {
     const tablesPath = `/v2/projects/${VALID_REF}/warehouse/tables`;
     const table = (attributes: Readonly<Record<string, unknown>>) => ({
@@ -412,7 +436,7 @@ describe("generated warehouse commands", () => {
       ],
     };
 
-    it.effect("renders each table with its nested replication feedback", () => {
+    it.effect("lists tables in one row each with replication feedback in a block below", () => {
       const { out, sent, run } = setup(["warehouse", "tables", "list"], {
         route: ok(body),
         stdoutIsTty: true,
@@ -420,12 +444,11 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(sent).toEqual([{ method: "GET", path: tablesPath, search: "", body: undefined }]);
-        expect(out.stdoutText).toMatch(
-          /16385[\s\S]*orders[\s\S]*live[\s\S]*following_wal[\s\S]*120/,
-        );
-        expect(out.stdoutText).toMatch(/16402[\s\S]*events[\s\S]*syncing[\s\S]*copying_table/);
-        expect(out.stdoutText).toMatch(/Replication feedback[\s\S]*Source\s+pipeline_apply/);
+        expect(out.stdoutText).toMatch(/16385\s.*orders.*live.*following_wal.*120/);
+        expect(out.stdoutText).toMatch(/16402\s.*events.*syncing.*copying_table/);
+        expect(out.stdoutText).toMatch(/Warehouse table 16385\n[\s\S]*Source\s+pipeline_apply/);
         expect(out.stdoutText).toMatch(/Feedback age ms\s+5/);
+        expect(out.stdoutText).not.toContain("Warehouse table 16402");
       });
     });
 
@@ -524,13 +547,13 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect.each([
-      { name: "terminal default", flags: [] },
-      { name: "explicit text", flags: ["--output-format", "text"] },
-      { name: "pretty alias", flags: ["-o", "pretty"] },
-    ])("shows ranges, dimensions, and sample values with $name", ({ flags }) => {
+      { name: "terminal default", flags: [], stdoutIsTty: true },
+      { name: "explicit text", flags: ["--output-format", "text"], stdoutIsTty: false },
+      { name: "pretty alias", flags: ["-o", "pretty"], stdoutIsTty: false },
+    ])("shows ranges, dimensions, and sample values with $name", ({ flags, stdoutIsTty }) => {
       const { out, run } = setup([...argv, ...flags], {
         route: ok(response),
-        stdoutIsTty: true,
+        stdoutIsTty,
       });
       return Effect.gen(function* () {
         yield* run;
