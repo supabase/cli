@@ -209,7 +209,9 @@ export function docsFlagDoc(
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
   const required =
-    documentation.required ?? (!unwrapped.isOptional && (!isVariadic || unwrapped.variadicMin > 0));
+    documentation.required ??
+    (!unwrapped.isOptional &&
+      (isVariadic ? unwrapped.variadicMin > 0 : single.primitiveType._tag !== "Boolean"));
 
   return {
     id: single.name,

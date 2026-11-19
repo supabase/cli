@@ -138,6 +138,9 @@ describe("docsFlagDoc", () => {
 
   it.each([
     [Flag.String("value"), true],
+    [Flag.Boolean("value"), undefined],
+    [Flag.Boolean("value").pipe(Flag.atLeast(2)), true],
+    [Flag.Boolean("value").pipe(Flag.annotate(FlagDocumentation, { required: true })), true],
     [Flag.String("value").pipe(Flag.optional), undefined],
     [Flag.String("value").pipe(Flag.atLeast(0)), undefined],
     [Flag.String("value").pipe(Flag.atLeast(2)), true],
