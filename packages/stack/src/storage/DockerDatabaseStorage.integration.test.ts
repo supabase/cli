@@ -79,9 +79,18 @@ const dockerStoragePublishLoopFixture = fileURLToPath(
 const helperMirror = "registry.test/supabase/postgres:17";
 const fakeHelperEngine = (
   onCreate: () => Effect.Effect<void> = () => Effect.void,
-  { volumePresent = false }: { readonly volumePresent?: boolean } = {},
+  {
+    volumePresent = false,
+    silentExecFailures = 0,
+    helperRunning = false,
+  }: {
+    readonly volumePresent?: boolean;
+    readonly silentExecFailures?: number;
+    readonly helperRunning?: boolean;
+  } = {},
 ) => {
   const commands: string[][] = [];
+  let execs = 0;
   const local = new Set<string>();
   const handle = (exitCode: number, stdout = "", stderr = "") =>
     ChildProcessSpawner.makeHandle({
@@ -114,7 +123,10 @@ const fakeHelperEngine = (
         local.add(helperMirror);
         return handle(0);
       }
-      if (args[0] === "inspect") return handle(1, "", "no such container");
+      if (args[0] === "inspect")
+        return helperRunning && args.includes("{{.State.Running}}")
+          ? handle(0, "true")
+          : handle(1, "", "no such container");
       if (args[0] === "create") {
         const shellIndex = args.indexOf("/bin/sh");
         const image = args[shellIndex - 1];
@@ -126,7 +138,7 @@ const fakeHelperEngine = (
         return handle(0, "abcdef0123456789");
       }
       if (args[0] === "start") return handle(0, "supabase-helper-ready\n");
-      if (args[0] === "exec") return handle(0);
+      if (args[0] === "exec") return (execs += 1) <= silentExecFailures ? handle(128) : handle(0);
       if (args[0] === "rm") return handle(0, "done");
       return handle(1, "", `unexpected engine command: ${args[0] ?? ""}`);
     }),
@@ -686,6 +698,67 @@ describe.runIf(testEngine === "docker")(
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
     });
+
+    for (const kind of ["shared", "per-storage"] as const)
+      for (const helperRunning of [false, true])
+        it.live(
+          helperRunning
+            ? `reports a silent ${kind} helper exec failure while the helper still runs`
+            : `retries a silent ${kind} helper exec failure on a fresh helper once the helper is gone`,
+          () => {
+            const engine = fakeHelperEngine(undefined, { silentExecFailures: 1, helperRunning });
+            return Effect.scoped(
+              Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
+                const path = yield* Path.Path;
+                const crypto = yield* SecureRandom.SecureRandom;
+                const digest = yield* Digest.Digest;
+                const root = yield* fs.makeTempDirectoryScoped({
+                  prefix: "storage-helper-silent-",
+                });
+                const storageRoot = path.join(root, "state", "stack", "data");
+                const instanceRoot = path.join(storageRoot, "database");
+                yield* fs.makeDirectory(instanceRoot, { recursive: true });
+                const container = yield* makeContainerRuntime({
+                  target: dockerTarget,
+                  root,
+                  imageMirrors: () => [helperMirror],
+                });
+                const helpers = yield* makeDockerHelperRegistry(yield* crypto.uuidV4());
+                const storage = yield* makeDockerDatabaseStorage({
+                  runtime: "docker",
+                  target: dockerTarget,
+                  stackId: "storage-helper-silent",
+                  instanceId: "database",
+                  instanceRoot,
+                  root: storageRoot,
+                  cacheRoot: path.join(root, "cache"),
+                  fs,
+                  path,
+                  crypto,
+                  digest,
+                  container,
+                  spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+                  ...(kind === "shared" ? { helpers } : {}),
+                });
+
+                const commands = (verb: string) =>
+                  engine.commands.filter((args) => args[0] === verb);
+                if (helperRunning) {
+                  const error = yield* Effect.flip(storage.prepare(selection.database));
+                  expect(error.message).toBe("Container engine exited with 128");
+                  expect(commands("exec")).toHaveLength(1);
+                } else {
+                  yield* storage.prepare(selection.database);
+                  expect(commands("exec")).toHaveLength(2);
+                  expect(commands("create")).toHaveLength(2);
+                }
+              }),
+            ).pipe(
+              Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)),
+            );
+          },
+        );
 
     it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
       Effect.scoped(

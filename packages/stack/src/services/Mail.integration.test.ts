@@ -73,14 +73,34 @@ const sendTestEmail = (
 
 class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
 
-const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
+const logTailChars = 16_384;
+type LogTails = Ref.Ref<Readonly<Record<string, string>>>;
+
+const keepLogTail = (tails: LogTails, label: string) => {
+  const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+  return Stream.runForEach(
+    ({ stream, bytes }: { readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array }) =>
+      Ref.update(tails, (all) => ({
+        ...all,
+        [label]: ((all[label] ?? "") + decoders[stream].decode(bytes, { stream: true })).slice(
+          -logTailChars,
+        ),
+      })),
+  );
+};
+
+const mailStall = (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: LogTails) =>
   failOnStall(
     duration,
     Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
-      Effect.flatMap(([stalled, output]) =>
+      Effect.flatMap(([stalled, tails]) =>
         Effect.fail(
           new MailStallError({
-            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
+            message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${
+              Object.entries(tails)
+                .map(([label, tail]) => `[${label}]\n${tail || "(none)"}`)
+                .join("\n") || "(none)"
+            }`,
           }),
         ),
       ),
@@ -91,7 +111,7 @@ describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
     Effect.gen(function* () {
       const phase = yield* Ref.make("setup");
-      const logs = yield* Ref.make("");
+      const logs: LogTails = yield* Ref.make({});
       yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -101,11 +121,8 @@ describe("service catalog", () => {
             { service: "mail", pin: selection.mail, config: {} },
             dockerOptions(root),
           );
-          const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
           yield* Stream.fromSubscription(yield* recipe.logs).pipe(
-            Stream.runForEach(({ stream, bytes }) =>
-              Ref.update(logs, (text) => text + decoders[stream].decode(bytes, { stream: true })),
-            ),
+            keepLogTail(logs, "mail"),
             Effect.forkScoped({ startImmediately: true }),
           );
           const instance = yield* makeStandaloneService(recipe.definition, {
@@ -139,26 +156,19 @@ describe("service catalog", () => {
     () =>
       Effect.gen(function* () {
         const phase = yield* Ref.make("setup");
-        const logs = yield* Ref.make("");
+        const logs: LogTails = yield* Ref.make({});
         yield* Effect.scoped(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
-            const startInstance = Effect.fnUntraced(function* (instanceId: string) {
+            const makeInstance = Effect.fnUntraced(function* (instanceId: string) {
               const recipe = yield* makeServiceRecipe(
                 { service: "mail", pin: selection.mail, config: {} },
                 { ...options(root), instanceId },
               );
-              const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
               yield* Stream.fromSubscription(yield* recipe.logs).pipe(
-                Stream.runForEach(({ stream, bytes }) =>
-                  Ref.update(
-                    logs,
-                    (text) =>
-                      `${text}[${instanceId}] ${decoders[stream].decode(bytes, { stream: true })}`,
-                  ),
-                ),
+                keepLogTail(logs, instanceId),
                 Effect.forkScoped({ startImmediately: true }),
               );
               return yield* makeStandaloneService(recipe.definition, {
@@ -166,7 +176,7 @@ describe("service catalog", () => {
                 config: recipe.creation,
               });
             });
-            const instances = [yield* startInstance("mail-a"), yield* startInstance("mail-b")];
+            const instances = [yield* makeInstance("mail-a"), yield* makeInstance("mail-b")];
             yield* Ref.set(phase, "start");
             yield* Effect.all(
               instances.map((instance) => instance.start),
