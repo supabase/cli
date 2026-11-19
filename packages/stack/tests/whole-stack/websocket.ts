@@ -1,4 +1,4 @@
-import { Effect, Queue, Schedule, Schema, Scope } from "effect";
+import { Effect, Exit, Queue, Schedule, Schema, Scope } from "effect";
 import { NodeWS } from "@effect/platform-node";
 import * as Socket from "effect/socket/Socket";
 
@@ -55,8 +55,18 @@ export const openWebSocket = Effect.fn("WholeStack.openWebSocket")(
       const socket = yield* Socket.makeWebSocket(url, { openTimeout: "20 seconds" }).pipe(
         Effect.provide(NodeWS.layerWebSocketConstructor),
       );
-      // Each reader opens a fresh connection, so a handshake stuck behind a busy proxy is retried.
-      const pull = yield* Socket.readerString(socket).pipe(
+      const scope = yield* Effect.scope;
+      // Each attempt opens a fresh connection in its own scope, so a stalled one closes before retry.
+      const openReader = Effect.gen(function* () {
+        const attempt = yield* Scope.fork(scope);
+        return yield* Socket.readerString(socket).pipe(
+          Scope.provide(attempt),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(attempt, exit) : Effect.void,
+          ),
+        );
+      });
+      const pull = yield* openReader.pipe(
         Effect.retry({
           schedule: Schedule.spaced("1 second"),
           times: 3,
