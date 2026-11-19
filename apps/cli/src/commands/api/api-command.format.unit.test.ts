@@ -41,7 +41,7 @@ describe("renderResponseText", () => {
   it.each([
     { name: "scalar", item: (index: number): unknown => `sample-${index}` },
     { name: "object", item: (index: number): unknown => ({ value: `sample-${index}` }) },
-  ])("shows the latest 10 $name samples of a points series in source order", ({ item }) => {
+  ])("shows the last 10 $name samples of a points series in response order", ({ item }) => {
     const points = Array.from({ length: 12 }, (_, index) => item(index));
     const output = renderResponseText({ points });
     expect(output).not.toMatch(/sample-[01]\b/);

@@ -121,7 +121,7 @@ const blockLines = (entries: ReadonlyArray<readonly [string, unknown]>, indent: 
 const isFlatObjectArray = (value: unknown): value is ReadonlyArray<JsonObject> =>
   isObjectArray(value) && value.every((item) => Object.values(item).every(isScalar));
 
-/** Sample series under a `points` key keep only their latest samples; other arrays render whole. */
+/** Sample series under a `points` key keep only their last samples in response order; other arrays render whole. */
 const arrayLines = (
   items: ReadonlyArray<unknown>,
   indent: string,
