@@ -123,6 +123,7 @@ import type {
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import { HealthCheckTimeoutSeconds } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
@@ -306,6 +307,8 @@ const PROJECT_ID = "test";
 const DB_ID = `supabase_db_${PROJECT_ID}`;
 const KONG_ID = `supabase_kong_${PROJECT_ID}`;
 const STORAGE_ID = `supabase_storage_${PROJECT_ID}`;
+const REST_ID = `supabase_rest_${PROJECT_ID}`;
+const POSTGREST_READY_PATH = "/rest-admin/v1/ready";
 
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STOPPED_STATE = '{"Running":false,"Status":"exited"}';
@@ -474,6 +477,21 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
   ),
 );
+
+/** Appends each gateway request to `timeline`, answering PostgREST's readiness probe with `readyStatus`. */
+function timelineHttpClientLayer(timeline: Array<string>, readyStatus: number) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        const path = new URL(request.url).pathname;
+        timeline.push(`${request.method} ${path}`);
+        const status = path === POSTGREST_READY_PATH ? readyStatus : 200;
+        return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+      }),
+    ),
+  );
+}
 
 /** Records every request the reset's bucket-seeding gateway client issues, responding 200 to all. */
 function recordingStackStorageHttpClient() {
@@ -1055,6 +1073,9 @@ function setup(
       : Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
+            if (request.url.endsWith(POSTGREST_READY_PATH)) {
+              return Effect.succeed(jsonResponse(request, 200, {}));
+            }
             const reqBody = request.body;
             const body =
               reqBody instanceof HttpBody.Uint8Array
@@ -1173,6 +1194,53 @@ const FAST_HEALTH_TOML = '[db]\nhealth_timeout = "1s"\n';
 describe("db reset", () => {
   const tmp = useTempWorkdir("supabase-db-reset-");
 
+  /* Records PostgREST's restart (after the seed or not), Kong reloads and gateway requests. */
+  function postgrestScenario(opts: {
+    readonly toml?: string;
+    readonly readyStatus?: number;
+    readonly restInspectError?: string;
+    readonly kongReloadFailsAfterRest?: boolean;
+  }) {
+    const timeline: Array<string> = [];
+    let seeded = (): boolean => false;
+    const base = defaultLocalResetRoute();
+    const ctx = setup(tmp.current, {
+      toml: opts.toml ?? 'project_id = "test"\n',
+      files: {
+        ...migrationFile("20240101000000", "create table rest_marker ();"),
+        "supabase/seed.sql": "insert into rest_seed_marker values (1);",
+      },
+      args: ["db", "reset"],
+      isLocal: true,
+      httpClient: timelineHttpClientLayer(timeline, opts.readyStatus ?? 200),
+      route: (args) => {
+        if (args[0] === "restart" && args[1] === REST_ID) {
+          timeline.push(seeded() ? "restart rest after seed" : "restart rest before seed");
+        }
+        if (args[0] === "exec" && args[1] === KONG_ID) {
+          timeline.push("reload kong");
+          if (
+            opts.kongReloadFailsAfterRest === true &&
+            timeline.includes("restart rest after seed")
+          ) {
+            return { exitCode: 1, stderr: ["reload failed"] };
+          }
+        }
+        if (
+          opts.restInspectError !== undefined &&
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          args[2] === REST_ID
+        ) {
+          return { exitCode: 1, stderr: [opts.restInspectError] };
+        }
+        return base(args);
+      },
+    });
+    seeded = () => ctx.conn.execs.some((sql) => sql.includes("insert into rest_seed_marker"));
+    return { ...ctx, timeline };
+  }
+
   describe("local reset — PG15+", () => {
     it.effect("recreates the container, waits healthy, and runs the setup pipeline", () => {
       const { layer, out, child, telemetry } = setup(tmp.current, {
@@ -1193,7 +1261,8 @@ describe("db reset", () => {
           // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
           expect(out.stderrText).toContain("Restarting containers...\n");
-          // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
+          // Satellite restarts (storage/auth/realtime/pooler); Kong reloads after them and again
+          // after PostgREST's restart.
           expect(restartedContainers(child.spawned)).toEqual(
             expect.arrayContaining([
               "supabase_storage_test",
@@ -1202,7 +1271,7 @@ describe("db reset", () => {
               "supabase_pooler_test",
             ]),
           );
-          expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+          expect(kongReloadCalls(child.spawned)).toHaveLength(2);
           // The temp workdir sits outside any git checkout, so the branch is unknown and
           // the "Finished" line omits the clause instead of falsely claiming "main".
           expect(out.stderrText).toContain("Finished supabase db reset.\n");
@@ -2576,7 +2645,74 @@ describe("db reset", () => {
             "supabase_pooler_test",
           ]),
         );
-        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+        expect(kongReloadCalls(child.spawned)).toHaveLength(2);
+      });
+    });
+
+    it.effect("restarts PostgREST after the seed and waits for it before finishing", () => {
+      const { layer, out, timeline } = postgrestScenario({});
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(timeline).toEqual([
+          "reload kong",
+          "restart rest after seed",
+          "reload kong",
+          `HEAD ${POSTGREST_READY_PATH}`,
+        ]);
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
+      });
+    });
+
+    it.effect("warns but still finishes when PostgREST never becomes ready", () => {
+      const { layer, out, timeline } = postgrestScenario({
+        readyStatus: 503,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.provideService(HealthCheckTimeoutSeconds, 0),
+        );
+        expect(timeline).toContain(`HEAD ${POSTGREST_READY_PATH}`);
+        expect(out.stderrText).toContain(
+          `WARNING: PostgREST may not serve the reset schema yet: ${REST_ID} unexpected status 503`,
+        );
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
+      });
+    });
+
+    it.effect("skips PostgREST when it is excluded from the stack", () => {
+      const { layer, out, timeline } = postgrestScenario({
+        restInspectError: `Error: No such container: ${REST_ID}`,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(timeline).toEqual(["reload kong"]);
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
+      });
+    });
+
+    it.effect("still restarts PostgREST when inspecting it fails for another reason", () => {
+      const { layer, timeline } = postgrestScenario({
+        restInspectError: "Cannot connect to the Docker daemon",
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(timeline).toContain("restart rest after seed");
+      });
+    });
+
+    it.effect("warns with Kong's recovery steps when the reload after PostgREST fails", () => {
+      const { layer, out, timeline } = postgrestScenario({
+        kongReloadFailsAfterRest: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(timeline).not.toContain(`HEAD ${POSTGREST_READY_PATH}`);
+        expect(out.stderrText).toContain(
+          "WARNING: PostgREST may not serve the reset schema yet: failed to reload kong",
+        );
+        expect(out.stderrText).toContain(`docker restart ${KONG_ID}`);
+        expect(out.stderrText).toContain("Finished supabase db reset.\n");
       });
     });
   });
@@ -2895,6 +3031,21 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({ ...DEFAULT_FLAGS, noSeed: Option.some(true) }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (9)"))).toBe(false);
+      });
+    });
+
+    it.effect("restarts PostgREST after the seed of a --version reset (PG14)", () => {
+      const { layer, timeline } = postgrestScenario({ toml: PG14_TOML });
+      return Effect.gen(function* () {
+        yield* dbReset({ ...DEFAULT_FLAGS, version: Option.some("20240101000000") }).pipe(
+          Effect.provide(layer),
+        );
+        expect(timeline).toEqual([
+          "reload kong",
+          "restart rest after seed",
+          "reload kong",
+          `HEAD ${POSTGREST_READY_PATH}`,
+        ]);
       });
     });
 
