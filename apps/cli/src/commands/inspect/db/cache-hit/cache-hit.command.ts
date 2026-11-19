@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbCacheHit } from "./cache-hit.handler.ts";
 import {
@@ -15,11 +16,12 @@ export const inspectDbCacheHitCommand = Command.make("cache-hit", INSPECT_DB_FLA
   Command.withDescription(
     'Show cache hit rates for tables and indices. Deprecated: use "db-stats" instead.',
   ),
-  Command.withShortDescription("Show cache hit rates (deprecated)"),
+  Command.withShortDescription("Show cache hit rates"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbCacheHit)),
   Command.provide(inspectDbRuntimeLayer("cache-hit")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

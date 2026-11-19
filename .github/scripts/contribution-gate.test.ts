@@ -230,6 +230,99 @@ describe("evaluateAllOpenPrs", () => {
     expect(permissionLookups).not.toContain("dependabot");
   });
 
+  test.each(["permission", "issues", "close"])(
+    "continues after a %s failure and rejects the sweep with PR context",
+    async (failure) => {
+      const { io, closed } = makeIo(
+        [1, 2].map((number) => ({
+          number,
+          authorLogin: `ext-${number}`,
+          authorAssociation: "NONE",
+          isBot: false,
+        })),
+        {},
+      );
+      if (failure === "permission") {
+        io.fetchPermission = async (login) => {
+          if (login === "ext-1") throw new Error("permission outage");
+          return undefined;
+        };
+      } else if (failure === "issues") {
+        io.fetchLinkedIssues = async (number) => {
+          if (number === 1) throw new Error("issues outage");
+          return [];
+        };
+      } else {
+        const close = io.closePr;
+        io.closePr = async (number, message) => {
+          if (number === 1) throw new Error("close outage");
+          await close(number, message);
+        };
+      }
+      await expect(evaluateAllOpenPrs(io, REPO)).rejects.toThrow(/PR #1/);
+      expect(closed.map((pr) => pr.number)).toEqual([2]);
+    },
+  );
+
+  test("exempt PRs do not depend on the linked issue API", async () => {
+    const { io, closed } = makeIo(
+      [
+        { number: 1, authorLogin: "bot", authorAssociation: "NONE", isBot: true },
+        { number: 2, authorLogin: "member", authorAssociation: "MEMBER", isBot: false },
+        { number: 3, authorLogin: "private", authorAssociation: "NONE", isBot: false },
+      ],
+      {},
+      { private: "write" },
+    );
+    io.fetchLinkedIssues = async () => {
+      throw new Error("issues outage");
+    };
+    expect((await evaluateAllOpenPrs(io, REPO)).map((entry) => entry.result.reason)).toEqual([
+      "bot",
+      "internal",
+      "internal",
+    ]);
+    expect(closed).toEqual([]);
+  });
+
+  test.each(["read", "write", undefined])(
+    "reuses successful %s permission results per author",
+    async (permission) => {
+      const { io, permissionLookups } = makeIo(
+        [1, 2].map((number) => ({
+          number,
+          authorLogin: "same-author",
+          authorAssociation: "NONE",
+          isBot: false,
+        })),
+        {},
+        permission ? { "same-author": permission } : {},
+      );
+      await evaluateAllOpenPrs(io, REPO);
+      expect(permissionLookups).toEqual(["same-author"]);
+    },
+  );
+
+  test("retries failed permission lookups for later PRs by the same author", async () => {
+    const { io, closed } = makeIo(
+      [1, 2].map((number) => ({
+        number,
+        authorLogin: "same-author",
+        authorAssociation: "NONE",
+        isBot: false,
+      })),
+      {},
+    );
+    let attempts = 0;
+    io.fetchPermission = async () => {
+      if (++attempts === 1) throw new Error("temporary outage");
+      return "write";
+    };
+    await expect(evaluateAllOpenPrs(io, REPO)).rejects.toThrow(/PR #1/);
+    expect(attempts).toBe(2);
+    expect(closed).toEqual([]);
+  });
+
   test("returns an entry per PR and closes none when all conform", async () => {
     const { io, closed } = makeIo(
       [{ number: 9, authorLogin: "ext", authorAssociation: "NONE", isBot: false }],
@@ -274,7 +367,7 @@ describe("fetchAuthorPermission", () => {
     expect(permission).toBeUndefined();
   });
 
-  test("throws on other API failures so the run aborts without closing PRs", async () => {
+  test("throws on other API failures rather than treating the author as external", async () => {
     stubFetch(403, { message: "Forbidden" });
     await expect(fetchAuthorPermission("t", "supabase", "cli", "ext")).rejects.toThrow(/403/);
   });

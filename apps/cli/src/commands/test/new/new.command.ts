@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -19,6 +20,7 @@ const config = {
   template: Flag.Literals("template", TEMPLATE_VALUES).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Template framework to generate."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "pgtap" }),
     Flag.optional,
   ),
 } as const;

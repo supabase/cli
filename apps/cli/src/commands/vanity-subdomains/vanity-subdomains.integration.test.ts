@@ -203,7 +203,7 @@ describe("vanity-subdomains get", () => {
       });
       expect(api.requests).toHaveLength(1);
       assertPermissionDrift({ command: "vanity-subdomains get", requests: api.requests });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -223,7 +223,7 @@ describe("vanity-subdomains get", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
     }).pipe(Effect.provide(layer));
   });
 
@@ -512,7 +512,7 @@ describe("vanity-subdomains check-availability", () => {
           upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
         },
       });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
@@ -548,7 +548,7 @@ describe("vanity-subdomains check-availability", () => {
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
       ]);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -781,7 +781,7 @@ describe("vanity-subdomains activate", () => {
           upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
         },
       });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
       expect(requestLines(api)).toEqual([
         `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
@@ -819,7 +819,7 @@ describe("vanity-subdomains activate", () => {
         expect(requestLines(api)).toEqual([
           `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
         ]);
-        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(out.stderrText).not.toContain("Plans and add-ons:");
         expect(analytics.captured).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },

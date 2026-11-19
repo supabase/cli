@@ -12,7 +12,7 @@ import { CLI_VERSION } from "./version.ts";
 
 const builtinLayer = (args: ReadonlyArray<string>, console: Console.Console) =>
   Layer.mergeAll(
-    CliOutput.layer(textCliOutputFormatter()),
+    CliOutput.layer(textCliOutputFormatter({ rootCommand, args })),
     Layer.succeed(CliArgs, { args }),
     Layer.succeed(Console.Console, console),
     mockOutput({ format: "text" }).layer,
@@ -20,6 +20,24 @@ const builtinLayer = (args: ReadonlyArray<string>, console: Console.Console) =>
   );
 
 describe("CLI --help (text)", () => {
+  it.effect(
+    "db query help distinguishes the output format default from command-specific output",
+    () =>
+      Effect.gen(function* () {
+        const args = ["db", "query", "--help"];
+        const { console, calls } = fakeConsole();
+        yield* Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
+          Effect.provide(builtinLayer(args, console)),
+        );
+        const help = calls.join("\n");
+        const formatRow = help.split("\n").find((line) => line.includes("--output-format choice"));
+        expect(formatRow).toContain("(default: text)");
+        expect(formatRow?.match(/\(default\b/g)).toHaveLength(1);
+        expect(help).toContain("output format of status variables");
+        expect(help).not.toContain("(default: pretty)");
+      }),
+  );
+
   it.effect("source runs describe themselves as a development build", () =>
     Effect.gen(function* () {
       const { console, calls } = fakeConsole();

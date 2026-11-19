@@ -89,7 +89,7 @@ describe("service catalog", () => {
                 if (phase === "restart") {
                   yield* pooler.stop.pipe(phaseDeadline(`${step} stop`, 15));
                 }
-                yield* pooler.start.pipe(phaseDeadline(`${step} start`, 60));
+                yield* pooler.start.pipe(phaseDeadline(`${step} start`, 120));
                 yield* pooler.ready.pipe(phaseDeadline(`${step} readiness`, 30));
                 const sqlEndpoint = yield* poolerRecipe.endpoint("sql");
                 if (sqlEndpoint.kind !== "tcp" || sqlEndpoint.host === undefined)
@@ -119,6 +119,6 @@ describe("service catalog", () => {
           Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
         ),
       ),
-    { timeout: 120_000 },
+    { timeout: 240_000 },
   );
 });

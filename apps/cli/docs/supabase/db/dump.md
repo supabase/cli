@@ -12,9 +12,11 @@ The default dump does not contain any data or custom roles.
 
 ### Note on Privilege Migration
 
-When restoring to a new project, tables inherit ALL privileges from default privileges in the target database. To preserve specific privileges from your dump, revoke defaults before restoring:
+When restoring to a new project, tables, functions, and sequences get the default privileges of the target database, which can grant more than your dump. To preserve specific privileges from your dump, revoke defaults before restoring:
 
 ```sql
--- Run BEFORE restoring your schema
+-- Run BEFORE restoring your schema, and again before any later restore into the same database
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
 ```

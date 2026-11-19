@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -17,6 +18,10 @@ const config = {
   ),
   name: Flag.String("name").pipe(
     Flag.withDescription("Name that will be used to store token in your settings."),
+    Flag.annotate(FlagDocumentation, {
+      defaultValue: "built-in token name generator",
+      helpDefault: "generated when omitted",
+    }),
     Flag.optional,
   ),
   noBrowser: Flag.Boolean("no-browser").pipe(
