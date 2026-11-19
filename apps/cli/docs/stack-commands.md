@@ -383,8 +383,7 @@ bucket seeding and stack `storage` commands then also need
 `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
 containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
 do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
-serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side
-effects list its errors.
+serves the API over TLS fails there with `api.tls: unsupported networking`.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
@@ -438,18 +437,19 @@ and `supabase stack update` warn when the versions they lock would be refused by
 data. A database that never initialized adopts the change.
 
 The project lease is `supabase/.supabase.lock.lease`; the CLI adds it and the lock's staged writes
-(`.supabase.lock.*.tmp`) to `supabase/.gitignore` whenever it takes the lease. Lock writes are
+(`.supabase.lock.*.tmp`) to `supabase/.gitignore` when they are missing. Lock writes are
 atomic renames, so a frozen start reads the lock without the lease and never sees a partial file.
 When a `linked` service's observed release cannot be fetched because the release host is
 unreachable, the start keeps going with the bundled version, recorded as `unobserved`, and warns;
-any other failed resolution fails the start and writes nothing.
+any other failed resolution fails the start without writing the lock.
 
 `supabase db reset`, the shadow database of `supabase db diff`, and the temporary Functions instance
-of `supabase functions serve` read the lock without the lease and never resolve. Without a lock they
-use the bundled versions, honouring `[db] major_version`, `orioledb_version`, and a bundled
-`[local.services]` database version; any other explicit version fails with `supabase/supabase.lock
-not found; run supabase start to create it`, and a stale lock fails with `is stale for: <service>
-(<reason>)`.
+of `supabase functions serve` read the lock without the lease and never resolve. Without a lock
+they use the versions this CLI bundles, and an explicit service version it does not bundle fails
+with `supabase/supabase.lock not found; run supabase start to create it`. A stale lock fails with
+`is stale for: <service> (<reason>)`, except for a shadow database of a remote with a
+`[remotes.<ref>]` block, which takes the bundled version of each stale service and fails only when
+one of them has none.
 
 ## Port intents
 

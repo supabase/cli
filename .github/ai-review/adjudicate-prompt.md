@@ -96,8 +96,8 @@ higher than `minor`; these findings are advisory and never block the PR.
 Verify each `breaking-change` finding against the behavior the PR changes:
 refute it only when no released, non-experimental use fails or changes meaning,
 when the change only rejects a value that never had a meaning, or when the
-change restores behavior that the base branch's tests assert or a release
-shipped. The PR's intent and its own test or doc edits are not
+change restores behavior that the current stable release ships or the tests
+at the PR's merge base assert. The PR's intent and its own test or doc edits are not
 counter-evidence. Keep the category
 `breaking-change`, severity `major` and the request ending its `claim`, even
 when merged with a Codex finding.

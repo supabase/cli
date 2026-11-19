@@ -63,14 +63,15 @@ before changing anything.
 ## Excluding files from the build context
 
 `compute push` packages a compute's source directory into the build context, minus the paths
-that `[compute.<name>] exclude` matches. Patterns read the way `.gitignore` reads them:
+that `[compute.<name>] exclude` matches. Patterns follow `.gitignore`'s path rules:
 
-- A pattern without `/` matches that name at any depth; one with `/` is anchored at the
-  compute's source directory.
+- A pattern matches that name at any depth unless a `/` other than a trailing one anchors it
+  at the compute's source directory: `dist/` matches every `dist` directory, `/dist/` only
+  the top-level one.
 - A trailing `/` matches directories only. Repeated trailing separators count as one, so
   `dist/` and `dist//` are the same pattern.
 - `**` spans directories. Within one segment, `*`, `?` and character classes such as `[a-z]`
-  work as in the CLI's other glob options.
+  work as in the CLI's other glob options; a class negates with `^` (`[^a]`), not `!`.
 
 An excluded directory is not descended into, so everything beneath it is out too, and the
 `excluded <n> paths` count on the packaged line counts the directory, not its contents. For
@@ -84,7 +85,7 @@ the compute and the pattern, and happens before anything is packaged or uploaded
 
 `compute push` applies only the patterns recorded in the config; it has no built-in defaults,
 so a compute without an `exclude` key uploads its whole source directory. `compute new`
-writes the selected runtime's default list into `config.toml`, where it can be edited.
+writes the selected runtime's default list into the project config, where it can be edited.
 
 A source whose every file is excluded fails before upload with an error naming the patterns.
 An excluded symbolic link is skipped before the CLI checks whether it points outside the

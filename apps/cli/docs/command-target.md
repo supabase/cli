@@ -6,7 +6,7 @@ This page is the shared reference for how a command's target is chosen, which er
 
 ## Groups
 
-Every command belongs to one group, which decides what it acts on when no target is given and which selector flags it takes. A command that writes to a hosted project also has a consent default.
+Every command belongs to one group, which decides what it acts on when no target is given and which selector flags it takes. A command that confirms hosted writes through the shared consent prompt also has a consent default.
 
 | Group        | Acts on                         | With no `--remote` | Selector flags                                                               |
 | ------------ | ------------------------------- | ------------------ | ---------------------------------------------------------------------------- |

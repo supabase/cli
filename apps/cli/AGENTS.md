@@ -58,9 +58,9 @@ limits; put richer content in reference page bodies.
 
 The established CLI surface is a contract: command paths, flags, output text and streams,
 filesystem paths, API routes and request shapes, exit codes, and telemetry event timing and
-payloads. Use current tests, shipped behavior, and generated references such as the command
-reference, error-tag and telemetry snapshots as the source of truth. Update tests, snapshots, and
-user docs with intentional behavior changes.
+payloads. Use current tests, the error-tag fixture, the telemetry event catalog, and shipped
+behavior as the source of truth. Update tests, the fixture, the catalog, and user docs with
+intentional behavior changes.
 
 State locations are also public: preserve `~/.supabase/…`, `<workdir>/supabase/.temp/…`, and
 native keyring entries. Do not move or rename them.
