@@ -29,7 +29,7 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
 
   // In text mode, the piped-input path writes the prompt to stderr and echoes a
   // trailing newline to stdout after reading; on a TTY the masked prompt uses
-  // clack framing instead — see SIDE_EFFECTS.md for that divergence.
+  // clack framing instead.
   let rootKey: string;
   if (stdin.isTTY) {
     rootKey = yield* output.promptPassword("Enter a new root key: ");

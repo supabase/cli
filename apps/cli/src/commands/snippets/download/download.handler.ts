@@ -162,7 +162,7 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
       yield* fetching?.clear ?? Effect.void;
 
       // Exposes the full payload (id, name, owner, ... alongside content.sql)
-      // for scripted callers — see SIDE_EFFECTS.md; matches the shape
+      // for scripted callers; matches the shape
       // `snippets list --output-format json` uses.
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success("", asRecord(rawBody));

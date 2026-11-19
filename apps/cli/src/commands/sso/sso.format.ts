@@ -176,7 +176,7 @@ export function renderListProviders(items: ReadonlyArray<SsoProviderView>): stri
  * `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
  *
  * The optional sections are plain markdown, not run through Glamour, so their
- * styling differs from the table above. See each subcommand's `SIDE_EFFECTS.md`.
+ * styling differs from the table above.
  */
 export function renderSingleProvider(provider: SsoProviderView, ref: string): string {
   const rows: Array<readonly [string, string]> = [
@@ -197,7 +197,7 @@ export function renderSingleProvider(provider: SsoProviderView, ref: string): st
     }
   }
   rows.push(["CREATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
-  // Both rows read provider.created_at — see SIDE_EFFECTS.md.
+  // Both rows read provider.created_at, matching the shipped output.
   rows.push(["UPDATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
 
   const table = renderGlamourTable(["PROPERTY", "VALUE"], rows);
