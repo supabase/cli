@@ -243,6 +243,7 @@ That means:
 
 - analytics gets one or a few meaningful events per command
 - traces remain in the tracing path
+- Sentry and PostHog remain distinct telemetry systems with different responsibilities
 
 In short:
 
