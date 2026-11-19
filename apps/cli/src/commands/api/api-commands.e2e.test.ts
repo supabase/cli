@@ -197,24 +197,22 @@ it.live("warehouse status keeps consolidated API bytes when stdout is piped", ()
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("warehouse enable --wait --output-format text renders the final response for people", () =>
-  Effect.gen(function* () {
-    const { result } = yield* runWarehouse(
-      ["enable", "--schema", "public", "--wait", "--yes", "--output-format", "text"],
-      (request) =>
-        request.method === "POST"
-          ? json(202, { data: { attributes: { selection_id: SEL } } })
-          : statusBody("succeeded"),
-    );
+it.live(
+  "warehouse enable --wait --output-format text keeps the final JSON response when piped",
+  () =>
+    Effect.gen(function* () {
+      const final = statusBody("succeeded");
+      const { result } = yield* runWarehouse(
+        ["enable", "--schema", "public", "--wait", "--yes", "--output-format", "text"],
+        (request) =>
+          request.method === "POST"
+            ? json(202, { data: { attributes: { selection_id: SEL } } })
+            : final,
+      );
 
-    requireCliSuccess(result, "warehouse enable --wait --output-format text");
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(
-      result.stdout.endsWith(
-        `Warehouse setup\n  Selection ID  ${SEL}\n  Status        succeeded\n`,
-      ),
-    ).toBe(true);
-  }).pipe(Effect.provide(BunServices.layer)),
+      requireCliSuccess(result, "warehouse enable --wait --output-format text");
+      expect(result.stdout, result.stderr).toBe(final.body);
+    }).pipe(Effect.provide(BunServices.layer)),
 );
 
 it.live("warehouse enable without --yes refuses to run when stdin is piped", () =>
