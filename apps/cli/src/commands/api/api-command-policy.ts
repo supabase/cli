@@ -1,22 +1,6 @@
 import type { OpenApiOperationId } from "@supabase/api/effect";
 import type { ExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 
-/** Verbs every generated command may use. */
-export const verbVocabulary = [
-  "list",
-  "get",
-  "create",
-  "update",
-  "delete",
-  "enable",
-  "disable",
-  "status",
-  "connection",
-  "add",
-  "remove",
-  "resync",
-] as const;
-
 export interface ApiNoun {
   /** Help text of the noun's group; set only when no hand-written group of that name exists. */
   readonly description?: string;

@@ -1281,15 +1281,6 @@ describe("deriveApiCommands", () => {
 
   it.each([
     [
-      "a command of more than four words",
-      {
-        "create-thing": operation({
-          "x-operation": { group: "thing.sub.deep.deeper", method: "create" },
-        }),
-      },
-      'command "thing sub deep deeper create" has more than four words',
-    ],
-    [
       "a sub-group without a description",
       { "create-thing": operation({ "x-operation": { group: "thing.other", method: "create" } }) },
       'group "other" has no description in the nouns table',
@@ -1306,11 +1297,6 @@ describe("deriveApiCommands", () => {
       "an operation without a ref path parameter",
       { "create-thing": operation({ ...create, parameters: [] }) },
       'operation has no "ref" path parameter',
-    ],
-    [
-      "a verb outside the vocabulary",
-      { "create-thing": operation({ "x-operation": { group: "thing", method: "frobnicate" } }) },
-      'verb "frobnicate" is outside the vocabulary',
     ],
     [
       "an unknown key in x-operation",

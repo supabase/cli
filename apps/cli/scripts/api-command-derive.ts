@@ -1,6 +1,6 @@
 import type { OperationId } from "@supabase/api/effect";
 import { Cause, Exit, Predicate, Schema } from "effect";
-import { verbVocabulary, type ApiNoun } from "../src/commands/api/api-command-policy.ts";
+import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
@@ -36,11 +36,8 @@ const CREDENTIAL_TOKENS: ReadonlySet<string> = new Set([
   "private",
 ]);
 
-const VERBS: ReadonlySet<string> = new Set(verbVocabulary);
-
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/u;
-const MAX_COMMAND_WORDS = 4;
 /** Headers the request builder owns; a spec that declares them gets no flag. */
 const UNMAPPED_HEADERS: ReadonlySet<string> = new Set(["authorization", "content-type", "accept"]);
 const NON_SECRET_HEADERS: ReadonlySet<string> = new Set(["idempotency-key"]);
@@ -772,14 +769,8 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     const failuresBefore = problems.length;
 
     const command = [...group.split("."), method];
-    if (command.length > MAX_COMMAND_WORDS) {
-      fail(`command "${command.join(" ")}" has more than four words`);
-    }
     if (!command.every((segment) => KEBAB.test(segment))) {
       fail(`command "${command.join(" ")}" must be lowercase kebab-case words`);
-    }
-    if (!VERBS.has(method)) {
-      fail(`verb "${method}" is outside the vocabulary; use a listed verb`);
     }
     const noun = nouns[command[0] ?? ""];
     if (noun === undefined) {

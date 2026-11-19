@@ -71,7 +71,7 @@ export interface ApiCommandWait {
 
 /** A generated command as plain data; the runtime turns each entry into a CLI command. */
 export interface ApiCommandEntry {
-  /** Noun, optional sub-groups and the verb, e.g. `["warehouse", "enable"]`. */
+  /** Noun, optional sub-groups and the method, e.g. `["warehouse", "enable"]`. */
   readonly command: readonly string[];
   /** Kebab-case operation id from the OpenAPI spec. */
   readonly operationId: string;
