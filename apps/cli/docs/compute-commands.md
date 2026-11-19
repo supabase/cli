@@ -87,6 +87,6 @@ the compute and the pattern, and happens before anything is packaged or uploaded
 so a compute without an `exclude` key uploads its whole source directory. `compute new`
 writes the selected runtime's default list into the project config, where it can be edited.
 
-A source whose every file is excluded fails before upload with an error naming the patterns.
+A source whose every file is excluded fails before upload with an error naming the compute's `exclude` setting.
 An excluded symbolic link is skipped before the CLI checks whether it points outside the
 source directory, so excluding a hoisted `node_modules` link resolves the escaping-link error.

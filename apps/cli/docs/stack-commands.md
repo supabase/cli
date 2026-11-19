@@ -436,9 +436,10 @@ release line or major) is refused. The refusal offers to keep the data by pinnin
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
 data. A database that never initialized adopts the change.
 
-The project lease is `supabase/.supabase.lock.lease`; the CLI adds it and the lock's staged writes
-(`.supabase.lock.*.tmp`) to `supabase/.gitignore` when they are missing. Lock writes are
-atomic renames, so a frozen start reads the lock without the lease and never sees a partial file.
+The project lease is `supabase/.supabase.lock.lease`. Before taking it, the CLI adds it and the
+lock's staged writes (`.supabase.lock.*.tmp`) to `supabase/.gitignore` when they are missing. A
+frozen start reads the lock without the lease and leaves `supabase/.gitignore` untouched; lock
+writes are atomic renames, so it never sees a partial file.
 When a `linked` service's observed release cannot be fetched because the release host is
 unreachable, the start keeps going with the bundled version, recorded as `unobserved`, and warns;
 any other failed resolution fails the start without writing the lock.
