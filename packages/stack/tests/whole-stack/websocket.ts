@@ -52,10 +52,18 @@ export const openWebSocket = Effect.fn("WholeStack.openWebSocket")(
   (url: string): Effect.Effect<WebSocketChannel, WebSocketChannelError, Scope.Scope> =>
     Effect.gen(function* () {
       const messages = yield* Queue.unbounded<string, WebSocketChannelError>();
-      const socket = yield* Socket.makeWebSocket(url, { openTimeout: "60 seconds" }).pipe(
+      const socket = yield* Socket.makeWebSocket(url, { openTimeout: "20 seconds" }).pipe(
         Effect.provide(NodeWS.layerWebSocketConstructor),
       );
-      const pull = yield* Socket.readerString(socket).pipe(Effect.mapError(channelError));
+      // Each reader opens a fresh connection, so a handshake stuck behind a busy proxy is retried.
+      const pull = yield* Socket.readerString(socket).pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("1 second"),
+          times: 3,
+          while: (cause) => cause.reason._tag === "SocketOpenError",
+        }),
+        Effect.mapError(channelError),
+      );
       yield* pull.pipe(
         Effect.flatMap((frames) => Queue.offerAll(messages, frames)),
         Effect.forever,

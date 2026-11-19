@@ -21,6 +21,11 @@ class AnalyticsFlowError extends Schema.TaggedError<AnalyticsFlowError>()(
   },
 ) {}
 
+// Analytics can drop connections or answer 5xx while it restarts; these failures clear on retry.
+const transientOperations = new Set(["request", "post-unavailable", "query-unavailable"]);
+const isTransient = (error: unknown) =>
+  Schema.is(AnalyticsFlowError)(error) && transientOperations.has(error.operation);
+
 const request = Effect.fn("WholeStack.analyticsRequest")(
   (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
@@ -44,7 +49,7 @@ const postAnalyticsMarker = Effect.fn("WholeStack.postAnalyticsMarker")(
       );
       if (response.status >= 400)
         return yield* new AnalyticsFlowError({
-          operation: "post-log",
+          operation: response.status >= 500 ? "post-unavailable" : "post-log",
           cause: {
             status: response.status,
             body: yield* response.text,
@@ -63,8 +68,7 @@ const postAnalyticsMarker = Effect.fn("WholeStack.postAnalyticsMarker")(
     }),
 );
 
-/** Performs one exact-marker SQL query against Logflare's Postgres backend. */
-export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")(
+const queryAnalyticsMarkerOnce = Effect.fn("WholeStack.queryAnalyticsMarkerOnce")(
   (analyticsUrl: string, apiKey: string, marker: string, phaseStartedAtMillis: number) =>
     Effect.gen(function* () {
       const escapedMarker = marker.replaceAll("'", "''");
@@ -80,7 +84,10 @@ export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")
         ),
       );
       if (response.status >= 400)
-        return yield* new AnalyticsFlowError({ operation: "query-log", cause: response.status });
+        return yield* new AnalyticsFlowError({
+          operation: response.status >= 500 ? "query-unavailable" : "query-log",
+          cause: { status: response.status, body: yield* response.text },
+        });
       const rows = yield* Schema.decodeUnknownEffect(AnalyticsQueryResponse)(
         yield* response.json,
       ).pipe(
@@ -91,6 +98,14 @@ export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")
       );
       return rows;
     }),
+);
+
+/** Performs one exact-marker SQL query against Logflare's Postgres backend. */
+export const queryAnalyticsMarker = Effect.fn("WholeStack.queryAnalyticsMarker")(
+  (analyticsUrl: string, apiKey: string, marker: string, phaseStartedAtMillis: number) =>
+    queryAnalyticsMarkerOnce(analyticsUrl, apiKey, marker, phaseStartedAtMillis).pipe(
+      Effect.retry({ schedule: Schedule.spaced("1 second"), times: 30, while: isTransient }),
+    ),
 );
 
 const queryMarkerUntilVisible = Effect.fn("WholeStack.queryMarkerUntilVisible")(
@@ -113,6 +128,14 @@ const queryMarkerUntilVisible = Effect.fn("WholeStack.queryMarkerUntilVisible")(
     ),
 );
 
+// A repeated marker is harmless because queries only check that one row matches.
+const postMarkerUntilAccepted = Effect.fn("WholeStack.postMarkerUntilAccepted")(
+  (analyticsUrl: string, apiKey: string, marker: string, timestampMillis: number) =>
+    postAnalyticsMarker(analyticsUrl, apiKey, marker, timestampMillis).pipe(
+      Effect.retry({ schedule: Schedule.spaced("1 second"), times: 30, while: isTransient }),
+    ),
+);
+
 /** Names the marker every phase of a stack ingests, for cross-stack isolation checks. */
 export const stackAnalyticsMarker = (stackId: string): string => `stack-${stackId}`;
 
@@ -123,8 +146,8 @@ export const exerciseAnalytics = Effect.fn("WholeStack.exerciseAnalytics")(
       const phaseStartedAtMillis = yield* Clock.currentTimeMillis;
       const phaseMarker = `direct-${stackId}-${phase}-${phaseStartedAtMillis}`;
       const stackMarker = stackAnalyticsMarker(stackId);
-      yield* postAnalyticsMarker(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis);
-      yield* postAnalyticsMarker(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis);
+      yield* postMarkerUntilAccepted(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis);
+      yield* postMarkerUntilAccepted(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis);
       yield* Effect.all(
         [
           queryMarkerUntilVisible(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis),

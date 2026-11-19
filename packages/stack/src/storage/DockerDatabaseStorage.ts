@@ -841,6 +841,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const missingContainer = (message: string) => /no such (?:container|object)/iu.test(message);
+      /* Every helper script reports its own failures on stderr, so a silent non-zero exit means the
+         engine lost the exec together with its helper; the scripts are safe to run again. */
+      const lostHelper = (message: string) =>
+        missingContainer(message) ||
+        /is not running|^Container engine exited with \d+$/iu.test(message);
       const volumeHelperKey = (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         image: string,
@@ -906,7 +911,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const open = openSharedHelper(mounts, sharedKey, image, helpers.ownerId);
               return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-                  /no such container|is not running/iu.test(cause.message)
+                  lostHelper(cause.message)
                     ? helpers
                         .drop(sharedKey)
                         .pipe(Effect.andThen(helpers.use(sharedKey, open, closeSharedHelper, exec)))
@@ -926,9 +931,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 Effect.mapError((cause) => errorFor("mount", cause)),
               ),
             );
-            return operationLock
-              .withPermit(operation)
-              .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+            return operationLock.withPermit(operation).pipe(
+              Effect.retry({ times: 1, while: (cause) => lostHelper(cause.message) }),
+              Effect.mapError((cause) => errorFor("helper", cause)),
+            );
           }),
         );
       });
