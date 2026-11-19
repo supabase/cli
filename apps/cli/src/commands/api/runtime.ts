@@ -297,10 +297,17 @@ const handle = Effect.fn("api-command.run")(function* (
 
 const exampleFor = (entry: ApiCommandEntry): string => {
   const required = entry.flags
-    .filter((flag) => flag.required)
+    .filter(
+      (flag) =>
+        flag.required &&
+        !entry.bindings.some(
+          (binding) => binding.location === "body" && binding.flag === flag.name,
+        ),
+    )
     .map((flag) => `--${flag.name}${flag.type === "boolean" ? "" : ` <${flag.name}>`}`);
   const positional = entry.argument === undefined ? [] : [`<${entry.argument.name}>`];
-  return ["supabase", ...entry.command, ...positional, ...required].join(" ");
+  const body = entry.body === undefined ? [] : ["--file <path>"];
+  return ["supabase", ...entry.command, ...positional, ...required, ...body].join(" ");
 };
 
 const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefined) => {

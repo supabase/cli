@@ -520,6 +520,96 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse tables layout update", () => {
+    const argv = ["warehouse", "tables", "layout", "update", "16385"];
+    const layoutPath = `/v2/projects/${VALID_REF}/warehouse/tables/16385/layout`;
+    const body = {
+      data: {
+        type: "warehouse_table_layout",
+        attributes: { sort_by: { kind: "primary_key" }, partition_by: [] },
+      },
+    };
+
+    it.effect.each([
+      { flags: [], reset: {} },
+      { flags: ["--reset-table"], reset: { reset_table: true } },
+      { flags: ["--reset-table", "false"], reset: { reset_table: false } },
+    ])(
+      "sends a layout file with reset option $flags and prints the full API response",
+      ({ flags, reset }) => {
+        const response = {
+          data: {
+            type: "warehouse_table_layout",
+            id: "16385",
+            attributes: {
+              pipeline_id: "pipeline-1",
+              schema: "public",
+              name: "events",
+              desired: body.data.attributes,
+              application_status: "waiting_for_start",
+              reset_table: reset.reset_table ?? false,
+              observation_status: "not_requested",
+              observed: null,
+              future_state: { reason: null },
+            },
+          },
+        };
+        const file = `${tempRoot.current}/layout.json`;
+        const { sent, out, run } = setup([...argv, "--file", file, ...flags], {
+          yes: true,
+          route: () => ({ status: 202, body: response }),
+        });
+        return Effect.gen(function* () {
+          yield* (yield* FileSystem.FileSystem).writeFileString(file, encodeJson(body));
+          yield* run;
+          expect(sent).toEqual([
+            {
+              method: "PATCH",
+              path: layoutPath,
+              search: "",
+              body: { data: { ...body.data, attributes: { ...body.data.attributes, ...reset } } },
+            },
+          ]);
+          expect(decodeJson(out.stdoutText)).toEqual(response);
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
+
+    it.effect(
+      "previews unmanaged sorting while preserving omitted settings without sending a request",
+      () => {
+        const clear = { data: { type: "warehouse_table_layout", attributes: { sort_by: null } } };
+        const { sent, out, run } = setup([...argv, "--body", encodeJson(clear), "--dry-run"], {
+          route: accepted,
+        });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([]);
+          expect(decodeJson(out.stdoutText)).toEqual({
+            method: "PATCH",
+            path: layoutPath,
+            query: {},
+            headers: {},
+            body: clear,
+          });
+        });
+      },
+    );
+
+    it.effect("rejects a non-boolean reset before making a hosted request", () => {
+      const reset = {
+        data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },
+      };
+      const { sent, run } = setup([...argv, "--body", encodeJson(reset)], {
+        yes: true,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(ApiCommandUsageError);
+        expect(sent).toEqual([]);
+      });
+    });
+  });
   describe("warehouse connection", () => {
     const connectionPath = `/v2/projects/${VALID_REF}/warehouse/connection`;
     const host = `${VALID_REF}.warehouse.example.invalid`;
@@ -1193,6 +1283,19 @@ describe("generated warehouse commands", () => {
   });
 
   describe("help", () => {
+    it.effect("shows a body file in the layout update example", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "tables", "layout", "update", "--help"], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        expect(calls.join("\n")).toContain(
+          "supabase warehouse tables layout update <table-id> --file <path>",
+        );
+      });
+    });
+
     it.effect("marks a required API flag as required in its description", () => {
       const { console, calls } = fakeConsole();
       const { run } = setup(["warehouse", "enable", "--help"], { route: accepted });

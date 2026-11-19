@@ -15214,6 +15214,12 @@ export const V2GetWarehouseTableLayoutInput = Schema.Struct({
 export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
   data: Schema.Struct({
     attributes: Schema.Struct({
+      application_status: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+        }),
+      ),
       desired: Schema.Struct({
         partition_by: Schema.Union([
           Schema.Array(
@@ -15281,9 +15287,9 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
       }),
       name: Schema.String.annotate({ description: "Source PostgreSQL table name." }),
       observation_status: Schema.Union([
-        Schema.Literals(["observed", "table_missing", "unavailable"]).annotate({
+        Schema.Literals(["not_requested", "observed", "table_missing", "unavailable"]).annotate({
           description:
-            "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, and unavailable when the catalog could not be read.",
+            "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, unavailable when the catalog could not be read, and not_requested when an update returned without reading the catalog.",
         }),
         OpenString,
       ]),
@@ -15314,6 +15320,15 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
         }),
         Schema.Null,
       ]),
+      pipeline_id: Schema.optionalKey(
+        Schema.String.annotate({ description: "Warehouse replication pipeline identity." }),
+      ),
+      reset_table: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+        }),
+      ),
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
     id: Schema.String.annotate({
@@ -20292,6 +20307,238 @@ export const V2UpdateNotebookOutput = Schema.Struct({
     }),
   }),
 });
+export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  table_id: Schema.String.check(
+    Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^[1-9]\\d*$", "u")).annotate({
+      expected: "a string matching the RegExp ^[1-9]\\d*$",
+    }),
+  ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      partition_by: Schema.optionalKey(
+        Schema.Union([
+          Schema.Array(
+            Schema.Struct({
+              column: Schema.String.annotate({ description: "Source column name." }).check(
+                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+              ),
+              transform: Schema.Union(
+                [
+                  Schema.Struct({ kind: Schema.Literal("identity") }),
+                  Schema.Struct({ kind: Schema.Literal("year") }),
+                  Schema.Struct({ kind: Schema.Literal("month") }),
+                  Schema.Struct({ kind: Schema.Literal("day") }),
+                  Schema.Struct({ kind: Schema.Literal("hour") }),
+                  Schema.Struct({
+                    count: Schema.Number.annotate({ description: "Number of hash buckets." })
+                      .check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(2147483647).annotate({
+                          expected: "a value less than or equal to 2147483647",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                    kind: Schema.Literal("bucket"),
+                  }),
+                ],
+                { mode: "oneOf" },
+              ),
+            }),
+          ).annotate({
+            description:
+              "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+          }),
+          Schema.Null,
+        ]),
+      ),
+      reset_table: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+        }),
+      ),
+      sort_by: Schema.optionalKey(
+        Schema.Union(
+          [
+            Schema.Struct({ kind: Schema.Literal("none") }),
+            Schema.Struct({ kind: Schema.Literal("primary_key") }),
+            Schema.Struct({
+              columns: Schema.Array(
+                Schema.Struct({
+                  direction: Schema.Literals(["asc", "desc"]),
+                  name: Schema.String.annotate({ description: "Source column name." }).check(
+                    Schema.isMinLength(1).annotate({
+                      expected: "a value with a length of at least 1",
+                    }),
+                  ),
+                  nulls: Schema.optionalKey(
+                    Schema.Union([Schema.Literals(["first", "last"]), Schema.Null]).annotate({
+                      description: "Null placement. Null uses DuckLake's default placement.",
+                    }),
+                  ),
+                }),
+              ).check(
+                Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+              ),
+              kind: Schema.Literal("columns"),
+            }),
+            Schema.Null,
+          ],
+          { mode: "oneOf" },
+        ).annotate({
+          description:
+            "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+        }),
+      ),
+    }),
+    type: Schema.Literal("warehouse_table_layout").annotate({ description: "Resource type." }),
+  }),
+});
+export const V2UpdateWarehouseTableLayoutOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      application_status: Schema.String.annotate({
+        description:
+          "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+      }),
+      desired: Schema.Struct({
+        partition_by: Schema.Union([
+          Schema.Array(
+            Schema.Struct({
+              column: Schema.String.annotate({ description: "Source column name." }),
+              transform: Schema.Union(
+                [
+                  Schema.Struct({ kind: Schema.Literal("identity") }),
+                  Schema.Struct({ kind: Schema.Literal("year") }),
+                  Schema.Struct({ kind: Schema.Literal("month") }),
+                  Schema.Struct({ kind: Schema.Literal("day") }),
+                  Schema.Struct({ kind: Schema.Literal("hour") }),
+                  Schema.Struct({
+                    count: Schema.Number.annotate({ description: "Number of hash buckets." })
+                      .check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(2147483647).annotate({
+                          expected: "a value less than or equal to 2147483647",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                    kind: Schema.Literal("bucket"),
+                  }),
+                ],
+                { mode: "oneOf" },
+              ),
+            }),
+          ).annotate({
+            description:
+              "Configured partition keys in order. An empty list explicitly clears partitioning; null leaves it unmanaged.",
+          }),
+          Schema.Null,
+        ]),
+        sort_by: Schema.Union(
+          [
+            Schema.Struct({ kind: Schema.Literal("none") }),
+            Schema.Struct({ kind: Schema.Literal("primary_key") }),
+            Schema.Struct({
+              columns: Schema.Array(
+                Schema.Struct({
+                  direction: Schema.Union([Schema.Literals(["asc", "desc"]), OpenString]),
+                  name: Schema.String.annotate({ description: "Source column name." }),
+                  nulls: Schema.Union([
+                    Schema.Union([Schema.Literals(["first", "last"]), Schema.Null]).annotate({
+                      description: "Null placement. Null uses DuckLake's default placement.",
+                    }),
+                    OpenString,
+                  ]),
+                }),
+              ),
+              kind: Schema.Literal("columns"),
+            }),
+            Schema.Null,
+          ],
+          { mode: "oneOf" },
+        ).annotate({
+          description:
+            "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+        }),
+      }).annotate({
+        description:
+          "Saved layout rules. The replicator applies them on start and hourly, so they can differ from the observed layout.",
+      }),
+      name: Schema.String.annotate({ description: "Source PostgreSQL table name." }),
+      observation_status: Schema.Union([
+        Schema.Literals(["not_requested", "observed", "table_missing", "unavailable"]).annotate({
+          description:
+            "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, unavailable when the catalog could not be read, and not_requested when an update returned without reading the catalog.",
+        }),
+        OpenString,
+      ]),
+      observed: Schema.Union([
+        Schema.Struct({
+          observed_at: Schema.String.annotate({
+            description: "Time the catalog metadata was read.",
+            format: "date-time",
+          }),
+          partition_by: Schema.Array(
+            Schema.Struct({ column: Schema.String, transform: Schema.String }),
+          ).annotate({
+            description:
+              "Active partition keys in key order, with transforms as the catalog reports them, for example bucket(16).",
+          }),
+          sort_by: Schema.Array(
+            Schema.Struct({
+              direction: Schema.String,
+              expression: Schema.String,
+              nulls: Schema.String,
+            }),
+          ).annotate({
+            description: "Active sort expressions in key order, as the catalog reports them.",
+          }),
+        }).annotate({
+          description:
+            "Layout recorded in the DuckLake catalog, null unless observation_status is observed. Catalog metadata governs files written after it changes and does not establish that existing files are sorted or partitioned.",
+        }),
+        Schema.Null,
+      ]),
+      pipeline_id: Schema.String.annotate({
+        description: "Warehouse replication pipeline identity.",
+      }),
+      reset_table: Schema.Boolean.annotate({
+        description:
+          "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+      }),
+      schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
+    }),
+    id: Schema.String.annotate({
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    })
+      .check(
+        Schema.isMaxCodePoints(10).annotate({ expected: "a string with at most 10 code points" }),
+      )
+      .check(
+        Schema.isPattern(new RegExp("^[1-9]\\d*$", "u")).annotate({
+          expected: "a string matching the RegExp ^[1-9]\\d*$",
+        }),
+      ),
+    type: Schema.Literal("warehouse_table_layout").annotate({ description: "Resource type." }),
+  }),
+});
 export const V1ApplyAMigrationOutput = Schema.Void;
 export const V1ApplyProjectAddonOutput = Schema.Void;
 export const V1AuthorizeUserOutput = Schema.Void;
@@ -20581,6 +20828,7 @@ export const openApiOperationIdMap = {
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
   "v2-update-notebook": "v2UpdateNotebook",
+  "v2-update-warehouse-table-layout": "v2UpdateWarehouseTableLayout",
 } as const;
 
 export const operationDefinitions = {
@@ -24283,6 +24531,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2UpdateNotebookInput,
     outputSchema: V2UpdateNotebookOutput,
+  },
+  v2UpdateWarehouseTableLayout: {
+    id: "v2UpdateWarehouseTableLayout",
+    description:
+      "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "PATCH",
+    path: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
+    pathParams: ["ref", "table_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2UpdateWarehouseTableLayoutInput,
+    outputSchema: V2UpdateWarehouseTableLayoutOutput,
   },
 } as const;
 

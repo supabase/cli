@@ -62,6 +62,7 @@ describe("command surface", () => {
         "warehouse tables get",
         "warehouse tables layout",
         "warehouse tables layout get",
+        "warehouse tables layout update",
         "warehouse tables list",
         "warehouse teardowns",
         "warehouse teardowns get",
@@ -76,6 +77,29 @@ describe("command surface", () => {
       const single = yield* commandSurfaceEntry(root, ["warehouse", "status"]);
       expect(walked["warehouse status"]).toStrictEqual(single);
       expect(Object.keys(walked)).toEqual(Object.keys(walked).toSorted());
+    }),
+  );
+
+  it.effect("describes layout updates without unsupported backend workflow flags", () =>
+    Effect.gen(function* () {
+      const warehouse = yield* warehouseVariant;
+      const update = warehouse["warehouse tables layout update"];
+      expect(update).toMatchObject({
+        path: ["warehouse", "tables", "layout", "update"],
+        stage: { status: "experimental", feature: "warehouse" },
+        errors: "standard",
+        api: {
+          operationId: "v2-update-warehouse-table-layout",
+          request: { contentType: "application/json" },
+        },
+      });
+      expect(Object.keys(update?.flags ?? {})).toEqual(
+        expect.arrayContaining(["body", "file", "dry-run", "reset-table"]),
+      );
+      for (const flag of ["wait", "timeout"]) {
+        expect(update?.flags).not.toHaveProperty(flag);
+      }
+      expect(titlesOf(update?.result)).toEqual(["response", "dryRun"]);
     }),
   );
 

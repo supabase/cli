@@ -157,7 +157,7 @@ interface Input {
 }
 
 /**
- * Every non-path input of the operation, read from openapi.json; the flag spelling comes from the
+ * Every scalar or scalar-array non-path input, read from openapi.json; the flag spelling comes from the
  * command's declared binding, since naming is the derivation's contract.
  */
 const inputsOf = (
@@ -191,17 +191,27 @@ const inputsOf = (
   const envelope = Object.keys(attributes).length > 0;
   const container = envelope ? attributes : operation.requestSchema;
   const required = asList(container["required"]);
-  const fields = Object.entries(asRecord(container["properties"])).map(([field, schema]): Input => {
-    const sample = sampleOf(schema);
-    return {
-      location: "body",
-      field,
-      flag: flagFor("body", field),
-      pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
-      required: required.includes(field),
-      sample,
-    };
-  });
+  const scalarTypes = ["boolean", "integer", "number", "string"];
+  const fields = Object.entries(asRecord(container["properties"]))
+    .filter(([, schema]) => {
+      const node = resolveRef(schema);
+      return (
+        scalarTypes.includes(String(node["type"])) ||
+        (node["type"] === "array" &&
+          scalarTypes.includes(String(resolveRef(node["items"])["type"])))
+      );
+    })
+    .map(([field, schema]): Input => {
+      const sample = sampleOf(schema);
+      return {
+        location: "body",
+        field,
+        flag: flagFor("body", field),
+        pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
+        required: required.includes(field),
+        sample,
+      };
+    });
   return [...queries, ...fields];
 };
 

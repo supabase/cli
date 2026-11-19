@@ -283,6 +283,61 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "layout", "update"],
+    operationId: "v2-update-warehouse-table-layout",
+    definition: "v2UpdateWarehouseTableLayout",
+    method: "PATCH",
+    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
+    summary: "Update the layout of a table replicated to Warehouse",
+    description:
+      "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.",
+    readOnly: false,
+    feature: "warehouse",
+    body: {
+      contentType: "application/json",
+      kind: "json-envelope",
+      type: "warehouse_table_layout",
+    },
+    response: {
+      status: 202,
+      kind: "json",
+    },
+    argument: {
+      name: "table-id",
+      description: "Source Postgres table OID from the Warehouse tables list.",
+    },
+    flags: [
+      {
+        name: "reset-table",
+        type: "boolean",
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "path",
+        name: "table_id",
+        source: "argument",
+        argument: "table-id",
+      },
+      {
+        location: "body",
+        name: "reset_table",
+        pointer: "/data/attributes/reset_table",
+        source: "flag",
+        flag: "reset-table",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "tables", "list"],
     operationId: "v2-list-warehouse-tables",
     definition: "v2ListWarehouseTables",
