@@ -10,7 +10,7 @@ import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
@@ -68,12 +68,13 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
       // (after the gate) rather than via Command.provide, which would build it — and fail
       // on a missing token — before this generator's first yield* runs.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       return yield* postgresConfigUpdate(flags).pipe(
         withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["postgres-config", "update"])),
       );
     }).pipe(withJsonErrorHandling),
   ),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

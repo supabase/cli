@@ -79,10 +79,19 @@ const dockerStoragePublishLoopFixture = fileURLToPath(
 const helperMirror = "registry.test/supabase/postgres:17";
 const fakeHelperEngine = (
   onCreate: () => Effect.Effect<void> = () => Effect.void,
-  { volumePresent = false }: { readonly volumePresent?: boolean } = {},
+  {
+    volumePresent = false,
+    helperSurvivesSilentExit = false,
+  }: {
+    readonly volumePresent?: boolean;
+    readonly helperSurvivesSilentExit?: boolean;
+  } = {},
 ) => {
   const commands: string[][] = [];
+  let silentExecFailures = 0;
   const local = new Set<string>();
+  // Helpers by name: created ones are stopped until started, and `--rm` removes a stopped one.
+  const helpers = new Map<string, "created" | "running">();
   const handle = (exitCode: number, stdout = "", stderr = "") =>
     ChildProcessSpawner.makeHandle({
       pid: ChildProcessSpawner.ProcessId(4242),
@@ -114,7 +123,12 @@ const fakeHelperEngine = (
         local.add(helperMirror);
         return handle(0);
       }
-      if (args[0] === "inspect") return handle(1, "", "no such container");
+      if (args[0] === "inspect") {
+        const state = helpers.get(args.at(-1) ?? "");
+        return state !== undefined && args.includes("{{.State.Running}}")
+          ? handle(0, String(state === "running"))
+          : handle(1, "", "no such container");
+      }
       if (args[0] === "create") {
         const shellIndex = args.indexOf("/bin/sh");
         const image = args[shellIndex - 1];
@@ -123,15 +137,42 @@ const fakeHelperEngine = (
         // Fires once the create command the claim must precede is observed, so the claim's
         // presence at this exact point is a deterministic fact, not a timing guess.
         yield* onCreate();
+        helpers.set(args[args.indexOf("--name") + 1] ?? "", "created");
         return handle(0, "abcdef0123456789");
       }
-      if (args[0] === "start") return handle(0, "supabase-helper-ready\n");
-      if (args[0] === "exec") return handle(0);
-      if (args[0] === "rm") return handle(0, "done");
+      if (args[0] === "start") {
+        const name = args.at(-1) ?? "";
+        if (!helpers.has(name)) return handle(1, "", `Error: No such container: ${name}`);
+        helpers.set(name, "running");
+        return handle(0, "supabase-helper-ready\n");
+      }
+      if (args[0] === "exec") {
+        const name = args[1] ?? "";
+        const state = helpers.get(name);
+        if (state === undefined) return handle(1, "", `Error: No such container: ${name}`);
+        if (state !== "running")
+          return handle(1, "", `Error response from daemon: container ${name} is not running`);
+        if (silentExecFailures === 0) return handle(0);
+        silentExecFailures -= 1;
+        if (!helperSurvivesSilentExit) helpers.delete(name);
+        return handle(128);
+      }
+      if (args[0] === "rm") {
+        helpers.delete(args.at(-1) ?? "");
+        return handle(0, "done");
+      }
       return handle(1, "", `unexpected engine command: ${args[0] ?? ""}`);
     }),
   );
-  return { commands, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+  return {
+    commands,
+    /** Makes the next `count` helper execs exit 128 with empty stderr. */
+    failNextExecsSilently: (count: number) =>
+      Effect.sync(() => {
+        silentExecFailures = count;
+      }),
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  };
 };
 
 const engine = Effect.fn("StorageTest.engine")((args: ReadonlyArray<string>) =>
@@ -686,6 +727,114 @@ describe.runIf(testEngine === "docker")(
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer)));
     });
+
+    const silentExecStorage = Effect.fn("StorageTest.silentExecStorage")(function* (
+      kind: "shared" | "per-storage",
+    ) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-helper-silent-" });
+      const storageRoot = path.join(root, "state", "stack", "data");
+      const instanceRoot = path.join(storageRoot, "database");
+      yield* fs.makeDirectory(instanceRoot, { recursive: true });
+      const container = yield* makeContainerRuntime({
+        target: dockerTarget,
+        root,
+        imageMirrors: () => [helperMirror],
+      });
+      const helpers = yield* makeDockerHelperRegistry(yield* crypto.uuidV4());
+      return yield* makeDockerDatabaseStorage({
+        runtime: "docker",
+        target: dockerTarget,
+        stackId: "storage-helper-silent",
+        instanceId: "database",
+        instanceRoot,
+        root: storageRoot,
+        cacheRoot: path.join(root, "cache"),
+        fs,
+        path,
+        crypto,
+        digest: yield* Digest.Digest,
+        container,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        ...(kind === "shared" ? { helpers } : {}),
+      });
+    });
+    const engineVerbs = (engine: ReturnType<typeof fakeHelperEngine>, verb: string) =>
+      engine.commands.filter((args) => args[0] === verb);
+    const silentExecLayer = (engine: ReturnType<typeof fakeHelperEngine>) =>
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, engine.layer);
+
+    for (const kind of ["shared", "per-storage"] as const) {
+      it.live(
+        `retries a silent ${kind} helper exec failure on a fresh helper once the helper is gone`,
+        () => {
+          const engine = fakeHelperEngine();
+          return Effect.scoped(
+            Effect.gen(function* () {
+              const storage = yield* silentExecStorage(kind);
+              yield* engine.failNextExecsSilently(1);
+
+              yield* storage.prepare(selection.database);
+
+              expect(engineVerbs(engine, "exec")).toHaveLength(2);
+              expect(engineVerbs(engine, "start")).toHaveLength(2);
+            }),
+          ).pipe(Effect.provide(silentExecLayer(engine)));
+        },
+      );
+
+      it.live(`replays a silent ${kind} helper exec failure only once`, () => {
+        const engine = fakeHelperEngine();
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const storage = yield* silentExecStorage(kind);
+            yield* engine.failNextExecsSilently(2);
+
+            const error = yield* Effect.flip(storage.prepare(selection.database));
+
+            expect(error.message).toMatch(/^Helper \S+ stopped during exec: /u);
+            expect(engineVerbs(engine, "exec")).toHaveLength(2);
+            expect(engineVerbs(engine, "start")).toHaveLength(2);
+          }),
+        ).pipe(Effect.provide(silentExecLayer(engine)));
+      });
+
+      it.live(`reports a silent ${kind} helper exec failure while the helper still runs`, () => {
+        const engine = fakeHelperEngine(undefined, { helperSurvivesSilentExit: true });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const storage = yield* silentExecStorage(kind);
+            yield* engine.failNextExecsSilently(1);
+
+            const error = yield* Effect.flip(storage.prepare(selection.database));
+
+            expect(error.message).toBe("Container engine exited with 128");
+            expect(engineVerbs(engine, "exec")).toHaveLength(1);
+          }),
+        ).pipe(Effect.provide(silentExecLayer(engine)));
+      });
+
+      it.live(`does not replay a snapshot program whose ${kind} helper was lost`, () => {
+        const engine = fakeHelperEngine();
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const storage = yield* silentExecStorage(kind);
+            yield* storage.prepare(selection.database);
+            const execsBefore = engineVerbs(engine, "exec").length;
+            yield* engine.failNextExecsSilently(1);
+
+            yield* Effect.flip(storage.restoreSnapshot(selection.database, "key"));
+
+            const scripts = engineVerbs(engine, "exec").map((args) => args[4]);
+            const lostScript = scripts[execsBefore];
+            expect(lostScript).toContain("set -eu");
+            expect(scripts.filter((script) => script === lostScript)).toHaveLength(1);
+          }),
+        ).pipe(Effect.provide(silentExecLayer(engine)));
+      });
+    }
 
     it.live("round-trips PostgreSQL 15 data with its catalog image", () =>
       Effect.scoped(
@@ -1365,72 +1514,73 @@ describe.runIf(testEngine === "docker")(
       ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
-    it.live("recovers after an owned helper is removed externally", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const crypto = yield* SecureRandom.SecureRandom;
-          const digest = yield* Digest.Digest;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-helper-" });
-          const storageRoot = path.join(root, "state", "stack", "data");
-          const cacheRoot = path.join(root, "cache");
-          const instanceRoot = path.join(storageRoot, "recovery");
-          yield* fs.makeDirectory(instanceRoot, { recursive: true });
-          yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* containerRuntime({
-            target: dockerTarget,
-            root,
-          });
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const stackId = `storage-helper-recovery-${yield* crypto.uuidV4()}`;
-          const instanceId = "recovery";
-          const helperScope = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(helperScope, Exit.void));
-          const helperRegistry = yield* makeDockerHelperRegistry(yield* crypto.uuidV4()).pipe(
-            Effect.provideService(Scope.Scope, helperScope),
-          );
-          const storage = yield* makeDockerDatabaseStorage({
-            runtime: "docker",
-            target: dockerTarget,
-            stackId,
-            instanceId,
-            instanceRoot,
-            root: storageRoot,
-            cacheRoot,
-            fs,
-            path,
-            crypto,
-            digest,
-            container,
-            spawner,
-            helpers: helperRegistry,
-          });
-          yield* storage.prepare(selection.database);
-          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
-            yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
-          );
-          const volume = marker.volume;
-          if (volume === undefined)
-            return yield* new DockerTestError({ message: "Docker storage volume missing" });
-          const helpers = yield* engine([
-            "ps",
-            "--filter",
-            "label=com.supabase.stack=" + stackId,
-            "--format",
-            "{{.Names}}",
-          ]);
-          const helper = helpers.split("\n").find((name) => name.length > 0);
-          if (helper === undefined)
-            return yield* new DockerTestError({ message: "Owned helper was not discoverable" });
-          yield* engine(["rm", "-f", helper]);
-          yield* storage.prepare(selection.database);
-          yield* storage.destroyData(selection.database);
-          yield* Scope.close(helperScope, Exit.void);
-          yield* engine(["volume", "rm", volume]);
-        }),
-      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
-    );
+    for (const kind of ["shared", "per-storage"] as const)
+      it.live(`recovers after its ${kind} helper is removed externally`, () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const crypto = yield* SecureRandom.SecureRandom;
+            const digest = yield* Digest.Digest;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-helper-" });
+            const storageRoot = path.join(root, "state", "stack", "data");
+            const cacheRoot = path.join(root, "cache");
+            const instanceRoot = path.join(storageRoot, "recovery");
+            yield* fs.makeDirectory(instanceRoot, { recursive: true });
+            yield* fs.makeDirectory(cacheRoot, { recursive: true });
+            const container = yield* containerRuntime({
+              target: dockerTarget,
+              root,
+            });
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            const stackId = `storage-helper-recovery-${yield* crypto.uuidV4()}`;
+            const instanceId = "recovery";
+            const helperScope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(helperScope, Exit.void));
+            const helperRegistry = yield* makeDockerHelperRegistry(yield* crypto.uuidV4()).pipe(
+              Effect.provideService(Scope.Scope, helperScope),
+            );
+            const storage = yield* makeDockerDatabaseStorage({
+              runtime: "docker",
+              target: dockerTarget,
+              stackId,
+              instanceId,
+              instanceRoot,
+              root: storageRoot,
+              cacheRoot,
+              fs,
+              path,
+              crypto,
+              digest,
+              container,
+              spawner,
+              ...(kind === "shared" ? { helpers: helperRegistry } : {}),
+            });
+            yield* storage.prepare(selection.database);
+            const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+              yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+            );
+            const volume = marker.volume;
+            if (volume === undefined)
+              return yield* new DockerTestError({ message: "Docker storage volume missing" });
+            const helpers = yield* engine([
+              "ps",
+              "--filter",
+              "label=com.supabase.stack=" + stackId,
+              "--format",
+              "{{.Names}}",
+            ]);
+            const helper = helpers.split("\n").find((name) => name.length > 0);
+            if (helper === undefined)
+              return yield* new DockerTestError({ message: "Owned helper was not discoverable" });
+            yield* engine(["rm", "-f", helper]);
+            yield* storage.prepare(selection.database);
+            yield* storage.destroyData(selection.database);
+            yield* Scope.close(helperScope, Exit.void);
+            yield* engine(["volume", "rm", volume]);
+          }),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+      );
 
     it.live("keeps another owner's volume helper running when one owner closes", () =>
       Effect.scoped(

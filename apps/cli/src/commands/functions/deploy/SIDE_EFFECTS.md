@@ -123,7 +123,9 @@ The `--output`/`-o` flag does not change deploy output.
   body is the `entitlement_required` envelope prints the upgrade hint on stderr before the error in
   text mode, carries `entitlement` on the JSON error, and fires `cli_upgrade_suggested` (via
   wrapper) before `cli_command_executed`. A `--use-api` deploy of several functions reports its
-  per-function failures as one aggregate error, which carries no entitlement.
+  per-function failures as one aggregate error, which carries the entitlement of the first
+  plan-gated failure, so one gated function is enough for the hint, the JSON field, the event and
+  `plan_limit`.
 - Prints the target banner before anything else.
 - **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
   before the first bundle, upload or delete. The default answer is No. `--prune` adds

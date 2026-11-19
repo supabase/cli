@@ -13,6 +13,7 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 import { STACK_SELECTOR_FLAG_NAMES } from "../../../../../command-internal/stack-target.ts";
 
@@ -110,5 +111,6 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  pgDeltaAccess.annotate,
   withTargetPolicy({ group: "local-only", consent: "none" }),
 );

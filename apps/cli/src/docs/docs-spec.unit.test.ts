@@ -3,7 +3,6 @@ import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { Config, Effect, FileSystem, Path } from "effect";
 import { FlagDocumentation } from "../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
-import type { PlatformError } from "effect/PlatformError";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
 import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
@@ -18,7 +17,6 @@ import {
   stringifyDocsSpec,
 } from "./docs-spec.ts";
 import type { DocsCommand } from "./docs-spec.ts";
-import { DOCS_EXCLUDED, DOCS_EXPERIMENTAL } from "./docs-spec.tables.ts";
 
 interface BuiltSpecFixture {
   readonly content: DocsContent;
@@ -253,7 +251,17 @@ describe("buildDocsSpec", () => {
 
   it("excludes deprecated commands from the spec and from subcommand lists", () => {
     const { byId } = builtSpec();
-    for (const excluded of DOCS_EXCLUDED) {
+    for (const excluded of [
+      "supabase-inspect-db-cache-hit",
+      "supabase-inspect-db-index-sizes",
+      "supabase-inspect-db-index-usage",
+      "supabase-inspect-db-role-configs",
+      "supabase-inspect-db-role-connections",
+      "supabase-inspect-db-seq-scans",
+      "supabase-inspect-db-table-record-counts",
+      "supabase-inspect-db-table-sizes",
+      "supabase-inspect-db-unused-indexes",
+    ]) {
       expect(byId.has(excluded)).toBe(false);
     }
     expect(byId.get("supabase-gen")?.subcommands).not.toContain("supabase-gen-keys");
@@ -303,8 +311,33 @@ describe("buildDocsSpec", () => {
 
   it("injects the required --experimental flag into experimental leaves only", () => {
     const { byId } = builtSpec();
-    const storageLs = byId.get("supabase-storage-ls");
-    const experimental = storageLs?.flags.find((flag) => flag.id === "experimental");
+    const requiredCommands = [
+      "network-bans-get",
+      "network-bans-remove",
+      "network-restrictions-get",
+      "network-restrictions-update",
+      "postgres-config-delete",
+      "postgres-config-get",
+      "postgres-config-update",
+      "ssl-enforcement-get",
+      "ssl-enforcement-update",
+      "storage-cp",
+      "storage-ls",
+      "storage-mv",
+      "storage-rm",
+      "vanity-subdomains-activate",
+      "vanity-subdomains-check-availability",
+      "vanity-subdomains-delete",
+      "vanity-subdomains-get",
+    ];
+    for (const command of requiredCommands) {
+      expect(
+        byId.get(`supabase-${command}`)?.flags.find((flag) => flag.id === "experimental"),
+      ).toMatchObject({ required: true, default_value: "false" });
+    }
+    const experimental = byId
+      .get("supabase-storage-ls")
+      ?.flags.find((flag) => flag.id === "experimental");
     expect(experimental).toMatchObject({ required: true, default_value: "false" });
     expect(Object.keys(experimental ?? {})).toEqual([
       "id",
@@ -316,11 +349,16 @@ describe("buildDocsSpec", () => {
     expect(byId.get("supabase-db-push")?.flags.some((flag) => flag.id === "experimental")).toBe(
       false,
     );
-    const declarativeSync = byId
-      .get("supabase-db-schema-declarative-sync")
-      ?.flags.find((flag) => flag.id === "experimental");
-    expect(declarativeSync).toBeDefined();
-    expect(declarativeSync?.required).toBeUndefined();
+    for (const leaf of ["generate", "sync"]) {
+      const experimental = byId
+        .get(`supabase-db-schema-declarative-${leaf}`)
+        ?.flags.find((flag) => flag.id === "experimental");
+      expect(experimental).toMatchObject({ default_value: "false" });
+      expect(experimental?.required).toBeUndefined();
+    }
+    expect(
+      byId.get("supabase-projects-create")?.flags.some((flag) => flag.id === "experimental"),
+    ).toBe(false);
   });
 
   it("emits enum flags with accepted_values and defaults", () => {
@@ -522,7 +560,7 @@ describe("build guards fail loudly", () => {
       Command.withGlobalFlags([ExperimentalFlag]),
     );
     expect(() => buildDocsSpec({ root, ...emptyInput })).toThrow(
-      /stale static-table entries[^]*DOCS_EXPERIMENTAL[^]*DOCS_EXTRA_FLAGS/,
+      /stale static-table entries[^]*DOCS_EXTRA_FLAGS/,
     );
   });
 
@@ -567,40 +605,5 @@ describe("readDocsContent walk", () => {
       const content = yield* readDocsContent(dir);
       expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
-});
-
-describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
-  it.effect("matches the requireExperimental call sites exactly", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const commandsDir = path.resolve(import.meta.dirname, "../commands");
-      const gated = new Set<string>();
-      const isSymlinkOrDenied = (entryPath: string) =>
-        fs.readLink(entryPath).pipe(
-          Effect.catchReason("PlatformError", "PermissionDenied", () => Effect.void),
-          Effect.isSuccess,
-        );
-      const walk = (dir: string): Effect.Effect<void, PlatformError> =>
-        Effect.gen(function* () {
-          for (const name of yield* fs.readDirectory(dir)) {
-            const entryPath = path.join(dir, name);
-            if (
-              !(yield* isSymlinkOrDenied(entryPath)) &&
-              (yield* fs.stat(entryPath)).type === "Directory"
-            )
-              yield* walk(entryPath);
-            else if (name.endsWith(".command.ts")) {
-              if ((yield* fs.readFileString(entryPath)).includes("yield* requireExperimental")) {
-                const relative = path.relative(commandsDir, path.dirname(entryPath));
-                gated.add(`supabase-${relative.split(path.sep).join("-")}`);
-              }
-            }
-          }
-        });
-      yield* walk(commandsDir);
-      expect([...gated].sort()).toEqual([...DOCS_EXPERIMENTAL].sort());
-    }).pipe(Effect.provide(BunServices.layer)),
   );
 });
