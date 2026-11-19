@@ -18,6 +18,10 @@ describe("locateInSchemaFiles", () => {
       sql: '-- helpers\n\nCREATE OR REPLACE FUNCTION "public"."add" (a int, b int) returns int\n  language sql as $$ select 1 $$;\n',
     },
     {
+      name: "public/views.sql",
+      sql: "create view public.recent as select 1 as id;\nalter table public.links add constraint links_note_fkey foreign key (id) references public.notes (id);\nalter table public.notes add column title text;\n",
+    },
+    {
       name: "public/policies.sql",
       sql: 'create policy "Own rows" on public.events for all using (true);\ngrant usage on schema public to anon;\ncreate extension if not exists pgcrypto;\n',
     },
@@ -40,6 +44,8 @@ describe("locateInSchemaFiles", () => {
             "GRANT USAGE ON SCHEMA public TO anon",
             'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
             "CREATE TABLE public.other (id int)",
+            'GRANT SELECT ON TABLE "public"."recent" TO "anon"',
+            "ALTER TABLE public.notes ADD COLUMN body text",
           ],
           files,
         ),
@@ -55,6 +61,8 @@ describe("locateInSchemaFiles", () => {
         at("public/policies.sql", 2),
         at("public/policies.sql", 3),
         undefined,
+        at("public/views.sql", 1),
+        at("public/views.sql", 3),
       ]);
     }),
   );
@@ -185,6 +193,51 @@ describe("attributeDryRunStatuses", () => {
         );
         expect(same.refused).toEqual([]);
       }),
+  );
+
+  it.effect("matches a status whose text Spark's local API cut at 200 characters", () =>
+    Effect.gen(function* () {
+      const columns = Array.from({ length: 30 }, (_, i) => `col_${i} text`).join(", ");
+      const statement = `create table public.wide (id int primary key, ${columns})`;
+      const { refused, silent } = yield* attributeDryRunStatuses(
+        [status(0, "unsupported", `-- wide ${statement}`.slice(0, 200))],
+        [{ file: "1_a.sql", query: `-- wide\n${statement};\n` }],
+      );
+      expect(refused.map((r) => [r.file, r.line])).toEqual([["1_a.sql", 2]]);
+      expect(silent).toEqual([]);
+    }),
+  );
+
+  it.effect("folds into the latest CREATE TABLE, after a drop and re-create", () =>
+    Effect.gen(function* () {
+      const fold = "ALTER TABLE public.t ADD COLUMN note text";
+      const { refused } = yield* attributeDryRunStatuses(
+        [
+          status(0, "ok", "create table public.t (id int)"),
+          status(1, "ok", "drop table public.t"),
+          status(2, "ok", "create table public.t (id bigint)"),
+          status(3, "rewritten", fold),
+        ],
+        [
+          { file: "1_a.sql", query: "create table public.t (id int);\n" },
+          {
+            file: "2_b.sql",
+            query: `drop table public.t;\ncreate table public.t (id bigint);\n${fold};\n`,
+          },
+        ],
+      );
+      expect(refused).toEqual([]);
+    }),
+  );
+
+  it.effect("does not call a file it cannot parse silent", () =>
+    Effect.gen(function* () {
+      const { silent } = yield* attributeDryRunStatuses(
+        [status(0, "error", "creat tabel x")],
+        [{ file: "1_a.sql", query: "creat tabel x;\n" }],
+      );
+      expect(silent).toEqual([]);
+    }),
   );
 
   it.effect("lists a file that received no status", () =>

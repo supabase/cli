@@ -74,32 +74,47 @@ interface Located {
   readonly line: number;
 }
 
-/** pg-topo's statements of `sources` in source order, each with the line of its first token. */
+/**
+ * pg-topo's statements of `sources` in source order, each with the line of its first token, and the
+ * sources it could not parse (pg-topo reports those as diagnostics, not errors).
+ */
 const analyze = (sources: ReadonlyArray<string>) =>
   Effect.tryPromise({
     try: () => analyzeAndSort([...sources]),
     catch: (cause) => new SparkBackendError({ message: "could not parse the SQL files", cause }),
-  }).pipe(Effect.map(({ ordered }) => located(sources, ordered)));
+  }).pipe(
+    Effect.map(({ ordered, diagnostics }) => {
+      // pg-topo names in-memory input i `<input:i>`; its analyzeAndSortFromFiles maps them back this way.
+      const index = new Map(sources.map((_, i) => [`<input:${i}>`, i]));
+      const statements = ordered
+        .flatMap((node): ReadonlyArray<Located> => {
+          const source = index.get(node.id.filePath);
+          if (source === undefined) return [];
+          const sql = sources[source] ?? "";
+          return [{ node, source, line: lineAt(sql, firstToken(sql, node.id.sourceOffset ?? 0)) }];
+        })
+        .sort((a, b) => a.source - b.source || a.node.id.statementIndex - b.node.id.statementIndex);
+      const unparsed = new Set(
+        diagnostics.flatMap((d) => {
+          const source =
+            d.code === "PARSE_ERROR" ? index.get(d.statementId?.filePath ?? "") : undefined;
+          return source === undefined ? [] : [source];
+        }),
+      );
+      return { statements, unparsed };
+    }),
+  );
 
-const located = (
-  sources: ReadonlyArray<string>,
-  ordered: ReadonlyArray<StatementNode>,
-): ReadonlyArray<Located> => {
-  // pg-topo names in-memory input i `<input:i>`; its own analyzeAndSortFromFiles maps them back this way.
-  const index = new Map(sources.map((_, i) => [`<input:${i}>`, i]));
-  return ordered
-    .flatMap((node) => {
-      const source = index.get(node.id.filePath);
-      if (source === undefined) return [];
-      const sql = sources[source] ?? "";
-      return [{ node, source, line: lineAt(sql, firstToken(sql, node.id.sourceOffset ?? 0)) }];
-    })
-    .sort((a, b) => a.source - b.source || a.node.id.statementIndex - b.node.id.statementIndex);
-};
+// pg-topo names a GRANT's target a table even when it is a view.
+const RELATIONS = new Set(["table", "view", "materialized_view"]);
+const kindOf = (ref: ObjectRef) => (RELATIONS.has(ref.kind) ? "relation" : ref.kind);
 
 /** Overloads aside, kind, schema and name identify an object; signatures differ in spelling. */
-const sameObject = (a: ObjectRef, b: ObjectRef) =>
-  a.kind === b.kind && (a.schema ?? "") === (b.schema ?? "") && a.name === b.name;
+const sameObject = (a: ObjectRef | undefined, b: ObjectRef) =>
+  a !== undefined &&
+  kindOf(a) === kindOf(b) &&
+  (a.schema ?? "") === (b.schema ?? "") &&
+  a.name === b.name;
 
 /** The objects a statement creates, its table before that table's constraints. */
 const provided = (node: StatementNode) =>
@@ -138,7 +153,7 @@ const sourceOf = (refused: StatementNode, statements: ReadonlyArray<Located>) =>
     statements.find(
       (s) =>
         s.node.statementClass === refused.statementClass &&
-        s.node.requires.some((ref) => sameObject(ref, acted)),
+        sameObject(target(s.node) ?? s.node.requires.find((ref) => ref.kind !== "role"), acted),
     ) ?? providerOf(statements, acted)
   );
 };
@@ -154,9 +169,9 @@ export const locateInSchemaFiles = Effect.fn("Spark.locateInSchemaFiles")(functi
   files: ReadonlyArray<SqlFile>,
 ) {
   if (statements.length === 0) return [];
-  const sources = yield* analyze(files.map((file) => file.sql));
+  const sources = (yield* analyze(files.map((file) => file.sql))).statements;
   return yield* Effect.forEach(statements, (statement) =>
-    Effect.map(analyze([statement]), ([first]): SourceLocation | undefined => {
+    Effect.map(analyze([statement]), ({ statements: [first] }): SourceLocation | undefined => {
       const source = first === undefined ? undefined : sourceOf(first.node, sources);
       return source === undefined
         ? undefined
@@ -192,9 +207,10 @@ export const attributeDryRunStatuses = Effect.fn("Spark.attributeDryRunStatuses"
   statuses: ReadonlyArray<S>,
   files: ReadonlyArray<{ readonly file: string; readonly query: string }>,
 ) {
-  const statements = yield* analyze(files.map((f) => f.query));
+  const { statements, unparsed } = yield* analyze(files.map((f) => f.query));
   const texts = statements.map((s) => asSparkReportsIt(s.node.sql));
-  const seen = new Set<number>();
+  // Nothing can be said of a file pg-topo cannot parse; Spark's statuses decide.
+  const seen = new Set<number>(unparsed);
   const refused: Array<{
     readonly file: string | undefined;
     readonly line: number | undefined;
@@ -202,13 +218,14 @@ export const attributeDryRunStatuses = Effect.fn("Spark.attributeDryRunStatuses"
   }> = [];
   let cursor = 0;
   for (const status of [...statuses].sort((a, b) => a.index - b.index)) {
-    const next = texts.indexOf(status.statement, cursor);
+    // Spark's local API cuts a statement's text at 200 characters.
+    const next = texts.findIndex((text, i) => i >= cursor && text.startsWith(status.statement));
     let at: Located | undefined;
     if (next >= 0) {
       at = statements[next];
       cursor = next + 1;
     } else if (status.status !== "ok") {
-      const node = (yield* analyze([status.statement]))[0]?.node;
+      const node = (yield* analyze([status.statement])).statements[0]?.node;
       at = node === undefined ? undefined : sourceOf(node, statements);
     }
     if (at !== undefined) seen.add(at.source);
@@ -219,7 +236,12 @@ export const attributeDryRunStatuses = Effect.fn("Spark.attributeDryRunStatuses"
     }
     if (status.status !== "rewritten" || at === undefined) continue;
     const table = target(at.node);
-    const creator = table === undefined ? undefined : providerOf(statements, table);
+    // Spark folds into the latest CREATE before the ALTER, after any drop and re-create.
+    const before = statements.slice(0, statements.indexOf(at));
+    const creator =
+      table === undefined
+        ? undefined
+        : before.findLast((s) => s.node.provides.some((ref) => sameObject(ref, table)));
     if (creator !== undefined && creator.source < at.source)
       refused.push({
         file,
