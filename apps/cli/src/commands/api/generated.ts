@@ -198,7 +198,7 @@ export const apiCommands = [
     apiPath: "/v2/projects/{ref}/warehouse/capacity",
     summary: "Inspect Warehouse capacity diagnostics",
     description:
-      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
+      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
     readOnly: true,
     feature: "warehouse",
     response: {
@@ -212,7 +212,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_p95, activation_duration_p95. Supply a comma-separated list. Allowed measurements: query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_mean, assignment_wait_p95, activation_rate, activation_duration_mean, activation_duration_p95.",
+          "Up to eight distinct measurements. Defaults to `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_p95`, `activation_duration_p95`. Supply a comma-separated list. Allowed measurements: `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_mean`, `assignment_wait_p95`, `activation_rate`, `activation_duration_mean`, `activation_duration_p95`.",
       },
       {
         name: "from",
@@ -220,7 +220,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires `--to`; cannot be combined with `--since`.",
       },
       {
         name: "interval",
@@ -229,7 +229,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+          "Defaults to `1m`. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least `5m`.",
       },
       {
         name: "since",
@@ -237,7 +237,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
+          "Look back from server time, for example `30m`, `2h`, or `1d`. Defaults to `30m` when `--from`/`--to` are omitted. Maximum `30d`. Cannot be combined with `--from`/`--to`.",
       },
       {
         name: "to",
@@ -245,7 +245,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires `--from`; cannot be combined with `--since`. The service tolerates up to 60 seconds of request delay or clock skew.",
       },
     ],
     bindings: [

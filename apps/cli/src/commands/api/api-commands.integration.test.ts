@@ -685,8 +685,9 @@ describe("generated warehouse commands", () => {
     };
 
     it.effect("leaves default selection to the API and preserves all JSON bytes when piped", () => {
+      const rawResponse = `\n${encodeJson(response).replace('"value":0.2', '"value":0.20')}\n`;
       const { sent, out, run } = setup([...argv, "--since", "30m", "--interval", "5m"], {
-        route: ok(response),
+        route: ok(rawResponse),
       });
       return Effect.gen(function* () {
         yield* run;
@@ -700,9 +701,26 @@ describe("generated warehouse commands", () => {
           since: "30m",
           interval: "5m",
         });
-        expect(out.stdoutText).toBe(encodeJson(response));
+        expect(out.stdoutText).toBe(rawResponse);
       });
     });
+
+    it.effect(
+      "renders both capacity series, their dimensions, unit, availability, and null sample",
+      () => {
+        const { out, run } = setup(argv, { route: ok(response), stdoutIsTty: true });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(out.stdoutText).toMatch(/Kind\s+cold/);
+          expect(out.stdoutText).toMatch(/Kind\s+warm/);
+          expect(out.stdoutText.match(/Result\s+success/g)).toHaveLength(2);
+          expect(out.stdoutText).toMatch(/\bUNIT\b[\s\S]*\bseconds\b/);
+          expect(out.stdoutText).toMatch(/\bAVAILABILITY\b[\s\S]*\bpartial\b/);
+          expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*-/);
+          expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*0\.01/);
+        });
+      },
+    );
 
     it.effect(
       "forwards fixed timestamps and metric selection and keeps all dimensions in YAML",
