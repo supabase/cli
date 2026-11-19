@@ -82,16 +82,6 @@ const pathOf = (id: string, node: unknown): string => {
   return `/v1/projects/{ref}/${id}${extra.join("")}`;
 };
 
-const handWritten = (
-  tree: {
-    groups?: ReadonlyArray<string>;
-    leaves?: ReadonlyArray<string>;
-  } = {},
-) => ({
-  groups: new Set(tree.groups ?? ["db"]),
-  leaves: new Set(tree.leaves),
-});
-
 const derive = (
   operations: Record<string, unknown>,
   generated: ReadonlyArray<string> = Object.keys(operations),
@@ -117,7 +107,7 @@ const derive = (
     operationIdMap: Object.fromEntries(
       Object.keys(operations).map((id) => [id, "v2EnableWarehouse" as const]),
     ),
-    handWritten: handWritten(),
+    handWrittenRoots: new Set(),
     ...options.overrides,
   });
 
@@ -1603,93 +1593,26 @@ describe("deriveApiCommands", () => {
   });
 
   describe("hand-written commands", () => {
-    const shallow = { "create-thing": operation(create) };
-    const deep = {
-      "create-thing": operation({ "x-operation": { group: "thing.sub", method: "create" } }),
-    };
+    it("rejects a noun named like a hand-written root command", () => {
+      const result = derive({ "create-thing": operation(create) }, undefined, {
+        overrides: { handWrittenRoots: new Set(["thing"]) },
+      });
 
-    it("joins a hand-written group without describing it", () => {
-      const result = derive(shallow, undefined, {
-        overrides: {
-          handWritten: handWritten({ groups: ["thing"], leaves: ["thing list"] }),
-          nouns: { thing: { feature: "warehouse" } },
+      expect(result.problems).toContain('noun "thing" is already a hand-written command');
+    });
+
+    it("requires a description for each generated sub-group", () => {
+      const result = derive(
+        {
+          "create-thing": operation({ "x-operation": { group: "thing.sub", method: "create" } }),
         },
-      });
+        undefined,
+        { overrides: { nouns: { thing: { description: "Manage things", feature: "warehouse" } } } },
+      );
 
-      expect(result.problems).toEqual([]);
-      expect(result.entries.map((entry) => entry.command)).toEqual([["thing", "create"]]);
-    });
-
-    it("joins a hand-written sub-group without describing it", () => {
-      const result = derive(deep, undefined, {
-        overrides: {
-          handWritten: handWritten({ groups: ["thing", "thing sub"] }),
-          nouns: { thing: { feature: "warehouse" } },
-        },
-      });
-
-      expect(result.problems).toEqual([]);
-      expect(result.entries.map((entry) => entry.command)).toEqual([["thing", "sub", "create"]]);
-    });
-
-    it.each([
-      [
-        "a hand-written command of the same path",
-        shallow,
-        { leaves: ["thing create"] },
-        'create-thing: command "thing create" is already a hand-written command',
-      ],
-      [
-        "a hand-written group of the same path",
-        shallow,
-        { groups: ["thing create"] },
-        'create-thing: command "thing create" is already a hand-written group',
-      ],
-      [
-        "a group path that is a hand-written command",
-        deep,
-        { leaves: ["thing sub"] },
-        'create-thing: command "thing sub create" needs "thing sub" as a group, but it is a hand-written command',
-      ],
-    ])("rejects %s", (_label, operations, tree, problem) => {
-      const result = derive(operations, undefined, {
-        overrides: { handWritten: handWritten(tree) },
-      });
-
-      expect(result.problems).toContain(problem);
-    });
-
-    it.each([
-      [
-        "a noun without a description when no hand-written group exists",
-        { groups: [] },
-        { feature: "warehouse" as const },
-        'create-thing: noun "thing" has no description in the nouns table',
-      ],
-      [
-        "a sub-group without a description when no hand-written group exists",
-        { groups: ["thing"] },
-        { feature: "warehouse" as const },
+      expect(result.problems).toContain(
         'create-thing: group "sub" has no description in the nouns table',
-      ],
-      [
-        "a description on a hand-written noun group",
-        { groups: ["thing"] },
-        thingNoun,
-        'noun "thing" describes the hand-written group "thing"; drop its description',
-      ],
-      [
-        "a description on a hand-written sub-group",
-        { groups: ["thing", "thing sub"] },
-        { feature: "warehouse" as const, groups: { sub: "Manage sub things" } },
-        'noun "thing" describes the hand-written group "thing sub"; drop its description',
-      ],
-    ])("requires descriptions only for generated groups: %s", (_label, tree, noun, problem) => {
-      const result = derive(deep, undefined, {
-        overrides: { handWritten: handWritten(tree), nouns: { thing: noun } },
-      });
-
-      expect(result.problems).toContain(problem);
+      );
     });
   });
 

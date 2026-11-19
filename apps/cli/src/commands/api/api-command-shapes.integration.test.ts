@@ -75,7 +75,7 @@ const derived = deriveApiCommands({
   generated: Object.keys(FIXTURE_OPERATIONS),
   nouns: { fixture: fixtureNoun },
   operationIdMap: openApiOperationIdMap,
-  handWritten: { groups: new Set(), leaves: new Set() },
+  handWrittenRoots: new Set(),
 });
 
 const fixtureRoot = Command.make("supabase").pipe(

@@ -59,53 +59,40 @@ export const stackStartRuntimeLayer = Layer.mergeAll(
   identityStitchLayer,
 );
 
-// Layers sit on each subcommand: a generated command joining this group would bypass a group-level
-// `Command.provide` (see src/commands/api/SIDE_EFFECTS.md).
 const stackStartCommand = stackStartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "start"])),
   Command.provide(stackStartRuntimeLayer),
-  Command.provide(stackRuntimeLayer),
 );
 const stackStopCommand = stackStopCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "stop"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackStatusCommand = stackStatusCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "status"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackDestroyCommand = stackDestroyCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "destroy"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackLogsCommand = stackLogsCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "logs"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackListCommand = stackListCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "list"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackPruneCommand = stackPruneCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "prune"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackInstallCommand = stackInstallCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "install"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackOutdatedCommand = stackOutdatedCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "outdated"])),
-  Command.provide(stackRuntimeLayer),
 );
 const stackUpdateCommand = stackUpdateCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "update"])),
   Command.provide(stackStartRuntimeLayer),
-  Command.provide(stackRuntimeLayer),
 );
 
 export const stackCommand = Command.make("stack").pipe(
@@ -126,4 +113,5 @@ export const stackCommand = Command.make("stack").pipe(
     stackStopCommand,
     stackUpdateCommand,
   ]),
+  Command.provide(stackRuntimeLayer),
 );

@@ -1,6 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Data, Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
-import type { Command } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { rootCommandForFeatures } from "../src/cli/root.ts";
 import { generatedOperations, nouns } from "../src/commands/api/api-command-policy.ts";
@@ -10,7 +9,6 @@ import {
   ApiCommandGenerationError,
   collectOperations,
   deriveApiCommands,
-  type HandWrittenCommands,
 } from "./api-command-derive.ts";
 
 class ApiCommandFormatError extends Data.TaggedError("ApiCommandFormatError")<{
@@ -35,30 +33,16 @@ const ROOT_OPTIONS: ReadonlyArray<Parameters<typeof rootCommandForFeatures>[0]> 
   { stackBackend: "stack", computeEnabled: true },
 ];
 
-const walkHandWritten = (
-  command: Command.Command.Any,
-  prefix: ReadonlyArray<string>,
-  into: { readonly groups: Set<string>; readonly leaves: Set<string> },
-): void => {
-  for (const { commands } of command.subcommands) {
-    for (const child of commands) {
-      const path = [...prefix, child.name];
-      const isGroup = child.subcommands.length > 0;
-      (isGroup ? into.groups : into.leaves).add(path.join(" "));
-      if (isGroup) walkHandWritten(child, path, into);
+/** The root command names: the union of the trees every backend and feature option builds. */
+const handWrittenRoots = Effect.fn("ApiCommands.collectHandWrittenRoots")(function* () {
+  const roots = new Set<string>();
+  for (const options of ROOT_OPTIONS) {
+    for (const { commands } of rootCommandForFeatures(options).subcommands) {
+      for (const command of commands) roots.add(command.name);
     }
   }
-};
-
-/** The hand-written command tree: the union of the trees every backend and feature option builds. */
-const handWrittenCommands = Effect.fn("ApiCommands.walkHandWritten")(function* () {
-  const found = { groups: new Set<string>(), leaves: new Set<string>() };
-  for (const options of ROOT_OPTIONS) walkHandWritten(rootCommandForFeatures(options), [], found);
-  yield* Effect.annotateCurrentSpan({
-    "handWritten.groups": found.groups.size,
-    "handWritten.leaves": found.leaves.size,
-  });
-  return found satisfies HandWrittenCommands;
+  yield* Effect.annotateCurrentSpan({ "handWritten.roots": roots.size });
+  return roots;
 });
 
 /** Formats in memory with the repo's oxfmt config so the committed files match `pnpm fmt`. */
@@ -110,7 +94,7 @@ const main = Effect.gen(function* () {
     generated: generatedOperations,
     nouns,
     operationIdMap: openApiOperationIdMap,
-    handWritten: yield* handWrittenCommands(),
+    handWrittenRoots: yield* handWrittenRoots(),
   });
   if (problems.length > 0) return yield* new ApiCommandGenerationError({ problems });
 

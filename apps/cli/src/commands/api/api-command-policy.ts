@@ -2,14 +2,11 @@ import type { OpenApiOperationId } from "@supabase/api/effect";
 import type { ExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 
 export interface ApiNoun {
-  /** Help text of the noun's group; set only when no hand-written group of that name exists. */
-  readonly description?: string;
+  /** Help text of the noun's group. */
+  readonly description: string;
   /** Feature that gates every command under the noun. */
   readonly feature: ExperimentalFeature;
-  /**
-   * Help text of each sub-group the generator creates, keyed by its dotted path below the noun,
-   * e.g. `"tables.layout"`; a sub-group that exists in a hand-written group has no entry.
-   */
+  /** Help text of each sub-group, keyed by its dotted path below the noun, e.g. `"tables.layout"`. */
   readonly groups?: Readonly<Record<string, string>>;
 }
 
