@@ -52,8 +52,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      # The Go binary has no built-in PostHog host, so an unset variable must not ship an empty one.
-      POSTHOG_ENDPOINT: ${{ vars.POSTHOG_ENDPOINT || 'https://eu.i.posthog.com' }}
+      POSTHOG_ENDPOINT: ${{ vars.POSTHOG_ENDPOINT }}
       # Fail the build if the macOS signing tool is missing — release artifacts
       # must be signed (CLI-1621). Local builds without rcodesign degrade to a
       # warning instead.
