@@ -42,7 +42,6 @@ import {
   previewRequest,
   readBodyOverride,
 } from "./api-command-request.ts";
-import { withApiCommand } from "./api-command.annotation.ts";
 import type {
   ApiCommandEntry,
   ApiCommandFlag,
@@ -329,7 +328,6 @@ const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>)
     Command.withDescription(entry.description ?? entry.summary),
     Command.withShortDescription(`${entry.summary} (experimental)`),
     Command.withExamples([{ command: exampleFor(entry), description: entry.summary }]),
-    withApiCommand({ operationId: entry.operationId }),
     withPermissions(permissionsOf(entry, resolved)),
     withStandardErrors,
     Command.withHandler((flags) => {

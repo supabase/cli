@@ -4,7 +4,6 @@ import openApiSpec from "@supabase/api/openapi.json";
 import { Effect, Layer, Predicate, Schema, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
-import { commandSurface } from "../../cli/command-surface/command-surface.ts";
 import { ExperimentalFlag, GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import {
@@ -25,7 +24,6 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
 import { apiCommands } from "./generated.ts";
-import { apiCommandSchemas } from "./generated.schemas.ts";
 import { withApiCommands } from "./runtime.ts";
 
 type Json = Readonly<Record<string, unknown>>;
@@ -54,7 +52,6 @@ interface SpecOperation {
   readonly parameters: ReadonlyArray<Json>;
   readonly requestSchema: Json | undefined;
   readonly responseStatus: number;
-  readonly responseSchema: Json;
 }
 
 const operationOf = (operationId: string): SpecOperation => {
@@ -74,44 +71,10 @@ const operationOf = (operationId: string): SpecOperation => {
         parameters: asList(operation["parameters"]).map(asRecord),
         requestSchema: request === undefined ? undefined : resolveRef(request),
         responseStatus: Number(success[0]),
-        responseSchema: resolveRef(json(asRecord(success[1])["content"])),
       };
     }
   }
   throw new Error(`${operationId} is not in openapi.json`);
-};
-
-/**
- * The JSON Schema types of a node, with OpenAPI 3.0 `nullable` and a `null` union branch folded in
- * as a `null` type.
- */
-const typesOf = (node: Json): ReadonlyArray<string> => {
-  const declared = node["type"];
-  const types = (Array.isArray(declared) ? declared : declared === undefined ? [] : [declared]).map(
-    String,
-  );
-  const nullable =
-    node["nullable"] === true ||
-    asList(node["anyOf"]).some((branch) => asRecord(branch)["type"] === "null");
-  return (nullable ? [...types, "null"] : types)
-    .filter((type, index, all) => all.indexOf(type) === index)
-    .toSorted((a, b) => a.localeCompare(b));
-};
-
-/** A structural fingerprint of a schema that ignores descriptions, examples and titles. */
-const shapeOf = (schema: unknown): unknown => {
-  const node = resolveRef(schema);
-  return {
-    types: typesOf(node),
-    enum: node["enum"] ?? null,
-    properties: Object.fromEntries(
-      Object.entries(asRecord(node["properties"])).map(([key, value]) => [key, shapeOf(value)]),
-    ),
-    required: asList(node["required"])
-      .map(String)
-      .toSorted((a, b) => a.localeCompare(b)),
-    items: node["items"] === undefined ? null : shapeOf(node["items"]),
-  };
 };
 
 const PATTERN_SAMPLES: Readonly<Record<string, string>> = {
@@ -347,28 +310,12 @@ const send = (path: ReadonlyArray<string>, argv: ReadonlyArray<string>, status: 
   );
 };
 
-const generated: readonly ApiCommandEntry[] = apiCommands;
-
-const surface = await Effect.runPromise(commandSurface());
-const rows = [
-  ...Object.values(surface.commands),
-  ...Object.values(surface.variants["warehouse"] ?? {}),
-]
-  .flatMap((entry) => (entry.api === undefined ? [] : [{ ...entry, api: entry.api }]))
-  .toSorted((a, b) => a.api.operationId.localeCompare(b.api.operationId));
-
 describe("generated command bindings", () => {
-  it("covers every generated command", () => {
-    expect(rows.map((row) => row.api.operationId)).toEqual(
-      apiCommands.map((entry) => entry.operationId).toSorted(),
-    );
-  });
-
-  for (const row of rows) {
-    const { operationId } = row.api;
+  for (const entry of apiCommands) {
+    const { operationId } = entry;
     const operation = operationOf(operationId);
     // The API rejects `since` combined with `from`/`to`; the relative form is the one sent here.
-    const inputs = inputsOf(operationId, operation, row.api.bindings).filter(
+    const inputs = inputsOf(operationId, operation, entry.bindings).filter(
       (input, _, all) =>
         input.location !== "query" ||
         (input.field !== "from" && input.field !== "to") ||
@@ -381,11 +328,11 @@ describe("generated command bindings", () => {
       operation.template.replace("{ref}", VALID_REF),
     );
 
-    describe(row.path.join(" "), () => {
+    describe(entry.command.join(" "), () => {
       it.effect("sends every input at its binding", () =>
         Effect.gen(function* () {
           const requests = yield* send(
-            row.path,
+            entry.command,
             [...positionals.map(({ sample }) => sample), ...argvOf(inputs)],
             operation.responseStatus,
           );
@@ -404,7 +351,7 @@ describe("generated command bindings", () => {
         it.effect("sends only the inputs the spec requires when no other flag is given", () =>
           Effect.gen(function* () {
             const requests = yield* send(
-              row.path,
+              entry.command,
               [...positionals.map(({ sample }) => sample), ...argvOf(required)],
               operation.responseStatus,
             );
@@ -417,22 +364,6 @@ describe("generated command bindings", () => {
           }),
         );
       }
-
-      it("declares the operation's success response as the response result", () => {
-        expect(Object.keys(apiCommandSchemas)).toContain(operationId);
-        const branches = asList(asRecord(row.result)["anyOf"]).map(asRecord);
-        expect(shapeOf(branches.find((branch) => branch["title"] === "response"))).toEqual(
-          shapeOf(operation.responseSchema),
-        );
-        const waitRead = generated.find((entry) => entry.operationId === operationId)?.wait?.read;
-        const waited = branches.find((branch) => branch["title"] === "waited");
-        if (waitRead === undefined || waitRead === operationId) {
-          expect(waited).toBeUndefined();
-          return;
-        }
-        expect(Object.keys(apiCommandSchemas)).toContain(waitRead);
-        expect(shapeOf(waited)).toEqual(shapeOf(operationOf(waitRead).responseSchema));
-      });
     });
   }
 });

@@ -78,8 +78,6 @@ export interface ApiCommandEntry {
   readonly operationId: string;
   /** Key of the operation in the typed client's `operationDefinitions`. */
   readonly definition: OperationId;
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly apiPath: string;
   readonly summary: string;
   readonly description?: string;
   readonly readOnly: boolean;
@@ -119,10 +117,4 @@ export type ApiPollRead = Pick<
 export interface ApiPollTarget extends ApiPollRead {
   /** Operation id of the generated command that inspects the state after a failed or timed-out wait. */
   readonly inspect: string;
-}
-
-/** OpenAPI schemas of one operation with every `$ref` inlined. */
-export interface ApiCommandSchemas {
-  readonly request?: { readonly contentType: "application/json"; readonly schema: unknown };
-  readonly result: unknown;
 }

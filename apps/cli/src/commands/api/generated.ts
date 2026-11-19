@@ -6,8 +6,6 @@ export const apiCommands = [
     command: ["warehouse", "connection"],
     operationId: "v2-get-warehouse-connection",
     definition: "v2GetWarehouseConnection",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/connection",
     summary: "Get Warehouse Flight SQL connection details",
     description:
       "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: usql -W 'flightsql://postgres@<host>:443?tls=enabled'.",
@@ -30,8 +28,6 @@ export const apiCommands = [
     command: ["warehouse", "disable"],
     operationId: "v2-disable-warehouse",
     definition: "v2DisableWarehouse",
-    method: "DELETE",
-    apiPath: "/v2/projects/{ref}/warehouse",
     summary: "Disable Warehouse replication and access",
     description:
       "Stops replication and removes the Warehouse publication, FDW and dependent foreign tables, reader group, catalog access and query routing asynchronously. Stored Warehouse data is retained by default. Set delete_data=true to permanently delete the managed catalog schema and dedicated Storage bucket; destination SQL and Storage write permissions are also required. Legacy shared buckets and source Postgres tables are preserved. Reader memberships are not restored on re-enablement. Safe retries return the existing cleanup identity; changing an in-progress data policy returns a conflict. Poll the linked teardown for completion or partial cleanup failures.",
@@ -79,8 +75,6 @@ export const apiCommands = [
     command: ["warehouse", "enable"],
     operationId: "v2-enable-warehouse",
     definition: "v2EnableWarehouse",
-    method: "POST",
-    apiPath: "/v2/projects/{ref}/warehouse/enable",
     summary: "Enable Warehouse replication",
     description:
       "Enables replication for the currently eligible tables in a schema, or the named tables in that schema. Resolves source identities under the mutation lock without a preview or revision. Repeating the same selection is safe; a different existing selection is rejected. Schema selection excludes future tables; selected partition roots include future partitions. Acceptance does not imply completed synchronization.",
@@ -194,8 +188,6 @@ export const apiCommands = [
     command: ["warehouse", "inspect", "capacity"],
     operationId: "v2-get-warehouse-capacity",
     definition: "v2GetWarehouseCapacity",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/capacity",
     summary: "Inspect Warehouse capacity diagnostics",
     description:
       "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
@@ -290,8 +282,6 @@ export const apiCommands = [
     command: ["warehouse", "inspect", "query-stats"],
     operationId: "v2-get-warehouse-query-stats",
     definition: "v2GetWarehouseQueryStats",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/query-stats",
     summary: "Inspect Warehouse workload query statistics",
     description:
       "Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.",
@@ -386,8 +376,6 @@ export const apiCommands = [
     command: ["warehouse", "replication", "add"],
     operationId: "v2-add-warehouse-replication",
     definition: "v2AddWarehouseReplication",
-    method: "POST",
-    apiPath: "/v2/projects/{ref}/warehouse/replication/add",
     summary: "Add source tables to Warehouse replication",
     description:
       "Adds one eligible source table or the currently eligible tables in a schema to an enabled Warehouse. Existing selections and layouts are preserved; already-selected tables are unchanged. Schema selection excludes future tables, except future partitions of selected partition roots. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline remains stopped and requires an explicit start before copying. Initial copy adds source reads; duration is unknown. Unsafe reattachment of retained data is rejected. The response describes configuration and restart acceptance, not completed copy or streaming. Failures may have partial effects; inspect table and pipeline state before retrying.",
@@ -445,8 +433,6 @@ export const apiCommands = [
     command: ["warehouse", "replication", "remove"],
     operationId: "v2-remove-warehouse-replication",
     definition: "v2RemoveWarehouseReplication",
-    method: "POST",
-    apiPath: "/v2/projects/{ref}/warehouse/replication/remove",
     summary: "Remove source tables from Warehouse replication",
     description:
       "Removes one selected source table or all selected tables in a schema as a batch. Source PostgreSQL rows and existing Warehouse data are retained. The retained copy stops receiving updates. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline stays stopped. Removing an unselected target is unchanged. Removing the last target leaves Warehouse enabled with an empty selection. Publication changes and restart acceptance do not establish observed exclusion by active replication. Failures may have partial effects; inspect the selection and pipeline before retrying.",
@@ -504,8 +490,6 @@ export const apiCommands = [
     command: ["warehouse", "replication", "resync"],
     operationId: "v2-resync-warehouse-replication",
     definition: "v2ResyncWarehouseReplication",
-    method: "POST",
-    apiPath: "/v2/projects/{ref}/warehouse/replication/resync",
     summary: "Reset and rebuild one Warehouse table",
     description:
       "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no server-side preview, revision check, idempotency key or operation polling.",
@@ -563,8 +547,6 @@ export const apiCommands = [
     command: ["warehouse", "status"],
     operationId: "v2-get-warehouse-status",
     definition: "v2GetWarehouseStatus",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/status",
     summary: "Get consolidated Warehouse status and capabilities",
     description:
       "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.",
@@ -587,8 +569,6 @@ export const apiCommands = [
     command: ["warehouse", "tables", "get"],
     operationId: "v2-get-warehouse-table",
     definition: "v2GetWarehouseTable",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}",
     summary: "Get a table replicated to Warehouse",
     description:
       "Returns one source table selected for Warehouse replication by its source OID, from the same observations and with the same status and freshness attributes as the Warehouse tables list. Returns 404 when the table is not selected for replication, including when Warehouse is not set up, its publication is missing, or it is being disabled.",
@@ -621,8 +601,6 @@ export const apiCommands = [
     command: ["warehouse", "tables", "layout", "get"],
     operationId: "v2-get-warehouse-table-layout",
     definition: "v2GetWarehouseTableLayout",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
     summary: "Get the layout of a table replicated to Warehouse",
     description:
       "Returns the sorting and partitioning rules saved for one replicated table, by source OID, beside the layout the DuckLake catalog records for it. The two are reported separately and can differ: the replicator applies saved rules when it starts and then hourly, and a stopped pipeline applies them on its next start. observation_status reports whether the catalog was read; desired rules are returned even when it was not. A catalog layout governs files written after it changes and does not establish that existing files are sorted or partitioned. Returns 404 when the table is not replicated, including when Warehouse is not set up, is being disabled or failed to clean up.",
@@ -655,8 +633,6 @@ export const apiCommands = [
     command: ["warehouse", "tables", "layout", "update"],
     operationId: "v2-update-warehouse-table-layout",
     definition: "v2UpdateWarehouseTableLayout",
-    method: "PATCH",
-    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/layout",
     summary: "Update the layout of a table replicated to Warehouse",
     description:
       "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.",
@@ -740,8 +716,6 @@ export const apiCommands = [
     command: ["warehouse", "tables", "list"],
     operationId: "v2-list-warehouse-tables",
     definition: "v2ListWarehouseTables",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/tables",
     summary: "List tables replicated to Warehouse",
     description:
       "Lists the source tables selected for Warehouse replication with their replication status and freshness, from the same observations as the Warehouse status. Freshness comes from the replication slot that carries each table: its own sync slot until it follows changes, then the pipeline apply slot; one slot never stands in for the other. lag_ms is that slot's flush lag. Postgres reports no lag time for a caught-up slot without new WAL, so lag_ms can be null while replication_feedback.flush_lag_bytes is 0; neither is ever filled with zero when unknown. observed_at is when the API read the replication state, not when data last synchronized. A stopped, failed or unreadable pipeline reports its tables as stopped or unknown rather than live, and keeps each table's last recorded state. Returns an empty list when Warehouse is not set up, its publication is missing, or it is being disabled or failed to clean up.",
@@ -764,8 +738,6 @@ export const apiCommands = [
     command: ["warehouse", "teardowns", "get"],
     operationId: "v2-get-warehouse-teardown",
     definition: "v2GetWarehouseTeardown",
-    method: "GET",
-    apiPath: "/v2/projects/{ref}/warehouse/teardowns/current",
     summary: "Get Warehouse cleanup status",
     description:
       "Reads the current durable cleanup state without contacting ETL or inspecting the FDW. Disabling means cleanup is in progress; disabled means cleanup completed; deletion_failed means cleanup may be partial. The original data policy and failure reason remain available. Optionally supply operation_id to observe a specific disable attempt. Returns a conflict if no cleanup state is available or the supplied identity does not match the current operation.",

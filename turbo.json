@@ -95,11 +95,7 @@
         "$TURBO_ROOT$/packages/api/src/generated/openapi.json",
         "$TURBO_ROOT$/packages/api/src/generated/contracts.ts"
       ],
-      "outputs": [
-        "src/commands/api/generated.ts",
-        "src/commands/api/generated.schemas.ts",
-        "src/commands/api/generated.md"
-      ]
+      "outputs": ["src/commands/api/generated.ts", "src/commands/api/generated.md"]
     },
     "supabase#test:live": {
       "cache": false,

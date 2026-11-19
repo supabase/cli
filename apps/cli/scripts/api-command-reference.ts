@@ -1,3 +1,4 @@
+import { operationDefinitions } from "@supabase/api/effect";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
@@ -6,22 +7,18 @@ import type {
   ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
 
-/** Method and path of an operation, for polled reads that are not generated commands. */
-export interface ApiOperationRoute {
-  readonly method: string;
-  readonly path: string;
-}
-
 export interface ApiCommandReferenceInput {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
   readonly pollTargets: ReadonlyArray<ApiPollTarget>;
-  /** Route of every poll target, keyed by operation id. */
-  readonly pollRoutes: Readonly<Record<string, ApiOperationRoute>>;
 }
 
 const code = (text: string): string => `\`${text}\``;
 
-const route = ({ method, path }: ApiOperationRoute): string => code(`${method} ${path}`);
+/** The route the runtime sends, read from the typed client's definition of the operation. */
+const route = (operation: Pick<ApiCommandEntry, "definition">): string => {
+  const { method, path } = operationDefinitions[operation.definition];
+  return code(`${method} ${path}`);
+};
 
 const cell = (text: string): string => text.replaceAll("|", "\\|");
 
@@ -104,10 +101,7 @@ const waitSection = (
   input: ApiCommandReferenceInput,
 ): ReadonlyArray<string> => {
   const publicRead = input.entries.find((candidate) => candidate.operationId === wait.read);
-  const polled =
-    publicRead === undefined
-      ? input.pollRoutes[wait.read]
-      : { method: publicRead.method, path: publicRead.apiPath };
+  const polled = publicRead ?? input.pollTargets.find((target) => target.operationId === wait.read);
   const polledRoute = polled === undefined ? "unknown route" : route(polled);
   const params = Object.entries(wait.params);
   return [
@@ -153,7 +147,7 @@ const commandSection = (
     ...(entry.confirmDescription
       ? ["- Consent: prints the API description before the interactive confirmation."]
       : []),
-    `- Request: ${route({ method: entry.method, path: entry.apiPath })} (${code(entry.operationId)}), success ${entry.response.status} ${entry.response.kind}.`,
+    `- Request: ${route(entry)} (${code(entry.operationId)}), success ${entry.response.status} ${entry.response.kind}.`,
     ...(body === undefined ? [] : [`- Body: ${body}.`]),
     ...(argument === undefined ? [] : [`- ${argument}`]),
     ...(flags.length === 0

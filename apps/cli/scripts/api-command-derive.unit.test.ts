@@ -2,8 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
 import { deriveApiCommands } from "./api-command-derive.ts";
 
-const DIALECT = "https://json-schema.org/draft/2020-12/schema";
-
 const jsonResponse = (schema: unknown) => ({
   "200": { description: "ok", content: { "application/json": { schema } } },
 });
@@ -229,7 +227,7 @@ describe("deriveApiCommands", () => {
     );
   });
 
-  it("binds plain body fields at the body root and inlines referenced schemas", () => {
+  it("binds plain body fields at the body root", () => {
     const result = derive({
       "create-thing": operation({
         ...create,
@@ -256,14 +254,9 @@ describe("deriveApiCommands", () => {
       source: "flag",
       flag: "display-name",
     });
-    expect(result.schemas["create-thing"]?.result).toEqual({
-      $schema: DIALECT,
-      type: "array",
-      items: { type: "string" },
-    });
   });
 
-  it("turns a string enum query parameter into flag choices and an empty response into null", () => {
+  it("turns a string enum query parameter into flag choices and records an empty response", () => {
     const result = derive({
       "list-things": operation({
         ...named("list"),
@@ -278,7 +271,6 @@ describe("deriveApiCommands", () => {
     expect(result.problems).toEqual([]);
     expect(result.entries[0]?.flags[0]).toMatchObject({ name: "sort", choices: ["asc", "desc"] });
     expect(result.entries[0]?.response).toEqual({ status: 204, kind: "empty" });
-    expect(result.schemas["list-things"]?.result).toEqual({ $schema: DIALECT, type: "null" });
   });
 
   it("derives a plain token-named query parameter as a flag", () => {
@@ -431,10 +423,7 @@ describe("deriveApiCommands", () => {
         { schemas: { Node: node } },
       );
 
-      expect(result.problems.join("\n")).not.toContain("secret");
-      expect(result.problems).toEqual([
-        "create-thing: unsupported in this runtime: recursive schema reference #/components/schemas/Node",
-      ]);
+      expect(result.problems).toEqual([]);
     });
   });
 
@@ -449,49 +438,15 @@ describe("deriveApiCommands", () => {
     expect(result.problems.join("\n")).toContain('"--wait"');
   });
 
-  it("converts OpenAPI 3.0 schema keywords to JSON Schema 2020-12", () => {
+  it("rejects a body field named like a registered global flag", () => {
     const result = derive({
-      "get-thing": operation({
-        ...named("get"),
-        responses: jsonResponse({
-          type: "object",
-          properties: {
-            name: { type: "string", nullable: true, example: "a" },
-            count: {
-              type: "integer",
-              minimum: 0,
-              exclusiveMinimum: true,
-              maximum: 9,
-              exclusiveMaximum: false,
-            },
-            any: { nullable: true, description: "free" },
-          },
-          discriminator: { propertyName: "name" },
-        }),
+      "create-thing": operation({
+        ...create,
+        requestBody: envelope({ profile: { type: "string" } }),
       }),
     });
 
-    expect(result.problems).toEqual([]);
-    expect(result.schemas["get-thing"]?.result).toEqual({
-      $schema: DIALECT,
-      type: "object",
-      properties: {
-        name: { type: ["string", "null"], examples: ["a"] },
-        count: { type: "integer", exclusiveMinimum: 0, maximum: 9 },
-        any: { anyOf: [{ description: "free" }, { type: "null" }] },
-      },
-    });
-  });
-
-  it("rejects a schema keyword it cannot convert", () => {
-    const result = derive({
-      "get-thing": operation({
-        ...named("get"),
-        responses: jsonResponse({ type: "string", contentMediaType: "x" }),
-      }),
-    });
-
-    expect(result.problems.join("\n")).toContain('keyword "contentMediaType"');
+    expect(result.problems.join("\n")).toContain('"--profile"');
   });
 
   it("names a command from the operation's x-operation", () => {
@@ -788,7 +743,6 @@ describe("deriveApiCommands", () => {
           inspect: "get-inspect",
         },
       ]);
-      expect(result.schemas["get-thing"]?.result).toEqual({ $schema: DIALECT, ...readSchema });
     });
 
     it("records a poll-only read once when several mutations link to it", () => {
@@ -822,7 +776,6 @@ describe("deriveApiCommands", () => {
 
       expect(result.problems).toEqual([]);
       expect(result.pollTargets).toEqual([]);
-      expect(result.schemas["get-thing"]).toBeUndefined();
     });
 
     it.each([
@@ -1429,35 +1382,8 @@ describe("deriveApiCommands", () => {
     const ref = { name: "ref", in: "path", required: true, schema: { type: "string" } };
     const withParameters = (...parameters: ReadonlyArray<unknown>) =>
       operation({ ...create, parameters: [ref, ...parameters] });
-    const respondWith = (schema: unknown) =>
-      operation({ ...named("get"), responses: jsonResponse(schema) });
 
     it.each([
-      [
-        "a response schema that is not an object",
-        { "get-thing": respondWith({ type: "object", properties: { a: 5 } }) },
-        "get-thing: schema is not an object",
-      ],
-      [
-        "a response schema reference that does not resolve",
-        { "get-thing": respondWith({ $ref: "#/components/schemas/Missing" }) },
-        "get-thing: schema reference #/components/schemas/Missing does not resolve",
-      ],
-      [
-        "an exclusive bound without its bound",
-        { "get-thing": respondWith({ type: "integer", exclusiveMinimum: true }) },
-        "get-thing: schema sets exclusiveMinimum: true without minimum",
-      ],
-      [
-        "an exclusive bound with an unsupported value",
-        { "get-thing": respondWith({ type: "integer", exclusiveMaximum: "yes" }) },
-        'get-thing: schema keyword "exclusiveMaximum" has an unsupported value',
-      ],
-      [
-        "a nullable keyword with an unsupported value",
-        { "get-thing": respondWith({ type: "string", nullable: "yes" }) },
-        'get-thing: schema keyword "nullable" has an unsupported value',
-      ],
       [
         "a response status that is not a number",
         { "create-thing": operation({ ...create, responses: { "2XX": { description: "ok" } } }) },

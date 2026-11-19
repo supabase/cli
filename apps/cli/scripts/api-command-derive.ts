@@ -1,31 +1,28 @@
 import type { OperationId } from "@supabase/api/effect";
 import { isDeepStrictEqual } from "node:util";
 import { Cause, Exit, Predicate, Schema } from "effect";
+import { ROOT_GLOBAL_FLAGS } from "../src/command-internal/global-flags.ts";
 import type { ApiNoun, ApiCommandPolicy } from "../src/commands/api/api-command-policy.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
   ApiCommandFlag,
-  ApiCommandSchemas,
   ApiCommandWait,
   ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
-/** Flags the generated-command runtime adds itself. */
+/** Flags a generated command may not redeclare: the registered globals plus those the runtime adds itself. */
 const RESERVED_FLAGS: ReadonlySet<string> = new Set([
+  ...ROOT_GLOBAL_FLAGS.map((flag) => flag.id),
   "body",
   "file",
   "remote",
   "project-ref",
-  "yes",
   "dry-run",
   "wait",
   "timeout",
-  "output",
-  "output-format",
-  "experimental",
   "help",
 ]);
 
@@ -37,7 +34,7 @@ const CREDENTIAL_TOKENS: ReadonlySet<string> = new Set([
   "private",
 ]);
 
-const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 const KEBAB = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/u;
 /** Headers the request builder owns; a spec that declares them gets no flag. */
 const UNMAPPED_HEADERS: ReadonlySet<string> = new Set(["authorization", "content-type", "accept"]);
@@ -131,14 +128,12 @@ interface DeriveInput {
 interface DeriveResult {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
   readonly pollTargets: ReadonlyArray<ApiPollTarget>;
-  readonly schemas: Readonly<Record<string, ApiCommandSchemas>>;
   readonly problems: ReadonlyArray<string>;
 }
 
 interface Operation {
   readonly id: string;
-  readonly method: ApiCommandEntry["method"];
-  readonly path: string;
+  readonly method: (typeof HTTP_METHODS)[number];
   readonly node: JsonObject;
   readonly pathItem: JsonObject;
 }
@@ -235,131 +230,7 @@ const deriveAttributeFields = (
   };
 };
 
-const JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
-const DROPPED_KEYWORDS: ReadonlySet<string> = new Set(["discriminator", "xml", "externalDocs"]);
-const DATA_KEYWORDS: ReadonlySet<string> = new Set([
-  "type",
-  "format",
-  "title",
-  "description",
-  "default",
-  "enum",
-  "const",
-  "required",
-  "minimum",
-  "maximum",
-  "multipleOf",
-  "minLength",
-  "maxLength",
-  "pattern",
-  "minItems",
-  "maxItems",
-  "uniqueItems",
-  "minProperties",
-  "maxProperties",
-  "readOnly",
-  "writeOnly",
-  "deprecated",
-]);
 const SCHEMA_LIST_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
-const SCHEMA_MAP_KEYWORDS = ["properties", "patternProperties"] as const;
-
-/**
- * Copies an OpenAPI 3.0 schema as JSON Schema 2020-12: every `$ref` is inlined and 3.0-only
- * keywords are converted. A keyword with no conversion fails generation.
- */
-const toJsonSchema = (
-  spec: JsonObject,
-  node: unknown,
-  stack: ReadonlyArray<string>,
-  fail: (reason: string) => void,
-): unknown => {
-  const schema = asRecord(node);
-  if (schema === undefined) {
-    fail("schema is not an object");
-    return {};
-  }
-  const recurse = (child: unknown) => toJsonSchema(spec, child, stack, fail);
-  const ref = asString(schema.$ref);
-  if (ref !== undefined) {
-    if (stack.includes(ref)) {
-      fail(`unsupported in this runtime: recursive schema reference ${ref}`);
-      return {};
-    }
-    const target = lookupRef(spec, ref);
-    if (target === undefined) {
-      fail(`schema reference ${ref} does not resolve`);
-      return {};
-    }
-    return toJsonSchema(spec, target, [...stack, ref], fail);
-  }
-
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (DROPPED_KEYWORDS.has(key) || key === "nullable" || key === "example") continue;
-    if (key === "exclusiveMinimum" || key === "exclusiveMaximum") continue;
-    if (DATA_KEYWORDS.has(key) || key.startsWith("x-")) {
-      out[key] = value;
-    } else if (key === "items" || key === "not") {
-      out[key] = recurse(value);
-    } else if (key === "additionalProperties") {
-      out[key] = typeof value === "boolean" ? value : recurse(value);
-    } else if (SCHEMA_LIST_KEYWORDS.some((keyword) => keyword === key)) {
-      out[key] = asArray(value).map(recurse);
-    } else if (SCHEMA_MAP_KEYWORDS.some((keyword) => keyword === key)) {
-      out[key] = Object.fromEntries(
-        Object.entries(asRecord(value) ?? {}).map(([name, child]) => [name, recurse(child)]),
-      );
-    } else {
-      fail(
-        `unsupported in this runtime: schema keyword "${key}" has no JSON Schema 2020-12 conversion`,
-      );
-    }
-  }
-
-  for (const [exclusive, bound] of [
-    ["exclusiveMinimum", "minimum"],
-    ["exclusiveMaximum", "maximum"],
-  ] as const) {
-    const flag = schema[exclusive];
-    if (typeof flag === "number") {
-      out[exclusive] = flag;
-    } else if (flag === true) {
-      if (typeof schema[bound] === "number") {
-        out[exclusive] = schema[bound];
-        delete out[bound];
-      } else {
-        fail(`schema sets ${exclusive}: true without ${bound}`);
-      }
-    } else if (flag !== undefined && flag !== false) {
-      fail(`schema keyword "${exclusive}" has an unsupported value`);
-    }
-  }
-
-  if (schema.example !== undefined) {
-    if (out.examples !== undefined) fail('schema has both "example" and "examples"');
-    out.examples = [schema.example];
-  }
-
-  if (schema.nullable === true) {
-    const type = out.type;
-    if (typeof type === "string") {
-      out.type = [type, "null"];
-    } else if (Array.isArray(type)) {
-      out.type = [...type, "null"];
-    } else {
-      return { anyOf: [out, { type: "null" }] };
-    }
-  } else if (schema.nullable !== undefined && schema.nullable !== false) {
-    fail('schema keyword "nullable" has an unsupported value');
-  }
-  return out;
-};
-
-const withDialect = (schema: unknown): unknown => ({
-  $schema: JSON_SCHEMA_DIALECT,
-  ...asRecord(schema),
-});
 
 const escapePointer = (segment: string): string =>
   segment.replaceAll("~", "~0").replaceAll("/", "~1");
@@ -367,7 +238,6 @@ const escapePointer = (segment: string): string =>
 interface SuccessResponse {
   readonly status: number;
   readonly kind: "json" | "text" | "empty";
-  readonly schema?: unknown;
 }
 
 /** Classifies the 2xx responses; the first one by status code is the one commands report. */
@@ -391,7 +261,7 @@ const classifySuccess = (
     if (types.length === 0) {
       classified.push({ status, kind: "empty" });
     } else if (json !== undefined) {
-      classified.push({ status, kind: "json", schema: asRecord(content[json])?.schema ?? {} });
+      classified.push({ status, kind: "json" });
     } else if (types.every((type) => type.startsWith("text/") && type !== "text/event-stream")) {
       classified.push({ status, kind: "text" });
     } else {
@@ -561,19 +431,18 @@ const successSchema = (spec: JsonObject, operation: Operation): unknown => {
   return undefined;
 };
 
-export const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => {
+const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => {
   const operations = new Map<string, Operation>();
-  for (const [path, rawItem] of Object.entries(asRecord(spec.paths) ?? {})) {
+  for (const rawItem of Object.values(asRecord(spec.paths) ?? {})) {
     const pathItem = asRecord(rawItem);
     if (pathItem === undefined) continue;
     for (const method of HTTP_METHODS) {
-      const node = asRecord(pathItem[method]);
+      const node = asRecord(pathItem[method.toLowerCase()]);
       const id = asString(node?.operationId);
       if (node === undefined || id === undefined) continue;
       operations.set(id, {
         id,
-        method: method.toUpperCase() as ApiCommandEntry["method"],
-        path,
+        method,
         node,
         pathItem,
       });
@@ -783,7 +652,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
   const metadata = readMetadata(operations, generated, problems);
   const hidden = new Map<string, HiddenRead>();
   const entries: Array<ApiCommandEntry> = [];
-  const schemas: Record<string, ApiCommandSchemas> = {};
   const commandOwners = new Map<string, string>();
   const groupPaths = new Set<string>();
 
@@ -932,7 +800,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
 
     let body: ApiCommandEntry["body"];
-    let requestSchema: unknown;
     const requestBody = asRecord(resolve(spec, operation.node.requestBody));
     if (requestBody !== undefined) {
       const content = asRecord(requestBody.content) ?? {};
@@ -973,7 +840,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
         const isEnvelope = hasEnvelopeShape && attributeFields !== undefined;
         const fieldProperties = isEnvelope ? attributeFields.properties : properties;
         const required = isEnvelope ? attributeFields.required : asArray(bodySchema.required);
-        requestSchema = asRecord(content["application/json"])?.schema;
         body = isEnvelope
           ? { contentType: "application/json", kind: "json-envelope", type: envelopeType }
           : { contentType: "application/json", kind: "json-object" };
@@ -1086,29 +952,8 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
 
     const response = classifySuccess(spec, operation, fail);
-    const schemaSet: ApiCommandSchemas | undefined =
-      response === undefined
-        ? undefined
-        : {
-            ...(requestSchema === undefined
-              ? {}
-              : {
-                  request: {
-                    contentType: "application/json" as const,
-                    schema: withDialect(toJsonSchema(spec, requestSchema, [], fail)),
-                  },
-                }),
-            result:
-              response.kind === "empty"
-                ? withDialect({ type: "null" })
-                : response.kind === "text"
-                  ? withDialect({ type: "string" })
-                  : withDialect(toJsonSchema(spec, response.schema, [], fail)),
-          };
-
     if (problems.length > failuresBefore || summary === undefined) continue;
-    if (response === undefined || schemaSet === undefined) continue;
-    schemas[operationId] = schemaSet;
+    if (response === undefined) continue;
     const description = stripStabilityNotice(asString(operation.node.description));
     const policy = input.policies?.[operationId];
     if (policy?.confirmDescription && (operation.method === "GET" || !description)) {
@@ -1119,8 +964,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       command,
       operationId,
       definition,
-      method: operation.method,
-      apiPath: operation.path,
       summary,
       ...(description === undefined ? {} : { description }),
       readOnly: operation.method === "GET",
@@ -1187,7 +1030,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       fail("polling target must return JSON");
       continue;
     }
-    schemas[operationId] = { result: withDialect(toJsonSchema(spec, response.schema, [], fail)) };
     pollTargets.push({
       operationId,
       definition,
@@ -1196,7 +1038,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       inspect: inspectId,
     });
   }
-  return { entries, pollTargets, schemas, problems };
+  return { entries, pollTargets, problems };
 }
 
 function lintWait(input: {
