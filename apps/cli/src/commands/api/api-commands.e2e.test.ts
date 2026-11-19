@@ -107,38 +107,45 @@ const runWarehouse = (
     return { result, requests, bodies };
   }).pipe(Effect.scoped);
 
-it.live("warehouse inspect query-stats reaches the public route through the compiled CLI", () =>
-  Effect.gen(function* () {
-    const response = json(200, {
-      data: [
-        {
-          type: "warehouse_metric",
-          id: "query_rate",
-          attributes: {
-            project_ref: REF,
-            metric: "query_rate",
-            unit: "per_second",
-            aggregation: "rate",
-            definition: "Query invocations per second.",
-            requested: { metric: "query_rate", start: 1795000000, end: 1795001800 },
-            effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
-            scrape_interval_seconds: 60,
-            last_sample_at: null,
-            availability: "unavailable",
-            series: [],
+it.live.each([
+  { command: "query-stats", metric: "query_rate", unit: "per_second", aggregation: "rate" },
+  { command: "capacity", metric: "query_in_flight", unit: "queries", aggregation: "sum" },
+] as const)(
+  "warehouse inspect $command reaches the public route through the compiled CLI",
+  ({ command, metric, unit, aggregation }) =>
+    Effect.gen(function* () {
+      const response = json(200, {
+        data: [
+          {
+            type: "warehouse_metric",
+            id: metric,
+            attributes: {
+              project_ref: REF,
+              metric,
+              unit,
+              aggregation,
+              definition: "Executor query invocations.",
+              requested: { metric, start: 1795000000, end: 1795001800 },
+              effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
+              scrape_interval_seconds: 60,
+              last_sample_at: null,
+              availability: "unavailable",
+              series: [],
+            },
           },
-        },
-      ],
-    } satisfies OperationOutput<"v2GetWarehouseQueryStats">);
-    const { result, requests } = yield* runWarehouse(
-      ["inspect", "query-stats", "--since", "30m"],
-      () => response,
-    );
+        ],
+      } satisfies
+        | OperationOutput<"v2GetWarehouseQueryStats">
+        | OperationOutput<"v2GetWarehouseCapacity">);
+      const { result, requests } = yield* runWarehouse(
+        ["inspect", command, "--since", "30m"],
+        () => response,
+      );
 
-    requireCliSuccess(result, "warehouse inspect query-stats");
-    expect(result.stdout, result.stderr).toBe(response.body);
-    expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/query-stats`]);
-  }).pipe(Effect.provide(BunServices.layer)),
+      requireCliSuccess(result, `warehouse inspect ${command}`);
+      expect(result.stdout, result.stderr).toBe(response.body);
+      expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/${command}`]);
+    }).pipe(Effect.provide(BunServices.layer)),
 );
 
 it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>

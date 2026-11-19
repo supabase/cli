@@ -58,6 +58,7 @@ describe("command surface", () => {
         "warehouse disable",
         "warehouse enable",
         "warehouse inspect",
+        "warehouse inspect capacity",
         "warehouse inspect query-stats",
         "warehouse status",
         "warehouse tables",
@@ -83,7 +84,7 @@ describe("command surface", () => {
   );
 
   it.effect(
-    "mounts workload inspection under Warehouse and preserves standalone inspect commands",
+    "mounts metrics inspection under Warehouse and preserves standalone inspect commands",
     () =>
       Effect.gen(function* () {
         const { commands } = yield* Effect.promise(() => surface);
@@ -95,16 +96,18 @@ describe("command surface", () => {
           expect(enabled[path]).toEqual(commands[path]);
         }
         expect(enabled).not.toHaveProperty("inspect warehouse");
-        const stats = enabled["warehouse inspect query-stats"];
-        expect(stats).toMatchObject({
-          stage: { status: "experimental", feature: "warehouse" },
-          target: { group: "hosted", consent: "none" },
-          api: { operationId: "v2-get-warehouse-query-stats" },
-        });
-        expect(Object.keys(stats?.flags ?? {})).toEqual(
-          expect.arrayContaining(["since", "from", "to", "attributes", "interval", "remote"]),
-        );
-        expect(stats?.flags).not.toHaveProperty("wait");
+        for (const command of ["capacity", "query-stats"]) {
+          const entry = enabled[`warehouse inspect ${command}`];
+          expect(entry).toMatchObject({
+            stage: { status: "experimental", feature: "warehouse" },
+            target: { group: "hosted", consent: "none" },
+            api: { operationId: `v2-get-warehouse-${command}` },
+          });
+          expect(Object.keys(entry?.flags ?? {})).toEqual(
+            expect.arrayContaining(["since", "from", "to", "attributes", "interval", "remote"]),
+          );
+          expect(entry?.flags).not.toHaveProperty("wait");
+        }
       }),
   );
 

@@ -246,6 +246,243 @@ export const apiCommandSchemas = {
       required: ["data"],
     },
   },
+  "v2-get-warehouse-capacity": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          items: {
+            properties: {
+              attributes: {
+                properties: {
+                  aggregation: {
+                    enum: ["mean", "occupied", "p50", "p95", "p99", "rate", "sum"],
+                    type: "string",
+                  },
+                  availability: {
+                    enum: [
+                      "disabled",
+                      "insufficient_data",
+                      "no_data",
+                      "not_provisioned",
+                      "ok",
+                      "partial",
+                      "stale",
+                      "unavailable",
+                    ],
+                    type: "string",
+                  },
+                  definition: {
+                    type: "string",
+                  },
+                  effective: {
+                    properties: {
+                      end: {
+                        type: "number",
+                      },
+                      rate_window_seconds: {
+                        type: "number",
+                      },
+                      start: {
+                        type: "number",
+                      },
+                      step: {
+                        type: "number",
+                      },
+                    },
+                    required: ["end", "rate_window_seconds", "start", "step"],
+                    type: "object",
+                  },
+                  last_sample_at: {
+                    description:
+                      "Latest observed source sample timestamp in Unix seconds; not the query evaluation timestamp.",
+                    type: ["number", "null"],
+                  },
+                  metric: {
+                    enum: [
+                      "activation_duration_mean",
+                      "activation_duration_p95",
+                      "activation_rate",
+                      "admission_rejection_rate",
+                      "assignment_wait_mean",
+                      "assignment_wait_p95",
+                      "duckdb_duration_mean",
+                      "query_canceled_rate",
+                      "query_duration_mean",
+                      "query_duration_p50",
+                      "query_duration_p95",
+                      "query_duration_p99",
+                      "query_error_rate",
+                      "query_in_flight",
+                      "query_rate",
+                      "query_timeout_rate",
+                      "rpc_duration_mean",
+                      "rpc_duration_p95",
+                      "rpc_rate",
+                      "worker_admission_active",
+                      "worker_admission_limit",
+                      "worker_admission_occupied",
+                      "worker_admission_pending",
+                    ],
+                    type: "string",
+                  },
+                  project_ref: {
+                    type: "string",
+                  },
+                  requested: {
+                    properties: {
+                      end: {
+                        type: "number",
+                      },
+                      metric: {
+                        enum: [
+                          "activation_duration_mean",
+                          "activation_duration_p95",
+                          "activation_rate",
+                          "admission_rejection_rate",
+                          "assignment_wait_mean",
+                          "assignment_wait_p95",
+                          "duckdb_duration_mean",
+                          "query_canceled_rate",
+                          "query_duration_mean",
+                          "query_duration_p50",
+                          "query_duration_p95",
+                          "query_duration_p99",
+                          "query_error_rate",
+                          "query_in_flight",
+                          "query_rate",
+                          "query_timeout_rate",
+                          "rpc_duration_mean",
+                          "rpc_duration_p95",
+                          "rpc_rate",
+                          "worker_admission_active",
+                          "worker_admission_limit",
+                          "worker_admission_occupied",
+                          "worker_admission_pending",
+                        ],
+                        type: "string",
+                      },
+                      start: {
+                        type: "number",
+                      },
+                      step: {
+                        type: "number",
+                      },
+                    },
+                    required: ["end", "metric", "start"],
+                    type: "object",
+                  },
+                  scrape_interval_seconds: {
+                    type: "number",
+                  },
+                  series: {
+                    items: {
+                      properties: {
+                        coverage: {
+                          description:
+                            "Grid point coverage, not proof that every worker was scraped.",
+                          properties: {
+                            expected_points: {
+                              type: "number",
+                            },
+                            returned_points: {
+                              type: "number",
+                            },
+                          },
+                          required: ["expected_points", "returned_points"],
+                          type: "object",
+                        },
+                        labels: {
+                          additionalProperties: {
+                            type: "string",
+                          },
+                          type: "object",
+                        },
+                        points: {
+                          items: {
+                            properties: {
+                              timestamp: {
+                                type: "number",
+                              },
+                              value: {
+                                type: ["number", "null"],
+                              },
+                            },
+                            required: ["timestamp", "value"],
+                            type: "object",
+                          },
+                          type: "array",
+                        },
+                      },
+                      required: ["coverage", "labels", "points"],
+                      type: "object",
+                    },
+                    type: "array",
+                  },
+                  unit: {
+                    enum: ["grants", "per_second", "queries", "seconds"],
+                    type: "string",
+                  },
+                },
+                required: [
+                  "aggregation",
+                  "availability",
+                  "definition",
+                  "effective",
+                  "last_sample_at",
+                  "metric",
+                  "project_ref",
+                  "requested",
+                  "scrape_interval_seconds",
+                  "series",
+                  "unit",
+                ],
+                type: "object",
+              },
+              id: {
+                enum: [
+                  "activation_duration_mean",
+                  "activation_duration_p95",
+                  "activation_rate",
+                  "admission_rejection_rate",
+                  "assignment_wait_mean",
+                  "assignment_wait_p95",
+                  "duckdb_duration_mean",
+                  "query_canceled_rate",
+                  "query_duration_mean",
+                  "query_duration_p50",
+                  "query_duration_p95",
+                  "query_duration_p99",
+                  "query_error_rate",
+                  "query_in_flight",
+                  "query_rate",
+                  "query_timeout_rate",
+                  "rpc_duration_mean",
+                  "rpc_duration_p95",
+                  "rpc_rate",
+                  "worker_admission_active",
+                  "worker_admission_limit",
+                  "worker_admission_occupied",
+                  "worker_admission_pending",
+                ],
+                type: "string",
+              },
+              type: {
+                description: "Resource type.",
+                enum: ["warehouse_metric"],
+                type: "string",
+              },
+            },
+            required: ["attributes", "id", "type"],
+            type: "object",
+          },
+          type: "array",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
   "v2-get-warehouse-connection": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",

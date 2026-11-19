@@ -67,6 +67,26 @@ Enables replication for the currently eligible tables in a schema, or the named 
 - Failure message from `/data/attributes/status_error`.
 - Failure hint names `supabase warehouse status --remote=<ref>`.
 
+## `supabase warehouse inspect capacity`
+
+Inspect Warehouse capacity diagnostics
+
+Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.
+
+- Access: read-only, no consent.
+- Feature: `warehouse`.
+- Request: `GET /v2/projects/{ref}/warehouse/capacity` (`v2-get-warehouse-capacity`), success 200 json.
+
+### Flags
+
+| Flag                        | Type                                          | Required | Repeatable | Binds to           |
+| --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
+| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
+| `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--to <to>`                 | string                                        | no       | no         | query `to`         |
+
 ## `supabase warehouse inspect query-stats`
 
 Inspect Warehouse workload query statistics
