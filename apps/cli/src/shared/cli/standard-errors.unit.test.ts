@@ -5,7 +5,10 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { HttpClientRequest, HttpClientResponse } from "effect/http";
 import { AccessTokenRequiredError } from "../../auth/errors.ts";
 import { InvalidOutputFormatError } from "../../command-internal/output-formats.ts";
-import { TargetSelectorConflictError } from "../../command-internal/target/target.errors.ts";
+import {
+  TargetRemoteAmbiguousError,
+  TargetSelectorConflictError,
+} from "../../command-internal/target/target.errors.ts";
 import {
   HostedMutationConsentRequiredError,
   HostedMutationDeclinedError,
@@ -217,6 +220,33 @@ describe("standardFailureFor", () => {
       ),
       expected: { exitCode: 1, code: String(code), status: Number(status), hint: null },
     })),
+    {
+      name: "ambiguous remote whose branch listing was forbidden",
+      cause: Cause.fail(
+        new TargetRemoteAmbiguousError({
+          message: "Could not check branches",
+          suggestion: "Ask for branch access",
+          status: 403,
+        }),
+      ),
+      expected: { exitCode: 1, code: "forbidden", status: 403, hint: "Ask for branch access" },
+    },
+    {
+      name: "ambiguous remote with an invalid token",
+      cause: Cause.fail(
+        new TargetRemoteAmbiguousError({
+          message: "Could not check branches",
+          suggestion: "Set SUPABASE_ACCESS_TOKEN",
+          authFailure: "token",
+        }),
+      ),
+      expected: {
+        exitCode: 1,
+        code: "unauthenticated",
+        status: null,
+        hint: "Set SUPABASE_ACCESS_TOKEN",
+      },
+    },
     {
       name: "defect",
       cause: Cause.die(new Error("boom")),

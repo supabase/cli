@@ -1,6 +1,6 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
-import { extractCommandPath, hasRootVersionFlag } from "../../shared/cli/run.ts";
+import { routingArgsFor } from "../../command-internal/routing-args.ts";
 import {
   type ExperimentalFeature,
   type ExperimentalFeatureFlagError,
@@ -29,17 +29,10 @@ export const resolveApiCommandFeatures = Effect.fn("ApiCommands.resolveFeatures"
     ExperimentalFeatureFlagError,
     FileSystem.FileSystem | Path.Path
   > {
-    const routingArgs =
-      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
-        ? input.args.slice(0, -1)
-        : input.args;
-    if (hasRootVersionFlag(routingArgs)) return [];
-    const commandPath = extractCommandPath(routingArgs);
-    const completePath =
-      commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
-        ? commandPath.slice(1)
-        : commandPath;
-    const enabled = yield* Effect.filter(nounFeatures(completePath[0]), (feature) =>
+    const routing = routingArgsFor(input.args);
+    if (routing === undefined) return [];
+    const { routingArgs, path } = routing;
+    const enabled = yield* Effect.filter(nounFeatures(path[0]), (feature) =>
       resolveExperimentalFeature({
         feature,
         configValue: readExperimentalFeatureConfig({ feature, cwd: input.cwd, args: routingArgs }),

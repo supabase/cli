@@ -19,6 +19,7 @@ import {
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import { LinkBranchListStatusError } from "../../command-internal/target/branch-resolution.errors.ts";
+import { TargetRemoteAmbiguousError } from "../../command-internal/target/target.errors.ts";
 import {
   normalizeCause,
   upgradeHint,
@@ -155,6 +156,18 @@ const failureForError = (
       exitCode: EXIT_FAILURE,
       document: documentForStatus(error.status, error.message, {}),
     };
+  }
+  if (
+    error instanceof TargetRemoteAmbiguousError &&
+    (error.status !== undefined || error.authFailure !== undefined)
+  ) {
+    const hint = error.suggestion ?? null;
+    return error.status === undefined
+      ? failure(EXIT_FAILURE, "unauthenticated", error.message, hint)
+      : {
+          exitCode: EXIT_FAILURE,
+          document: documentForStatus(error.status, error.message, { hint: error.suggestion }),
+        };
   }
   if (error instanceof ApiCommandUsageError) {
     return failure(EXIT_USAGE, "usage_error", error.message, error.hint ?? null);
