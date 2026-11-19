@@ -2,7 +2,11 @@ import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Data, Effect, FileSystem, Path, Predicate, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { rootCommandForFeatures } from "../src/cli/root.ts";
-import { generatedOperations, nouns } from "../src/commands/api/api-command-policy.ts";
+import {
+  generatedOperations,
+  nouns,
+  commandPolicies,
+} from "../src/commands/api/api-command-policy.ts";
 import { openApiOperationIdMap } from "@supabase/api/effect";
 import { renderApiCommandReference } from "./api-command-reference.ts";
 import {
@@ -92,6 +96,7 @@ const main = Effect.gen(function* () {
   const { entries, pollTargets, schemas, problems } = deriveApiCommands({
     spec,
     generated: generatedOperations,
+    policies: commandPolicies,
     nouns,
     operationIdMap: openApiOperationIdMap,
     handWrittenRoots: yield* handWrittenRoots(),

@@ -237,7 +237,7 @@ const apiSurface = Effect.fn("CommandSurface.api")(function* (command: CommandRo
   const branches = [
     titled(schemas.result, "response"),
     ...(waitSchemas === undefined ? [] : [titled(waitSchemas.result, "waited")]),
-    dryRunSchema,
+    ...(generated.dryRun === false ? [] : [dryRunSchema]),
   ];
   return Option.some({
     api: {

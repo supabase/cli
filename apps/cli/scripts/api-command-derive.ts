@@ -1,7 +1,7 @@
 import type { OperationId } from "@supabase/api/effect";
 import { isDeepStrictEqual } from "node:util";
 import { Cause, Exit, Predicate, Schema } from "effect";
-import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
+import type { ApiNoun, ApiCommandPolicy } from "../src/commands/api/api-command-policy.ts";
 import type {
   ApiCommandBinding,
   ApiCommandEntry,
@@ -116,6 +116,7 @@ const parseXOperation = (block: unknown): ParsedXOperation => {
 };
 
 interface DeriveInput {
+  readonly policies?: Readonly<Record<string, ApiCommandPolicy>>;
   /** The parsed OpenAPI document. */
   readonly spec: JsonObject;
   /** Operation ids that generate commands; the roots whose response `links` are followed. */
@@ -775,6 +776,10 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
   const { spec, generated, nouns, operationIdMap, handWrittenRoots } = input;
   const operations = collectOperations(spec);
   const problems: Array<string> = [];
+  for (const id of Object.keys(input.policies ?? {})) {
+    if (!input.generated.includes(id))
+      problems.push(`${id}: CLI policy requires an allowlisted command`);
+  }
   const metadata = readMetadata(operations, generated, problems);
   const hidden = new Map<string, HiddenRead>();
   const entries: Array<ApiCommandEntry> = [];
@@ -1105,6 +1110,11 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     if (response === undefined || schemaSet === undefined) continue;
     schemas[operationId] = schemaSet;
     const description = stripStabilityNotice(asString(operation.node.description));
+    const policy = input.policies?.[operationId];
+    if (policy?.confirmDescription && (operation.method === "GET" || !description)) {
+      fail("confirmation details require a mutation with an API description");
+      continue;
+    }
     entries.push({
       command,
       operationId,
@@ -1114,6 +1124,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       summary,
       ...(description === undefined ? {} : { description }),
       readOnly: operation.method === "GET",
+      ...policy,
       feature: noun.feature,
       ...(body === undefined ? {} : { body }),
       response: { status: response.status, kind: response.kind },

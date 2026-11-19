@@ -109,10 +109,14 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
           ),
         ),
       }),
-  dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the request that would be sent and send nothing."),
-    Flag.withDefault(false),
-  ),
+  ...(entry.dryRun === false
+    ? {}
+    : {
+        dryRun: Flag.Boolean("dry-run").pipe(
+          Flag.withDescription("Print the request that would be sent and send nothing."),
+          Flag.withDefault(false),
+        ),
+      }),
   ...(!waitable
     ? {}
     : {
@@ -183,7 +187,7 @@ interface ApiCommandFlags {
   readonly argument?: string;
   readonly body?: Option.Option<string>;
   readonly file?: Option.Option<string>;
-  readonly dryRun: boolean;
+  readonly dryRun?: boolean;
   readonly wait?: boolean;
   readonly timeout?: string;
   readonly api: Parameters<typeof assembleInput>[2];
@@ -231,7 +235,10 @@ const handle = Effect.fn("api-command.run")(function* (
       if (!entry.readOnly) {
         yield* requireHostedMutationConsent({
           action: summaryText(entry),
-          details: consentDetails(entry, decoded),
+          details: [
+            ...(entry.confirmDescription && entry.description ? [entry.description] : []),
+            ...consentDetails(entry, decoded),
+          ],
         });
       }
 
@@ -304,7 +311,7 @@ const permissionsOf = (entry: ApiCommandEntry, resolved: ResolvedWait | undefine
         ]),
   ];
   const noApiEffectFlags = [
-    "dry-run",
+    ...(entry.dryRun === false ? [] : ["dry-run"]),
     ...(entry.body === undefined ? [] : ["body", "file"]),
     ...(resolved === undefined ? [] : ["timeout"]),
     ...(polled === entry.operationId ? ["wait"] : []),

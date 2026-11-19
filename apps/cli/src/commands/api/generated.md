@@ -115,6 +115,64 @@ Returns aggregate workload measurements over a bounded time range, using the pro
 | `--since <since>`           | string                                        | no       | no         | query `since`      |
 | `--to <to>`                 | string                                        | no       | no         | query `to`         |
 
+## `supabase warehouse replication add`
+
+Add source tables to Warehouse replication
+
+Adds one eligible source table or the currently eligible tables in a schema to an enabled Warehouse. Existing selections and layouts are preserved; already-selected tables are unchanged. Schema selection excludes future tables, except future partitions of selected partition roots. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline remains stopped and requires an explicit start before copying. Initial copy adds source reads; duration is unknown. Unsafe reattachment of retained data is rejected. The response describes configuration and restart acceptance, not completed copy or streaming. Failures may have partial effects; inspect table and pipeline state before retrying.
+
+- Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
+- Feature: `warehouse`.
+- Consent: prints the API description before the interactive confirmation.
+- Request: `POST /v2/projects/{ref}/warehouse/replication/add` (`v2-add-warehouse-replication`), success 202 json.
+- Body: JSON envelope `data.type = warehouse_replication_change`, fields under `data.attributes`.
+
+### Flags
+
+| Flag                | Type   | Required                                       | Repeatable | Binds to                       |
+| ------------------- | ------ | ---------------------------------------------- | ---------- | ------------------------------ |
+| `--schema <schema>` | string | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/schema` |
+| `--table <table>`   | string | no                                             | no         | body `/data/attributes/table`  |
+
+## `supabase warehouse replication remove`
+
+Remove source tables from Warehouse replication
+
+Removes one selected source table or all selected tables in a schema as a batch. Source PostgreSQL rows and existing Warehouse data are retained. The retained copy stops receiving updates. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline stays stopped. Removing an unselected target is unchanged. Removing the last target leaves Warehouse enabled with an empty selection. Publication changes and restart acceptance do not establish observed exclusion by active replication. Failures may have partial effects; inspect the selection and pipeline before retrying.
+
+- Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
+- Feature: `warehouse`.
+- Consent: prints the API description before the interactive confirmation.
+- Request: `POST /v2/projects/{ref}/warehouse/replication/remove` (`v2-remove-warehouse-replication`), success 202 json.
+- Body: JSON envelope `data.type = warehouse_replication_change`, fields under `data.attributes`.
+
+### Flags
+
+| Flag                | Type   | Required                                       | Repeatable | Binds to                       |
+| ------------------- | ------ | ---------------------------------------------- | ---------- | ------------------------------ |
+| `--schema <schema>` | string | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/schema` |
+| `--table <table>`   | string | no                                             | no         | body `/data/attributes/table`  |
+
+## `supabase warehouse replication resync`
+
+Reset and rebuild one Warehouse table
+
+Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no preview, revision check, idempotency key or operation polling.
+
+- Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
+- Feature: `warehouse`.
+- Local request preview (`--dry-run`): unavailable.
+- Consent: prints the API description before the interactive confirmation.
+- Request: `POST /v2/projects/{ref}/warehouse/replication/resync` (`v2-resync-warehouse-replication`), success 202 json.
+- Body: JSON envelope `data.type = warehouse_replication_resync`, fields under `data.attributes`.
+
+### Flags
+
+| Flag                | Type   | Required                                       | Repeatable | Binds to                       |
+| ------------------- | ------ | ---------------------------------------------- | ---------- | ------------------------------ |
+| `--schema <schema>` | string | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/schema` |
+| `--table <table>`   | string | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/table`  |
+
 ## `supabase warehouse status`
 
 Get consolidated Warehouse status and capabilities

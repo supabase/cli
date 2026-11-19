@@ -72,7 +72,7 @@ With `--wait`, the command also polls the read operation named in its reference 
   branch lookups in the table above can still run.
 - A body whose fields form alternatives (the request needs one of several fields) reports a missing
   choice as `Pass at least one of --a, --b`.
-- `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
+- When enabled by CLI policy, `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
   consent. A literal ref target (`--remote=<ref>`, `--project-ref`) needs no access token, sends no
   request and writes no linked-project cache; only local files are read. A branch name, a bare
   `--remote` or the project picker still call the API as listed above. It shows the local request,
@@ -80,7 +80,11 @@ With `--wait`, the command also polls the read operation named in its reference 
 - Consent uses the command's summary as the action and lists what the validated request does: one
   `name: value` line per non-ref path parameter, query parameter and body field (for an envelope
   body, the fields under `data.attributes`). Scalars print as is; objects and arrays print as
-  compact JSON.
+  compact JSON. Commands with `confirmDescription` also show their API description before an
+  interactive prompt. These describe effects without a resolved plan.
+- Resync disables the local dry-run flag. It resets one selected table through ETL and returns
+  the immediate result; it has no wait, idempotency or revision flags. Add/remove retain local
+  request previews. Pipeline restarts can restart unfinished copies of unrelated tables.
 
 ## `--wait`
 

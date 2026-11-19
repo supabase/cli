@@ -459,4 +459,16 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   },
   "v2-get-warehouse-query-stats": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-get-warehouse-capacity": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-add-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-remove-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-resync-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
 };

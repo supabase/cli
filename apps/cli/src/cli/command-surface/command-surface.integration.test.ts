@@ -61,6 +61,10 @@ describe("command surface", () => {
         "warehouse inspect",
         "warehouse inspect capacity",
         "warehouse inspect query-stats",
+        "warehouse replication",
+        "warehouse replication add",
+        "warehouse replication remove",
+        "warehouse replication resync",
         "warehouse status",
         "warehouse tables",
         "warehouse tables get",
@@ -110,6 +114,21 @@ describe("command surface", () => {
           expect(entry?.flags).not.toHaveProperty("wait");
         }
       }),
+  );
+
+  it.effect("omits unsupported resync preview results from the command surface", () =>
+    Effect.gen(function* () {
+      const warehouse = yield* warehouseVariant;
+      const resync = warehouse["warehouse replication resync"];
+      expect(resync?.flags).not.toHaveProperty("dry-run");
+      expect(titlesOf(resync?.result)).toEqual(["response"]);
+      for (const action of ["add", "remove"]) {
+        expect(titlesOf(warehouse[`warehouse replication ${action}`]?.result)).toEqual([
+          "response",
+          "dryRun",
+        ]);
+      }
+    }),
   );
 
   it.effect("describes layout updates without unsupported backend workflow flags", () =>

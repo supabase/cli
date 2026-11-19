@@ -2,6 +2,220 @@
 import type { ApiCommandSchemas } from "./api-command.model.ts";
 
 export const apiCommandSchemas = {
+  "v2-add-warehouse-replication": {
+    request: {
+      contentType: "application/json",
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        properties: {
+          data: {
+            properties: {
+              attributes: {
+                additionalProperties: false,
+                properties: {
+                  schema: {
+                    description:
+                      "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                  table: {
+                    description: "Literal source table name. Omit to select the schema.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                },
+                required: ["schema"],
+                type: "object",
+              },
+              type: {
+                description: "Resource type.",
+                enum: ["warehouse_replication_change"],
+                type: "string",
+              },
+            },
+            required: ["attributes", "type"],
+            type: "object",
+          },
+        },
+        required: ["data"],
+        type: "object",
+      },
+    },
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                action: {
+                  enum: ["add", "remove"],
+                  type: "string",
+                },
+                affected_tables: {
+                  items: {
+                    properties: {
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                    },
+                    required: ["id", "name", "schema"],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                application_status: {
+                  description:
+                    "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion.",
+                  enum: ["configured", "restart_requested", "unchanged"],
+                  type: "string",
+                },
+                changed: {
+                  type: "boolean",
+                },
+                includes_future_tables: {
+                  enum: [false],
+                  type: "boolean",
+                },
+                pipeline_id: {
+                  type: "string",
+                },
+                pipeline_status_before: {
+                  type: "string",
+                },
+                selected_table_count: {
+                  maximum: 9007199254740991,
+                  minimum: 0,
+                  type: "integer",
+                },
+                source_data_preserved: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                tables: {
+                  description:
+                    "Resulting configured selection, with best-effort replication observations.",
+                  items: {
+                    properties: {
+                      copy_name: {
+                        type: "string",
+                      },
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      lag_ms: {
+                        minimum: 0,
+                        type: ["number", "null"],
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      replication_state: {
+                        type: ["string", "null"],
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      state: {
+                        description:
+                          "Last observed table state; null when unavailable. Does not establish completion of this request.",
+                        enum: ["error", "live", null, "syncing"],
+                        type: ["string", "null"],
+                      },
+                    },
+                    required: [
+                      "copy_name",
+                      "id",
+                      "lag_ms",
+                      "name",
+                      "replication_state",
+                      "schema",
+                      "state",
+                    ],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                unchanged_tables: {
+                  items: {
+                    properties: {
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                    },
+                    required: ["id", "name", "schema"],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                warehouse_data_retained: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                warehouse_enabled: {
+                  enum: [true],
+                  type: "boolean",
+                },
+              },
+              required: [
+                "action",
+                "affected_tables",
+                "application_status",
+                "changed",
+                "includes_future_tables",
+                "pipeline_id",
+                "pipeline_status_before",
+                "selected_table_count",
+                "source_data_preserved",
+                "tables",
+                "unchanged_tables",
+                "warehouse_data_retained",
+                "warehouse_enabled",
+              ],
+              type: "object",
+            },
+            id: {
+              type: "string",
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_replication_change"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
   "v2-disable-warehouse": {
     result: {
       $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -2101,6 +2315,446 @@ export const apiCommandSchemas = {
             type: "object",
           },
           type: "array",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
+  "v2-remove-warehouse-replication": {
+    request: {
+      contentType: "application/json",
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        properties: {
+          data: {
+            properties: {
+              attributes: {
+                additionalProperties: false,
+                properties: {
+                  schema: {
+                    description:
+                      "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                  table: {
+                    description: "Literal source table name. Omit to select the schema.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                },
+                required: ["schema"],
+                type: "object",
+              },
+              type: {
+                description: "Resource type.",
+                enum: ["warehouse_replication_change"],
+                type: "string",
+              },
+            },
+            required: ["attributes", "type"],
+            type: "object",
+          },
+        },
+        required: ["data"],
+        type: "object",
+      },
+    },
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                action: {
+                  enum: ["add", "remove"],
+                  type: "string",
+                },
+                affected_tables: {
+                  items: {
+                    properties: {
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                    },
+                    required: ["id", "name", "schema"],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                application_status: {
+                  description:
+                    "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion.",
+                  enum: ["configured", "restart_requested", "unchanged"],
+                  type: "string",
+                },
+                changed: {
+                  type: "boolean",
+                },
+                includes_future_tables: {
+                  enum: [false],
+                  type: "boolean",
+                },
+                pipeline_id: {
+                  type: "string",
+                },
+                pipeline_status_before: {
+                  type: "string",
+                },
+                selected_table_count: {
+                  maximum: 9007199254740991,
+                  minimum: 0,
+                  type: "integer",
+                },
+                source_data_preserved: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                tables: {
+                  description:
+                    "Resulting configured selection, with best-effort replication observations.",
+                  items: {
+                    properties: {
+                      copy_name: {
+                        type: "string",
+                      },
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      lag_ms: {
+                        minimum: 0,
+                        type: ["number", "null"],
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      replication_state: {
+                        type: ["string", "null"],
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      state: {
+                        description:
+                          "Last observed table state; null when unavailable. Does not establish completion of this request.",
+                        enum: ["error", "live", null, "syncing"],
+                        type: ["string", "null"],
+                      },
+                    },
+                    required: [
+                      "copy_name",
+                      "id",
+                      "lag_ms",
+                      "name",
+                      "replication_state",
+                      "schema",
+                      "state",
+                    ],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                unchanged_tables: {
+                  items: {
+                    properties: {
+                      id: {
+                        maximum: 4294967295,
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                      },
+                      name: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                      schema: {
+                        minLength: 1,
+                        type: "string",
+                      },
+                    },
+                    required: ["id", "name", "schema"],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+                warehouse_data_retained: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                warehouse_enabled: {
+                  enum: [true],
+                  type: "boolean",
+                },
+              },
+              required: [
+                "action",
+                "affected_tables",
+                "application_status",
+                "changed",
+                "includes_future_tables",
+                "pipeline_id",
+                "pipeline_status_before",
+                "selected_table_count",
+                "source_data_preserved",
+                "tables",
+                "unchanged_tables",
+                "warehouse_data_retained",
+                "warehouse_enabled",
+              ],
+              type: "object",
+            },
+            id: {
+              type: "string",
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_replication_change"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
+  "v2-resync-warehouse-replication": {
+    request: {
+      contentType: "application/json",
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        properties: {
+          data: {
+            properties: {
+              attributes: {
+                additionalProperties: false,
+                properties: {
+                  schema: {
+                    description:
+                      "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                  table: {
+                    description: "Literal name of the single source table to reset and recopy.",
+                    minLength: 1,
+                    type: "string",
+                  },
+                },
+                required: ["schema", "table"],
+                type: "object",
+              },
+              type: {
+                description: "Resource type.",
+                enum: ["warehouse_replication_resync"],
+                type: "string",
+              },
+            },
+            required: ["attributes", "type"],
+            type: "object",
+          },
+        },
+        required: ["data"],
+        type: "object",
+      },
+    },
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                application_status: {
+                  description:
+                    "ETL reset replication state. Destination rebuild and recopy may still be pending.",
+                  enum: ["reset"],
+                  type: "string",
+                },
+                pipeline_id: {
+                  description: "Pipeline ID",
+                  minLength: 1,
+                  type: "string",
+                  examples: ["03dg2o5teb2eucxr9ggh3uie6"],
+                },
+                source_data_preserved: {
+                  enum: [true],
+                  type: "boolean",
+                },
+                source_table: {
+                  properties: {
+                    id: {
+                      maximum: 4294967295,
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                    },
+                    name: {
+                      minLength: 1,
+                      type: "string",
+                    },
+                    schema: {
+                      minLength: 1,
+                      type: "string",
+                    },
+                  },
+                  required: ["id", "name", "schema"],
+                  type: "object",
+                },
+                tables: {
+                  description: "Rolled back tables",
+                  items: {
+                    properties: {
+                      new_state: {
+                        description: "Table replication state",
+                        oneOf: [
+                          {
+                            properties: {
+                              name: {
+                                enum: ["queued"],
+                                type: "string",
+                              },
+                            },
+                            required: ["name"],
+                            type: "object",
+                          },
+                          {
+                            properties: {
+                              name: {
+                                enum: ["copying_table"],
+                                type: "string",
+                              },
+                            },
+                            required: ["name"],
+                            type: "object",
+                          },
+                          {
+                            properties: {
+                              name: {
+                                enum: ["copied_table"],
+                                type: "string",
+                              },
+                            },
+                            required: ["name"],
+                            type: "object",
+                          },
+                          {
+                            properties: {
+                              name: {
+                                enum: ["following_wal"],
+                                type: "string",
+                              },
+                            },
+                            required: ["name"],
+                            type: "object",
+                          },
+                          {
+                            properties: {
+                              name: {
+                                enum: ["error"],
+                                type: "string",
+                              },
+                              reason: {
+                                type: "string",
+                              },
+                              retry_policy: {
+                                oneOf: [
+                                  {
+                                    properties: {
+                                      policy: {
+                                        enum: ["no_retry"],
+                                        type: "string",
+                                      },
+                                    },
+                                    required: ["policy"],
+                                    type: "object",
+                                  },
+                                  {
+                                    properties: {
+                                      policy: {
+                                        enum: ["manual_retry"],
+                                        type: "string",
+                                      },
+                                    },
+                                    required: ["policy"],
+                                    type: "object",
+                                  },
+                                  {
+                                    properties: {
+                                      next_retry: {
+                                        description: "Next retry time (RFC 3339 timestamp)",
+                                        type: "string",
+                                        examples: ["2025-01-02T03:04:05Z"],
+                                      },
+                                      policy: {
+                                        enum: ["timed_retry"],
+                                        type: "string",
+                                      },
+                                    },
+                                    required: ["next_retry", "policy"],
+                                    type: "object",
+                                  },
+                                ],
+                              },
+                              solution: {
+                                type: ["string", "null"],
+                              },
+                            },
+                            required: ["name", "reason", "retry_policy"],
+                            type: "object",
+                          },
+                        ],
+                      },
+                      table_id: {
+                        description: "Table id (Postgres OID)",
+                        maximum: 4294967295,
+                        minimum: 0,
+                        type: "integer",
+                        examples: [16408],
+                      },
+                    },
+                    required: ["new_state", "table_id"],
+                    type: "object",
+                  },
+                  type: "array",
+                },
+              },
+              required: [
+                "application_status",
+                "pipeline_id",
+                "source_data_preserved",
+                "source_table",
+                "tables",
+              ],
+              type: "object",
+            },
+            id: {
+              type: "string",
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_replication_resync"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
         },
       },
       required: ["data"],

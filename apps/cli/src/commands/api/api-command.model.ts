@@ -83,6 +83,10 @@ export interface ApiCommandEntry {
   readonly summary: string;
   readonly description?: string;
   readonly readOnly: boolean;
+  /** False omits the local request-preview flag from this command. */
+  readonly dryRun?: false;
+  /** Show the API description as impact details before hosted consent. */
+  readonly confirmDescription?: true;
   /** Feature that gates the command's noun. */
   readonly feature: string;
   /** Request body shape; `json-envelope` bodies wrap fields in `data.attributes`. */

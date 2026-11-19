@@ -2546,7 +2546,7 @@
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1query-stats",
     "value": {
       "get": {
-        "description": "Returns aggregate workload measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Returns aggregate workload measurements over a bounded time range, using the project\u2019s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, and full series with dimension labels. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Do not average interval percentiles into a whole-range percentile. Executor invocations include metadata/schema work and are not counts of user SQL statements. Timeouts are included in errors; cancellation is separate. Missing and unavailable values remain null. No query history, individual-query attribution, raw queries, or backend selectors are exposed. Each request returns up to eight measurements. A failure of one measurement does not discard the other results.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-get-warehouse-query-stats",
         "parameters": [
           {
@@ -2938,7 +2938,7 @@
     "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1capacity",
     "value": {
       "get": {
-        "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project\u2019s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-get-warehouse-capacity",
         "parameters": [
           {
@@ -3121,5 +3121,920 @@
       }
     },
     "$comment": "Public Warehouse capacity metrics generate warehouse inspect capacity."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseReplicationRequest",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "additionalProperties": false,
+              "properties": {
+                "schema": {
+                  "description": "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "table": {
+                  "description": "Literal source table name. Omit to select the schema.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["schema"],
+              "type": "object"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_replication_change"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseReplicationResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "action": {
+                  "enum": ["add", "remove"],
+                  "type": "string"
+                },
+                "affected_tables": {
+                  "items": {
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": true,
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "schema": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": ["id", "name", "schema"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "application_status": {
+                  "description": "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion.",
+                  "enum": ["configured", "restart_requested", "unchanged"],
+                  "type": "string"
+                },
+                "changed": {
+                  "type": "boolean"
+                },
+                "includes_future_tables": {
+                  "enum": [false],
+                  "type": "boolean"
+                },
+                "pipeline_id": {
+                  "type": "string"
+                },
+                "pipeline_status_before": {
+                  "type": "string"
+                },
+                "selected_table_count": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "source_data_preserved": {
+                  "enum": [true],
+                  "type": "boolean"
+                },
+                "tables": {
+                  "description": "Resulting configured selection, with best-effort replication observations.",
+                  "items": {
+                    "properties": {
+                      "copy_name": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "exclusiveMinimum": true,
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "lag_ms": {
+                        "minimum": 0,
+                        "nullable": true,
+                        "type": "number"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "replication_state": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "schema": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "state": {
+                        "description": "Last observed table state; null when unavailable. Does not establish completion of this request.",
+                        "enum": ["error", "live", null, "syncing"],
+                        "nullable": true,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "copy_name",
+                      "id",
+                      "lag_ms",
+                      "name",
+                      "replication_state",
+                      "schema",
+                      "state"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "unchanged_tables": {
+                  "items": {
+                    "properties": {
+                      "id": {
+                        "exclusiveMinimum": true,
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "schema": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": ["id", "name", "schema"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "warehouse_data_retained": {
+                  "enum": [true],
+                  "type": "boolean"
+                },
+                "warehouse_enabled": {
+                  "enum": [true],
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "action",
+                "affected_tables",
+                "application_status",
+                "changed",
+                "includes_future_tables",
+                "pipeline_id",
+                "pipeline_status_before",
+                "selected_table_count",
+                "source_data_preserved",
+                "tables",
+                "unchanged_tables",
+                "warehouse_data_retained",
+                "warehouse_enabled"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_replication_change"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseResyncRequest",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "additionalProperties": false,
+              "properties": {
+                "schema": {
+                  "description": "Literal source PostgreSQL schema. Omit table to select its current tables.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "table": {
+                  "description": "Literal name of the single source table to reset and recopy.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["schema", "table"],
+              "type": "object"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_replication_resync"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2WarehouseResyncResponse_Output",
+    "value": {
+      "properties": {
+        "data": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "application_status": {
+                  "description": "ETL reset replication state. Destination rebuild and recopy may still be pending.",
+                  "enum": ["reset"],
+                  "type": "string"
+                },
+                "pipeline_id": {
+                  "description": "Pipeline ID",
+                  "example": "03dg2o5teb2eucxr9ggh3uie6",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "source_data_preserved": {
+                  "enum": [true],
+                  "type": "boolean"
+                },
+                "source_table": {
+                  "properties": {
+                    "id": {
+                      "exclusiveMinimum": true,
+                      "maximum": 4294967295,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "schema": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "name", "schema"],
+                  "type": "object"
+                },
+                "tables": {
+                  "description": "Rolled back tables",
+                  "items": {
+                    "properties": {
+                      "new_state": {
+                        "description": "Table replication state",
+                        "oneOf": [
+                          {
+                            "properties": {
+                              "name": {
+                                "enum": ["queued"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "name": {
+                                "enum": ["copying_table"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "name": {
+                                "enum": ["copied_table"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "name": {
+                                "enum": ["following_wal"],
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name"],
+                            "type": "object"
+                          },
+                          {
+                            "properties": {
+                              "name": {
+                                "enum": ["error"],
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "retry_policy": {
+                                "oneOf": [
+                                  {
+                                    "properties": {
+                                      "policy": {
+                                        "enum": ["no_retry"],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["policy"],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "policy": {
+                                        "enum": ["manual_retry"],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["policy"],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "properties": {
+                                      "next_retry": {
+                                        "description": "Next retry time (RFC 3339 timestamp)",
+                                        "example": "2025-01-02T03:04:05Z",
+                                        "type": "string"
+                                      },
+                                      "policy": {
+                                        "enum": ["timed_retry"],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["next_retry", "policy"],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              "solution": {
+                                "nullable": true,
+                                "type": "string"
+                              }
+                            },
+                            "required": ["name", "reason", "retry_policy"],
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "table_id": {
+                        "description": "Table id (Postgres OID)",
+                        "example": 16408,
+                        "maximum": 4294967295,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["new_state", "table_id"],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "application_status",
+                "pipeline_id",
+                "source_data_preserved",
+                "source_table",
+                "tables"
+              ],
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "description": "Resource type.",
+              "enum": ["warehouse_replication_resync"],
+              "type": "string"
+            }
+          },
+          "required": ["attributes", "id", "type"],
+          "type": "object"
+        }
+      },
+      "required": ["data"],
+      "type": "object"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1replication~1add",
+    "value": {
+      "post": {
+        "description": "Adds one eligible source table or the currently eligible tables in a schema to an enabled Warehouse. Existing selections and layouts are preserved; already-selected tables are unchanged. Schema selection excludes future tables, except future partitions of selected partition roots. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline remains stopped and requires an explicit start before copying. Initial copy adds source reads; duration is unknown. Unsafe reattachment of retained data is rejected. The response describes configuration and restart acceptance, not completed copy or streaming. Failures may have partial effects; inspect table and pipeline state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-add-warehouse-replication",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseReplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseReplicationResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Invalid or ineligible source selection"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse pipeline, publication or selected table not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse lifecycle, initial sync or retained data conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Add source tables to Warehouse replication",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write", "project_admin_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "add"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1replication~1remove",
+    "value": {
+      "post": {
+        "description": "Removes one selected source table or all selected tables in a schema as a batch. Source PostgreSQL rows and existing Warehouse data are retained. The retained copy stops receiving updates. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline stays stopped. Removing an unselected target is unchanged. Removing the last target leaves Warehouse enabled with an empty selection. Publication changes and restart acceptance do not establish observed exclusion by active replication. Failures may have partial effects; inspect the selection and pipeline before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-remove-warehouse-replication",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseReplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseReplicationResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Invalid or ineligible source selection"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse pipeline, publication or selected table not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse lifecycle, initial sync or retained data conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove source tables from Warehouse replication",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write", "project_admin_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "remove"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1replication~1resync",
+    "value": {
+      "post": {
+        "description": "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no preview, revision check, idempotency key or operation polling.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-resync-warehouse-replication",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseResyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseResyncResponse_Output"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Invalid or ineligible source selection"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse pipeline, publication or selected table not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Warehouse lifecycle, initial sync or retained data conflict"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reset and rebuild one Warehouse table",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Enterprise", "Pro", "Team"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["database_write", "project_admin_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "resync"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    }
   }
 ]
