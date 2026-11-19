@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { database15, selection } from "../tests/pins.ts";
 import {
-  HOSTED_LOCK_SCHEMA_URL,
   Lock,
   LOCK_SCHEMA_URL,
   lockSelection,
@@ -12,8 +11,6 @@ import {
   readLock,
   writeLock,
 } from "./Lock.ts";
-
-const V1_LOCK_SCHEMA_URL = "https://supabase.com/docs/cli/supabase-lock/v1.schema.json";
 
 const bundled = (pin: Lock["services"]["rest"]["resolved"]) =>
   ({ specifier: "bundled", resolution: "resolved", resolved: pin }) as const;
@@ -104,37 +101,28 @@ describe("lock", () => {
       ),
   );
 
-  it.live("a fresh lock is written with the schema URL older CLIs require", () =>
+  it.live.each([
+    {
+      name: "the retired schema URL",
+      schemaUrl: "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+    },
+    { name: "a local schema copy", schemaUrl: "./supabase-lock.schema.json" },
+    { name: "no $schema", schemaUrl: undefined },
+  ])("a lock naming $name still reads", ({ schemaUrl }) =>
     inProject((projectRoot, lockFile) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-
-        yield* writeLock(projectRoot, lockOf(selection));
-
-        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
-          $schema: V1_LOCK_SCHEMA_URL,
-        });
-      }),
-    ),
-  );
-
-  it.live("a lock naming the hosted schema URL reads and rewrites with the written one", () =>
-    inProject((projectRoot, lockFile) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const { $schema: _written, ...rest } = lockOf(selection);
         yield* fs.makeDirectory(`${projectRoot}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           lockFile,
-          stringify({ ...lockOf(selection), $schema: HOSTED_LOCK_SCHEMA_URL }),
+          stringify(schemaUrl === undefined ? rest : { ...rest, $schema: schemaUrl }),
         );
 
-        const read = yield* readLock(projectRoot);
-        yield* writeLock(projectRoot, Option.getOrThrow(read));
+        const read = Option.getOrThrow(yield* readLock(projectRoot));
 
-        expect(Option.getOrThrow(read).$schema).toBe(V1_LOCK_SCHEMA_URL);
-        expect(parse(yield* fs.readFileString(lockFile))).toMatchObject({
-          $schema: V1_LOCK_SCHEMA_URL,
-        });
+        expect(read.$schema).toBe(schemaUrl);
+        expect(read.services).toEqual(rest.services);
       }),
     ),
   );

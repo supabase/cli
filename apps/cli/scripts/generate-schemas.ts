@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { HOSTED_LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts";
 
@@ -23,7 +23,7 @@ const main = Effect.gen(function* () {
     yield* Console.log(`Generated: ${path.relative(cliRoot, destPath)}`);
   }
 
-  const lockPath = path.join(cliRoot, publishedSchemaPath(HOSTED_LOCK_SCHEMA_URL));
+  const lockPath = path.join(cliRoot, publishedSchemaPath(LOCK_SCHEMA_URL));
   yield* fs.makeDirectory(path.dirname(lockPath), { recursive: true });
   yield* fs.writeFileString(lockPath, `${yield* encodeJson(lockSchemaDocument())}\n`);
   yield* Console.log(`Generated: ${path.relative(cliRoot, lockPath)}`);

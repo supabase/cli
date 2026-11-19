@@ -7,7 +7,7 @@ import {
   postgresMajor,
   type ServiceKind,
 } from "@supabase/stack/internal/artifacts";
-import { Effect, FileSystem, Layer, Option } from "effect";
+import { Effect, FileSystem, Layer, Option, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import {
@@ -100,6 +100,10 @@ const update = (
 };
 
 const lockPath = (root: string) => `${root}/supabase/supabase.lock`;
+
+const lockJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeJson = Schema.decodeUnknownEffect(lockJson);
+const encodeJson = Schema.encodeEffect(lockJson);
 
 const readServices = (root: string) =>
   readLock(root).pipe(
@@ -233,6 +237,31 @@ describe("experimental stack update", () => {
       expect(result?.type === "success" ? result.data : undefined).toMatchObject({
         lock: { written: false, changed: [], stale: [] },
       });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.live("moves a lock naming the retired schema URL to the hosted one, keeping every pin", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      const root = yield* project({ auth: `${UPSTREAM}-r1` });
+      publish(host, "auth", 1);
+      yield* seed(root, host);
+      const seeded = yield* decodeJson(yield* fs.readFileString(lockPath(root)));
+      yield* fs.writeFileString(
+        lockPath(root),
+        yield* encodeJson({
+          ...seeded,
+          $schema: "https://supabase.com/docs/cli/supabase-lock/v1.schema.json",
+        }),
+      );
+      const before = yield* readServices(root);
+
+      yield* update(root, host, ["auth"]).run;
+
+      const after = yield* decodeJson(yield* fs.readFileString(lockPath(root)));
+      expect(after["$schema"]).toBe("https://supabase.com/schemas/supabase-lock/v1.json");
+      expect(yield* readServices(root)).toEqual(before);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 

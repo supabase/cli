@@ -6,7 +6,7 @@ import {
   toCliConfigJsonSchema,
   toProjectConfigJsonSchema,
 } from "@supabase/config";
-import { HOSTED_LOCK_SCHEMA_URL, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { Effect, FileSystem, JsonSchema, Path, Schema } from "effect";
 import { lockSchemaDocument, publishedSchemaPath } from "./published-schemas.ts";
 
@@ -90,7 +90,7 @@ const published = [
   {
     name: "supabase-lock",
     file: "schemas/supabase-lock/v1.json",
-    url: HOSTED_LOCK_SCHEMA_URL,
+    url: LOCK_SCHEMA_URL,
     build: (): Document => lockSchemaDocument(),
     comparable: (document: Document): Document => document,
   },
@@ -198,15 +198,17 @@ describe("published supabase-lock schema definitions", () => {
     }),
   );
 
-  it.effect("accept every $schema value readLock accepts", () =>
+  it.effect("let $schema be any string or absent, suggesting the hosted URL", () =>
     Effect.gen(function* () {
       const document = yield* readCommitted("schemas/supabase-lock/v1.json");
       const properties = document["properties"];
-      const schemaProperty = isNode(properties) ? properties["$schema"] : undefined;
 
-      expect(isNode(schemaProperty) ? schemaProperty["enum"] : undefined).toEqual(
-        expect.arrayContaining([LOCK_SCHEMA_URL, HOSTED_LOCK_SCHEMA_URL]),
-      );
+      expect(isNode(properties) ? properties["$schema"] : undefined).toEqual({
+        type: "string",
+        description: expect.any(String),
+        examples: ["https://supabase.com/schemas/supabase-lock/v1.json"],
+      });
+      expect(document["required"]).not.toContain("$schema");
     }),
   );
 });

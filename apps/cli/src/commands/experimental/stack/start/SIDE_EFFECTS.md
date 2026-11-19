@@ -219,8 +219,9 @@ twelve services it records the specifier requested under `[local.services]` (`<s
 else `default.version`, else `linked`), how it resolved, and the exact pin: the release revision,
 each target's archive and manifest digests, and the image digest. Its
 [JSON Schema](https://supabase.com/schemas/supabase-lock/v1.json) is published with the
-docs. A project without `supabase/config.toml` runs the versions bundled with the CLI and has no
-lock, unless `--frozen` is set, which fails the start.
+docs, and every write sets `$schema` to that URL. A lock with any other `$schema`, or none, still
+reads, and takes the URL on its next write. A project without `supabase/config.toml` runs the
+versions bundled with the CLI and has no lock, unless `--frozen` is set, which fails the start.
 
 A specifier is `linked`, `bundled`, `<upstream>` (the highest published revision) or
 `<upstream>-r<N>` (exactly that revision). `linked` and `bundled` pin the version bundled with the
