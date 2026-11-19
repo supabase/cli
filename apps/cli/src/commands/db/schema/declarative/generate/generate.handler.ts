@@ -19,7 +19,7 @@ import { TelemetryState } from "../../../../../telemetry/telemetry-state.service
 import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { DeclarativeWriteError } from "../../../shared/pgdelta.errors.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
-import { requirePgDelta } from "../declarative.gate.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import {
   type DeclarativeRunContext,
   generateDeclarativeOutput,
@@ -56,7 +56,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     const baseToml = yield* readDbConfig(fs, path, cliSettings.workdir);
     // Gate on the base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
-    yield* requirePgDelta({
+    yield* pgDeltaAccess.check({
       experimental,
       pgDeltaEnabled: baseToml.pgDelta.enabled,
       configPath: baseToml.configFile.path,
