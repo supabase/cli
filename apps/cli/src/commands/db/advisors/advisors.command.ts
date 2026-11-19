@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -22,14 +23,17 @@ const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   type: Flag.Literals("type", ["all", "security", "performance"] as const).pipe(
     Flag.withDescription("Type of advisors to check: all, security, performance."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "all" }),
     Flag.optional,
   ),
   level: Flag.Literals("level", ["info", "warn", "error"] as const).pipe(
     Flag.withDescription("Minimum issue level to display: info, warn, error."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "warn" }),
     Flag.optional,
   ),
   failOn: Flag.Literals("fail-on", ["none", "info", "warn", "error"] as const).pipe(
     Flag.withDescription("Issue level to exit with non-zero status: none, info, warn, error."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "none" }),
     Flag.optional,
   ),
 } as const;
