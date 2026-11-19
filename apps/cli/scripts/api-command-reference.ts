@@ -186,7 +186,7 @@ export const renderApiCommandReference = (input: ApiCommandReferenceInput): stri
     "",
     "# Generated API commands",
     "",
-    "Reference for the commands generated from the Management API contract. The behavior every one of them shares (feature gates, consent, files, exit codes, output, `--wait`) is in [SIDE_EFFECTS.md](./SIDE_EFFECTS.md).",
+    "Reference for the commands generated from the Management API contract.",
     "",
     ...input.entries.flatMap((entry) => commandSection(entry, input)),
   ].join("\n");
