@@ -77,19 +77,16 @@ const withLinkedProject = <A, E, R>(
 
 const reportRefusals = Effect.fnUntraced(function* (
   label: string,
-  refused: ReadonlyArray<SparkDryRunStatus>,
-  declaredIn: ReadonlyArray<{ readonly name: string; readonly sql: string }> = [],
+  refused: ReadonlyArray<{ readonly status: SparkDryRunStatus; readonly at: string | undefined }>,
 ) {
   const output = yield* Output;
   yield* output.raw(
     `Spark refuses ${refused.length} statement(s) of ${label}. Each one is a Postgres compatibility gap of Spark:\n`,
     "stderr",
   );
-  for (const status of refused) {
+  for (const { status, at } of refused) {
     const line = status.line === undefined || status.line === null ? "" : ` (line ${status.line})`;
-    const declared = findDeclaration(status.statement, declaredIn);
-    if (declared !== undefined)
-      yield* output.raw(`  supabase/schemas/${declared.file}:${declared.line}\n`, "stderr");
+    if (at !== undefined) yield* output.raw(`  ${at}\n`, "stderr");
     yield* output.raw(
       `  ${status.status} ${status.kind}${line}: ${status.statement}\n${
         status.message === undefined || status.message === null ? "" : `    ${status.message}\n`
@@ -192,7 +189,19 @@ export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (flags: {
       const statuses = yield* dryRunSparkMigration(ref, { query: plan.sql, name });
       const refused = statuses.filter(isRefused);
       if (refused.length > 0) {
-        yield* reportRefusals("the generated migration", refused, files);
+        yield* reportRefusals(
+          "the generated migration",
+          refused.map((status) => {
+            const declared = findDeclaration(status.statement, files, status.message);
+            return {
+              status,
+              at:
+                declared === undefined
+                  ? undefined
+                  : `supabase/schemas/${declared.file}:${declared.line}`,
+            };
+          }),
+        );
         return yield* new SparkMigrationRefusedError({
           message: `Spark refuses ${refused.length} statement(s) of the generated migration; no migration was written`,
         });
@@ -267,7 +276,14 @@ export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
         for (const [file, items] of Map.groupBy(refused, (r) => r.file))
           yield* reportRefusals(
             file ?? "the pending migrations",
-            items.map((r) => r.status),
+            // Spark numbers lines across all pending files joined; the file's own line replaces it.
+            items.map((r) => ({
+              status: { ...r.status, line: r.line ?? null },
+              at:
+                r.file === undefined || r.line === undefined
+                  ? undefined
+                  : `supabase/migrations/${r.file}:${r.line}`,
+            })),
           );
         return yield* new SparkMigrationRefusedError({
           message: `Spark refuses ${refused.length} statement(s) of the pending migrations; nothing was pushed`,

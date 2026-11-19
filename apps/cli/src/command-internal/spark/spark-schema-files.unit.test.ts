@@ -29,6 +29,62 @@ describe("findDeclaration", () => {
     expect(findDeclaration(statement, files)).toEqual({ file, line });
   });
 
+  it("locates every statement pg-delta generates for a table at the table's declaration", () => {
+    const tables = [
+      {
+        name: "public/tables/events.sql",
+        sql: 'CREATE TABLE "public"."events" (\n  "id" bigint NOT NULL,\n  "day" date\n);\n\nCREATE INDEX events_day_idx ON public.events (day);\nCOMMENT ON COLUMN public.events.day IS \'when\';\n',
+      },
+    ];
+    const at = (line: number) => ({ file: "public/tables/events.sql", line });
+
+    expect
+      .soft(
+        findDeclaration(
+          'CREATE TABLE "public"."events" ( "id" bigint NOT NULL, "day" date )',
+          tables,
+          'type "date" is not supported',
+        ),
+      )
+      .toEqual(at(3));
+
+    expect
+      .soft(
+        findDeclaration(
+          'CREATE TABLE "public"."events" ( "id" bigint NOT NULL, "day" date )',
+          tables,
+        ),
+      )
+      .toEqual(at(1));
+    expect
+      .soft(
+        findDeclaration("CREATE INDEX events_day_idx ON public.events USING btree (day)", tables),
+      )
+      .toEqual(at(6));
+    expect
+      .soft(findDeclaration("CREATE UNIQUE INDEX other_idx ON public.events (id)", tables))
+      .toEqual(at(1));
+    expect
+      .soft(findDeclaration('ALTER TABLE "public"."events" ENABLE ROW LEVEL SECURITY', tables))
+      .toEqual(at(1));
+    expect
+      .soft(findDeclaration('GRANT SELECT ON TABLE "public"."events" TO "anon"', tables))
+      .toEqual(at(1));
+    expect
+      .soft(findDeclaration('REVOKE ALL ON TABLE "public"."events" FROM "postgres"', tables))
+      .toEqual(at(1));
+    expect
+      .soft(findDeclaration("COMMENT ON COLUMN public.events.day IS 'when'", tables))
+      .toEqual(at(7));
+    expect
+      .soft(
+        findDeclaration("SELECT public.events_count()", [
+          { name: "f.sql", sql: "create function public.events_count() returns int;" },
+        ]),
+      )
+      .toEqual({ file: "f.sql", line: 1 });
+  });
+
   it("finds nothing for an object the files do not declare", () => {
     expect(findDeclaration("create function other.add()", files)).toBeUndefined();
     expect(findDeclaration("create table public.t (id int)", files)).toBeUndefined();
@@ -106,6 +162,32 @@ describe("attributeDryRunStatuses", () => {
       [{ file: "1_a.sql", query: `create table public.t (id int);\n${fold};\n` }],
     );
     expect(same.refused).toEqual([]);
+  });
+
+  it("gives the line of each refused statement in its own file", () => {
+    const files = [
+      { file: "1_a.sql", query: "create table t (id int);\n" },
+      {
+        file: "2_b.sql",
+        query:
+          "-- events\n\ncreate table e (\n  id int,\n  day date\n);\ncreate   index i on e (day);\n",
+      },
+    ];
+    const { refused } = attributeDryRunStatuses(
+      [
+        status(0, "ok", "create table t (id int)"),
+        {
+          ...status(1, "unsupported", "-- events create table e ( id int, day date )"),
+          message: 'type "date" is not supported',
+        },
+        status(2, "error", "create index i on e (day)"),
+      ],
+      files,
+    );
+    expect(refused.map((r) => [r.file, r.line])).toEqual([
+      ["2_b.sql", 5],
+      ["2_b.sql", 7],
+    ]);
   });
 
   it("lists a file that received no status", () => {

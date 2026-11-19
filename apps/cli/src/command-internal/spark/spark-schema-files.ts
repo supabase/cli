@@ -43,10 +43,14 @@ const reference = (name: string) => {
     : `(?:${escape(first ?? "")}\\.)?${escape(second)}`;
 };
 
-/** Line patterns, most specific first, that declare the object a refused statement creates. */
-const declarationPatterns = (statement: string): ReadonlyArray<RegExp> => {
-  const sql = normalize(statement);
-  const pattern = (source: string) => new RegExp(`^${source}`, "u");
+const pattern = (source: string) => new RegExp(`^${source}`, "u");
+const tableDeclaration = (name: string) =>
+  pattern(
+    `create (?:(?:unlogged|temp|temporary|foreign) )*table (?:if not exists )?${reference(name)}\\b`,
+  );
+
+/** Statement-specific line patterns, most specific first. */
+const specificPatterns = (sql: string): ReadonlyArray<RegExp> => {
   let match = /^create (?:or replace )?(function|procedure) (?:if not exists )?([\w$.]+)/u.exec(
     sql,
   );
@@ -80,13 +84,86 @@ const declarationPatterns = (statement: string): ReadonlyArray<RegExp> => {
   match = /^(?:grant|revoke) .* on schema ([\w$]+)/u.exec(sql);
   if (match?.[1] !== undefined)
     return [pattern(`(?:grant|revoke) .* on schema ${escape(match[1])}\\b`)];
+  match =
+    /^create (?:(?:unlogged|temp|temporary|foreign) )*table (?:if not exists )?([\w$.]+)/u.exec(
+      sql,
+    );
+  if (match?.[1] !== undefined) return [tableDeclaration(match[1])];
+  match =
+    /^create (?:unique )?index (?:concurrently )?(?:if not exists )?(?:([\w$.]+) )?on (?:only )?([\w$.]+)/u.exec(
+      sql,
+    );
+  if (match?.[2] !== undefined)
+    return [
+      ...(match[1] === undefined
+        ? []
+        : [
+            pattern(
+              `create (?:unique )?index (?:concurrently )?(?:if not exists )?${reference(match[1])}\\b`,
+            ),
+          ]),
+      tableDeclaration(match[2]),
+    ];
+  match = /^alter table (?:only )?(?:if exists )?(?:only )?([\w$.]+)/u.exec(sql);
+  if (match?.[1] !== undefined)
+    return [
+      tableDeclaration(match[1]),
+      pattern(`alter table (?:only )?(?:if exists )?${reference(match[1])}\\b`),
+    ];
+  match = /^(?:grant|revoke) .* on (?:table )?([\w$.]+)/u.exec(sql);
+  if (match?.[1] !== undefined)
+    return [
+      pattern(`(?:grant|revoke) .* on (?:table )?${reference(match[1])}\\b`),
+      tableDeclaration(match[1]),
+    ];
+  match = /^comment on (\w+) ([\w$.]+)/u.exec(sql);
+  if (match?.[1] !== undefined && match[2] !== undefined) {
+    const parts = match[2].split(".");
+    const table = match[1] === "column" ? parts.slice(0, -1).join(".") : match[2];
+    return [pattern(`comment on ${match[1]} ${reference(match[2])}\\b`), tableDeclaration(table)];
+  }
   return [];
+};
+
+/**
+ * Line patterns, most specific first, that locate a refused statement: its own declaration, then
+ * the line that creates any object it names, so a generated grant or index points at its table.
+ */
+const declarationPatterns = (statement: string): ReadonlyArray<RegExp> => {
+  const sql = normalize(statement);
+  const named = [...new Set(sql.match(/\b[a-z_$][\w$]*\.[a-z_$][\w$]*\b/gu) ?? [])];
+  return [
+    ...specificPatterns(sql),
+    ...named.map((name) => pattern(`create\\b.*\\b${escape(name)}\\b`)),
+  ];
+};
+
+/**
+ * For a refused type, the line within the statement starting at `line` (up to its `;`) that uses
+ * the type, so the location names the column rather than the `CREATE TABLE`.
+ */
+const narrowToRefusedType = (
+  sql: string,
+  line: number,
+  message: string | null | undefined,
+): number => {
+  const type = /^type "?([\w$ ]+?)"? is not supported/u.exec(message ?? "")?.[1];
+  if (type === undefined) return line;
+  const uses = new RegExp(`\\b${escape(type.toLowerCase())}\\b`, "u");
+  const lines = sql.split("\n");
+  for (let i = line - 1; i < lines.length; i += 1) {
+    const text = normalize((lines[i] ?? "").replace(/--.*$/u, ""));
+    if (i > line - 1 && uses.test(text)) return i + 1;
+    if (text.includes(";")) break;
+  }
+  return line;
 };
 
 /** The first schema file and line that declares the object a refused statement creates. */
 export const findDeclaration = (
   statement: string,
   files: ReadonlyArray<SqlFile>,
+  message?: string | null,
 ): { readonly file: string; readonly line: number } | undefined => {
   const patterns = declarationPatterns(statement);
   const lines = files.map((file) => ({
@@ -96,9 +173,30 @@ export const findDeclaration = (
   for (const pattern of patterns)
     for (const { file, lines: text } of lines) {
       const index = text.findIndex((line) => pattern.test(line));
-      if (index >= 0) return { file, line: index + 1 };
+      if (index >= 0) {
+        const sql = files.find((f) => f.name === file)?.sql ?? "";
+        return { file, line: narrowToRefusedType(sql, index + 1, message) };
+      }
     }
   return undefined;
+};
+
+/**
+ * The 1-based line of `query` at an offset into its whitespace-collapsed form, past the comment
+ * lines Spark keeps at the start of a statement.
+ */
+const lineAtCollapsedOffset = (query: string, offset: number) => {
+  let collapsed = 0;
+  let line = 1;
+  for (let i = 0; i < query.length && collapsed < offset; i += 1) {
+    const space = /\s/u.test(query[i] ?? "");
+    if (query[i] === "\n") line += 1;
+    if (space && /\s/u.test(query[i + 1] ?? "")) continue;
+    collapsed += 1;
+  }
+  const lines = query.split("\n");
+  while (line < lines.length && /^\s*(?:--.*)?$/u.test(lines[line - 1] ?? "")) line += 1;
+  return line;
 };
 
 interface StatusLike {
@@ -122,10 +220,15 @@ export const attributeDryRunStatuses = <S extends StatusLike>(
 ) => {
   const collapsed = files.map((f) => f.query.replace(/\s+/gu, " "));
   const seen = new Set<number>();
-  const refused: Array<{ readonly file: string | undefined; readonly status: S }> = [];
+  const refused: Array<{
+    readonly file: string | undefined;
+    readonly line: number | undefined;
+    readonly status: S;
+  }> = [];
   let cursor = { file: 0, offset: 0 };
   for (const status of [...statuses].sort((a, b) => a.index - b.index)) {
     let at = -1;
+    let line: number | undefined;
     for (let i = cursor.file; i < collapsed.length && at < 0; i += 1) {
       const found = (collapsed[i] ?? "").indexOf(
         status.statement,
@@ -133,13 +236,18 @@ export const attributeDryRunStatuses = <S extends StatusLike>(
       );
       if (found >= 0) {
         at = i;
+        line = narrowToRefusedType(
+          files[i]?.query ?? "",
+          lineAtCollapsedOffset(files[i]?.query ?? "", found),
+          status.message,
+        );
         cursor = { file: i, offset: found + status.statement.length };
         seen.add(i);
       }
     }
     const file = at >= 0 ? files[at]?.file : undefined;
     if (status.status === "unsupported" || status.status === "error") {
-      refused.push({ file, status });
+      refused.push({ file, line, status });
       continue;
     }
     if (status.status !== "rewritten" || at < 0) continue;
@@ -153,6 +261,7 @@ export const attributeDryRunStatuses = <S extends StatusLike>(
     if (creator >= 0)
       refused.push({
         file,
+        line,
         status: {
           ...status,
           status: "error",

@@ -187,13 +187,13 @@ rm supabase/schemas/public/functions.sql
 # Two pending files: a good one, then one Spark refuses. The combined dry run must stop both.
 history_before="$(sb migration list 2>&1)"
 printf 'create table public.notes (id bigint primary key);\n' >supabase/migrations/20990101000000_notes.sql
-printf 'create function public.one() returns int language sql as $$ select 1 $$;\n' >supabase/migrations/20990101000001_one.sql
+printf -- '-- a date column\ncreate table public.events (\n  id bigint primary key,\n  day date\n);\n' >supabase/migrations/20990101000001_events.sql
 if sb db push >"$LOG" 2>&1; then fail "db push applied a migration Spark refuses"; fi
-grep -q '20990101000001_one' "$LOG" || fail "the push refusal names no migration file"
+grep -q 'supabase/migrations/20990101000001_events.sql:4' "$LOG" || fail "the push refusal does not name the date column's file and line"
 [ "$(rest 'notes?select=id' -o /dev/null -w '%{http_code}')" != 200 ] || fail "db push applied the good file before the refused one"
-rm supabase/migrations/20990101000000_notes.sql supabase/migrations/20990101000001_one.sql
+rm supabase/migrations/20990101000000_notes.sql supabase/migrations/20990101000001_events.sql
 [ "$(sb migration list 2>&1)" = "$history_before" ] || fail "migration history changed after a refused push"
-ok "db push with a refused pending migration applies nothing (one dry run over all pending files)"
+ok "db push with a refused pending migration applies nothing (one dry run over all pending files), at $(grep -m1 -Eo '20990101000001_events\.sql:[0-9]+' "$LOG"): $(grep -m1 -Eo 'type \"date\" is not supported' "$LOG")"
 
 # Two files with one version fail before anything is applied.
 printf 'create table public.notes (id bigint primary key);\n' >supabase/migrations/20990101000000_notes.sql
