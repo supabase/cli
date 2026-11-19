@@ -1742,67 +1742,71 @@ export const apiCommandSchemas = {
                       type: ["array", "null"],
                     },
                     sort_by: {
-                      description:
-                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
-                      oneOf: [
+                      anyOf: [
                         {
-                          properties: {
-                            kind: {
-                              enum: ["none"],
-                              type: "string",
-                            },
-                          },
-                          required: ["kind"],
-                          type: "object",
-                        },
-                        {
-                          properties: {
-                            kind: {
-                              enum: ["primary_key"],
-                              type: "string",
-                            },
-                          },
-                          required: ["kind"],
-                          type: "object",
-                        },
-                        {
-                          properties: {
-                            columns: {
-                              items: {
-                                properties: {
-                                  direction: {
-                                    enum: ["asc", "desc"],
-                                    type: "string",
-                                  },
-                                  name: {
-                                    description: "Source column name.",
-                                    type: "string",
-                                  },
-                                  nulls: {
-                                    description:
-                                      "Null placement. Null uses DuckLake's default placement.",
-                                    enum: ["first", "last", null],
-                                    type: ["string", "null"],
-                                  },
+                          oneOf: [
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["none"],
+                                  type: "string",
                                 },
-                                required: ["direction", "name", "nulls"],
-                                type: "object",
                               },
-                              type: "array",
+                              required: ["kind"],
+                              type: "object",
                             },
-                            kind: {
-                              enum: ["columns"],
-                              type: "string",
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["primary_key"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["kind"],
+                              type: "object",
                             },
-                          },
-                          required: ["columns", "kind"],
-                          type: "object",
+                            {
+                              properties: {
+                                columns: {
+                                  items: {
+                                    properties: {
+                                      direction: {
+                                        enum: ["asc", "desc"],
+                                        type: "string",
+                                      },
+                                      name: {
+                                        description: "Source column name.",
+                                        type: "string",
+                                      },
+                                      nulls: {
+                                        description:
+                                          "Null placement. Null uses DuckLake's default placement.",
+                                        enum: ["first", "last", null],
+                                        type: ["string", "null"],
+                                      },
+                                    },
+                                    required: ["direction", "name", "nulls"],
+                                    type: "object",
+                                  },
+                                  type: "array",
+                                },
+                                kind: {
+                                  enum: ["columns"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["columns", "kind"],
+                              type: "object",
+                            },
+                          ],
                         },
                         {
-                          type: ["object", "null"],
                           enum: [null],
+                          type: ["object", "null"],
                         },
                       ],
+                      description:
+                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
                     },
                   },
                   required: ["partition_by", "sort_by"],
@@ -1811,6 +1815,29 @@ export const apiCommandSchemas = {
                 name: {
                   description: "Source PostgreSQL table name.",
                   type: "string",
+                },
+                observation_error: {
+                  description:
+                    "Safe reason and recovery guidance when observation_status is unavailable. Retryable applies only to this read, never to a layout update or resync. Null for other observation states.",
+                  properties: {
+                    code: {
+                      enum: [
+                        "catalog_observation_unavailable",
+                        "catalog_read_failed",
+                        "catalog_read_timeout",
+                        "catalog_unavailable",
+                      ],
+                      type: "string",
+                    },
+                    message: {
+                      type: "string",
+                    },
+                    retryable: {
+                      type: "boolean",
+                    },
+                  },
+                  required: ["code", "message", "retryable"],
+                  type: ["object", "null"],
                 },
                 observation_status: {
                   description:
@@ -1888,6 +1915,7 @@ export const apiCommandSchemas = {
                 "application_status",
                 "desired",
                 "name",
+                "observation_error",
                 "observation_status",
                 "observed",
                 "pipeline_id",
@@ -2101,6 +2129,312 @@ export const apiCommandSchemas = {
             type: "object",
           },
           type: "array",
+        },
+      },
+      required: ["data"],
+      type: "object",
+    },
+  },
+  "v2-resync-warehouse-table": {
+    result: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: {
+        data: {
+          properties: {
+            attributes: {
+              properties: {
+                application_status: {
+                  description:
+                    "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+                  type: "string",
+                },
+                desired: {
+                  description:
+                    "Saved layout rules. The replicator applies them on start and hourly, so they can differ from the observed layout.",
+                  properties: {
+                    partition_by: {
+                      description:
+                        "Configured partition keys in order. An empty list explicitly clears partitioning; null leaves it unmanaged.",
+                      items: {
+                        properties: {
+                          column: {
+                            description: "Source column name.",
+                            type: "string",
+                          },
+                          transform: {
+                            oneOf: [
+                              {
+                                properties: {
+                                  kind: {
+                                    enum: ["identity"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["kind"],
+                                type: "object",
+                              },
+                              {
+                                properties: {
+                                  kind: {
+                                    enum: ["year"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["kind"],
+                                type: "object",
+                              },
+                              {
+                                properties: {
+                                  kind: {
+                                    enum: ["month"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["kind"],
+                                type: "object",
+                              },
+                              {
+                                properties: {
+                                  kind: {
+                                    enum: ["day"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["kind"],
+                                type: "object",
+                              },
+                              {
+                                properties: {
+                                  kind: {
+                                    enum: ["hour"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["kind"],
+                                type: "object",
+                              },
+                              {
+                                properties: {
+                                  count: {
+                                    description: "Number of hash buckets.",
+                                    maximum: 2147483647,
+                                    type: "integer",
+                                    exclusiveMinimum: 0,
+                                  },
+                                  kind: {
+                                    enum: ["bucket"],
+                                    type: "string",
+                                  },
+                                },
+                                required: ["count", "kind"],
+                                type: "object",
+                              },
+                            ],
+                          },
+                        },
+                        required: ["column", "transform"],
+                        type: "object",
+                      },
+                      type: ["array", "null"],
+                    },
+                    sort_by: {
+                      anyOf: [
+                        {
+                          oneOf: [
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["none"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["kind"],
+                              type: "object",
+                            },
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["primary_key"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["kind"],
+                              type: "object",
+                            },
+                            {
+                              properties: {
+                                columns: {
+                                  items: {
+                                    properties: {
+                                      direction: {
+                                        enum: ["asc", "desc"],
+                                        type: "string",
+                                      },
+                                      name: {
+                                        description: "Source column name.",
+                                        type: "string",
+                                      },
+                                      nulls: {
+                                        description:
+                                          "Null placement. Null uses DuckLake's default placement.",
+                                        enum: ["first", "last", null],
+                                        type: ["string", "null"],
+                                      },
+                                    },
+                                    required: ["direction", "name", "nulls"],
+                                    type: "object",
+                                  },
+                                  type: "array",
+                                },
+                                kind: {
+                                  enum: ["columns"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["columns", "kind"],
+                              type: "object",
+                            },
+                          ],
+                        },
+                        {
+                          enum: [null],
+                          type: ["object", "null"],
+                        },
+                      ],
+                      description:
+                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
+                    },
+                  },
+                  required: ["partition_by", "sort_by"],
+                  type: "object",
+                },
+                name: {
+                  description: "Source PostgreSQL table name.",
+                  type: "string",
+                },
+                observation_error: {
+                  description:
+                    "Safe reason and recovery guidance when observation_status is unavailable. Retryable applies only to this read, never to a layout update or resync. Null for other observation states.",
+                  properties: {
+                    code: {
+                      enum: [
+                        "catalog_observation_unavailable",
+                        "catalog_read_failed",
+                        "catalog_read_timeout",
+                        "catalog_unavailable",
+                      ],
+                      type: "string",
+                    },
+                    message: {
+                      type: "string",
+                    },
+                    retryable: {
+                      type: "boolean",
+                    },
+                  },
+                  required: ["code", "message", "retryable"],
+                  type: ["object", "null"],
+                },
+                observation_status: {
+                  description:
+                    "observed when the DuckLake catalog was read, table_missing when the catalog has no table for it yet, unavailable when the catalog could not be read, and not_requested when an update returned without reading the catalog.",
+                  enum: ["not_requested", "observed", "table_missing", "unavailable"],
+                  type: "string",
+                },
+                observed: {
+                  description:
+                    "Layout recorded in the DuckLake catalog, null unless observation_status is observed. Catalog metadata governs files written after it changes and does not establish that existing files are sorted or partitioned.",
+                  properties: {
+                    observed_at: {
+                      description: "Time the catalog metadata was read.",
+                      format: "date-time",
+                      pattern:
+                        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                      type: "string",
+                    },
+                    partition_by: {
+                      description:
+                        "Active partition keys in key order, with transforms as the catalog reports them, for example bucket(16).",
+                      items: {
+                        properties: {
+                          column: {
+                            type: "string",
+                          },
+                          transform: {
+                            type: "string",
+                          },
+                        },
+                        required: ["column", "transform"],
+                        type: "object",
+                      },
+                      type: "array",
+                    },
+                    sort_by: {
+                      description:
+                        "Active sort expressions in key order, as the catalog reports them.",
+                      items: {
+                        properties: {
+                          direction: {
+                            type: "string",
+                          },
+                          expression: {
+                            type: "string",
+                          },
+                          nulls: {
+                            type: "string",
+                          },
+                        },
+                        required: ["direction", "expression", "nulls"],
+                        type: "object",
+                      },
+                      type: "array",
+                    },
+                  },
+                  required: ["observed_at", "partition_by", "sort_by"],
+                  type: ["object", "null"],
+                },
+                pipeline_id: {
+                  description: "Warehouse replication pipeline identity.",
+                  type: "string",
+                },
+                reset_table: {
+                  description:
+                    "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+                  type: "boolean",
+                },
+                schema: {
+                  description: "Source PostgreSQL schema of the table.",
+                  type: "string",
+                },
+              },
+              required: [
+                "application_status",
+                "desired",
+                "name",
+                "observation_error",
+                "observation_status",
+                "observed",
+                "pipeline_id",
+                "reset_table",
+                "schema",
+              ],
+              type: "object",
+            },
+            id: {
+              description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+              maxLength: 10,
+              pattern: "^[1-9]\\d*$",
+              type: "string",
+              examples: ["16385"],
+            },
+            type: {
+              description: "Resource type.",
+              enum: ["warehouse_table_layout"],
+              type: "string",
+            },
+          },
+          required: ["attributes", "id", "type"],
+          type: "object",
         },
       },
       required: ["data"],
@@ -2583,67 +2917,71 @@ export const apiCommandSchemas = {
                       type: ["array", "null"],
                     },
                     sort_by: {
-                      description:
-                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
-                      oneOf: [
+                      anyOf: [
                         {
-                          properties: {
-                            kind: {
-                              enum: ["none"],
-                              type: "string",
-                            },
-                          },
-                          required: ["kind"],
-                          type: "object",
-                        },
-                        {
-                          properties: {
-                            kind: {
-                              enum: ["primary_key"],
-                              type: "string",
-                            },
-                          },
-                          required: ["kind"],
-                          type: "object",
-                        },
-                        {
-                          properties: {
-                            columns: {
-                              items: {
-                                properties: {
-                                  direction: {
-                                    enum: ["asc", "desc"],
-                                    type: "string",
-                                  },
-                                  name: {
-                                    description: "Source column name.",
-                                    type: "string",
-                                  },
-                                  nulls: {
-                                    description:
-                                      "Null placement. Null uses DuckLake's default placement.",
-                                    enum: ["first", "last", null],
-                                    type: ["string", "null"],
-                                  },
+                          oneOf: [
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["none"],
+                                  type: "string",
                                 },
-                                required: ["direction", "name", "nulls"],
-                                type: "object",
                               },
-                              type: "array",
+                              required: ["kind"],
+                              type: "object",
                             },
-                            kind: {
-                              enum: ["columns"],
-                              type: "string",
+                            {
+                              properties: {
+                                kind: {
+                                  enum: ["primary_key"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["kind"],
+                              type: "object",
                             },
-                          },
-                          required: ["columns", "kind"],
-                          type: "object",
+                            {
+                              properties: {
+                                columns: {
+                                  items: {
+                                    properties: {
+                                      direction: {
+                                        enum: ["asc", "desc"],
+                                        type: "string",
+                                      },
+                                      name: {
+                                        description: "Source column name.",
+                                        type: "string",
+                                      },
+                                      nulls: {
+                                        description:
+                                          "Null placement. Null uses DuckLake's default placement.",
+                                        enum: ["first", "last", null],
+                                        type: ["string", "null"],
+                                      },
+                                    },
+                                    required: ["direction", "name", "nulls"],
+                                    type: "object",
+                                  },
+                                  type: "array",
+                                },
+                                kind: {
+                                  enum: ["columns"],
+                                  type: "string",
+                                },
+                              },
+                              required: ["columns", "kind"],
+                              type: "object",
+                            },
+                          ],
                         },
                         {
-                          type: ["object", "null"],
                           enum: [null],
+                          type: ["object", "null"],
                         },
                       ],
+                      description:
+                        "Configured sort order. none explicitly clears sorting, primary_key sorts by the source primary-key columns in key order, and columns lists them. Null leaves sorting unmanaged.",
                     },
                   },
                   required: ["partition_by", "sort_by"],
@@ -2652,6 +2990,29 @@ export const apiCommandSchemas = {
                 name: {
                   description: "Source PostgreSQL table name.",
                   type: "string",
+                },
+                observation_error: {
+                  description:
+                    "Safe reason and recovery guidance when observation_status is unavailable. Retryable applies only to this read, never to a layout update or resync. Null for other observation states.",
+                  properties: {
+                    code: {
+                      enum: [
+                        "catalog_observation_unavailable",
+                        "catalog_read_failed",
+                        "catalog_read_timeout",
+                        "catalog_unavailable",
+                      ],
+                      type: "string",
+                    },
+                    message: {
+                      type: "string",
+                    },
+                    retryable: {
+                      type: "boolean",
+                    },
+                  },
+                  required: ["code", "message", "retryable"],
+                  type: ["object", "null"],
                 },
                 observation_status: {
                   description:
@@ -2729,6 +3090,7 @@ export const apiCommandSchemas = {
                 "application_status",
                 "desired",
                 "name",
+                "observation_error",
                 "observation_status",
                 "observed",
                 "pipeline_id",

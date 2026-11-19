@@ -177,6 +177,17 @@ Lists the source tables selected for Warehouse replication with their replicatio
 - Feature: `warehouse`.
 - Request: `GET /v2/projects/{ref}/warehouse/tables` (`v2-list-warehouse-tables`), success 200 json.
 
+## `supabase warehouse tables resync`
+
+Resync a Warehouse table using its saved layout
+
+Resets replication progress for one source table object identifier (OID) without changing its saved sorting or partitioning rules. Use this after applying rules to future data to rebuild historical data with the same rules. Initial sync must be enabled and replication state must already be initialized. The pipeline is stopped before the reset, briefly interrupting replication for its other tables. Active pipelines restart; stopped pipelines remain stopped until explicitly started. Existing destination data is replaced when replication resumes, and reads are disrupted during the copy. Source rows and other tables' progress are preserved. A successful response confirms the reset was accepted, not that the copy finished or that catalog layout converged. Run warehouse tables get and warehouse tables layout get to inspect current state. There is no durable operation or idempotency contract. A failed request can leave partial effects, including a completed reset or a stopped pipeline. Inspect table and pipeline state before retrying: repeating this request resets progress again.
+
+- Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
+- Feature: `warehouse`.
+- Request: `POST /v2/projects/{ref}/warehouse/tables/{table_id}/resync` (`v2-resync-warehouse-table`), success 202 json.
+- Positional argument `<table-id>`, bound to path parameter `table_id`.
+
 ## `supabase warehouse teardowns get`
 
 Get Warehouse cleanup status

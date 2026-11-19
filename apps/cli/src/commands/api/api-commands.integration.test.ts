@@ -831,6 +831,65 @@ describe("generated warehouse commands", () => {
       });
     });
   });
+  describe("warehouse tables resync", () => {
+    const argv = ["warehouse", "tables", "resync", "16385"];
+    const path = `/v2/projects/${VALID_REF}/warehouse/tables/16385/resync`;
+    const response = {
+      data: {
+        type: "warehouse_table_layout",
+        id: "16385",
+        attributes: {
+          reset_table: true,
+          application_status: "waiting_for_start",
+          desired: { sort_by: { kind: "primary_key" }, partition_by: [] },
+        },
+      },
+    };
+
+    it.effect(
+      "sends one bodyless resync and prints acceptance without waiting for completion",
+      () => {
+        const { sent, out, run } = setup(argv, {
+          yes: true,
+          route: () => ({ status: 202, body: response }),
+        });
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([{ method: "POST", path, search: "", body: undefined }]);
+          expect(decodeJson(out.stdoutText)).toEqual(response);
+        });
+      },
+    );
+
+    it.effect("previews the resync without sending a mutation", () => {
+      const { sent, out, run } = setup([...argv, "--dry-run"], { route: accepted });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([]);
+        expect(decodeJson(out.stdoutText)).toMatchObject({ method: "POST", path });
+      });
+    });
+
+    it.effect("does not retry a resync whose outcome is uncertain", () => {
+      const { sent, run } = setup(argv, {
+        yes: true,
+        route: () => ({
+          status: 503,
+          body: {
+            error: {
+              code: "warehouse_setup_unavailable",
+              message: "Inspect table and pipeline state before retrying.",
+            },
+          },
+        }),
+      });
+      return Effect.gen(function* () {
+        expect(Exit.isFailure(yield* Effect.exit(run))).toBe(true);
+        expect(sent).toEqual([{ method: "POST", path, search: "", body: undefined }]);
+      });
+    });
+  });
+
   describe("warehouse tables layout update", () => {
     const argv = ["warehouse", "tables", "layout", "update", "16385"];
     const layoutPath = `/v2/projects/${VALID_REF}/warehouse/tables/16385/layout`;
@@ -2348,6 +2407,23 @@ describeHostedConsent("warehouse tables layout update", {
       ["warehouse", "tables", "layout", "update", "16385", "--body", encodeJson(body)],
       { yes, route: accepted },
     );
+    return {
+      run: run.pipe(Effect.provide(cliServices(workdir, args))),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+const resyncConsentCommand = commandTreeFor({ apiFeatures: ["warehouse"] }).get(
+  "warehouse tables resync",
+)?.command;
+describeHostedConsent("warehouse tables resync", {
+  ...(resyncConsentCommand === undefined ? {} : { command: resyncConsentCommand }),
+  invoke: ({ workdir, yes }) => {
+    const { args, sent, run } = execute(["warehouse", "tables", "resync", "16385"], {
+      yes,
+      route: accepted,
+    });
     return {
       run: run.pipe(Effect.provide(cliServices(workdir, args))),
       mutations: () => sent.filter((request) => request.method !== "GET").length,

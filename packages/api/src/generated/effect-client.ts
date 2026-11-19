@@ -3732,6 +3732,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    resyncWarehouseTable: (
+      input: typeof operationDefinitions.v2ResyncWarehouseTable.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ResyncWarehouseTable.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ResyncWarehouseTable">(
+          operationDefinitions.v2ResyncWarehouseTable,
+          input,
+          options,
+        );
+      }),
     runProjectAdvisors: (
       input: typeof operationDefinitions.v2RunProjectAdvisors.inputSchema.Type,
       options?: SupabaseApiRequestOptions,

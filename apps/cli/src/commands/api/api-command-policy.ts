@@ -24,6 +24,7 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-get-warehouse-table",
   "v2-get-warehouse-table-layout",
   "v2-update-warehouse-table-layout",
+  "v2-resync-warehouse-table",
   "v2-get-warehouse-query-stats",
   "v2-get-warehouse-capacity",
 ];

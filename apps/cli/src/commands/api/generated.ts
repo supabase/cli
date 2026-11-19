@@ -584,6 +584,40 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "tables", "resync"],
+    operationId: "v2-resync-warehouse-table",
+    definition: "v2ResyncWarehouseTable",
+    method: "POST",
+    apiPath: "/v2/projects/{ref}/warehouse/tables/{table_id}/resync",
+    summary: "Resync a Warehouse table using its saved layout",
+    description:
+      "Resets replication progress for one source table object identifier (OID) without changing its saved sorting or partitioning rules. Use this after applying rules to future data to rebuild historical data with the same rules. Initial sync must be enabled and replication state must already be initialized. The pipeline is stopped before the reset, briefly interrupting replication for its other tables. Active pipelines restart; stopped pipelines remain stopped until explicitly started. Existing destination data is replaced when replication resumes, and reads are disrupted during the copy. Source rows and other tables' progress are preserved. A successful response confirms the reset was accepted, not that the copy finished or that catalog layout converged. Run warehouse tables get and warehouse tables layout get to inspect current state. There is no durable operation or idempotency contract. A failed request can leave partial effects, including a completed reset or a stopped pipeline. Inspect table and pipeline state before retrying: repeating this request resets progress again.",
+    readOnly: false,
+    feature: "warehouse",
+    response: {
+      status: 202,
+      kind: "json",
+    },
+    argument: {
+      name: "table-id",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
+    },
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "path",
+        name: "table_id",
+        source: "argument",
+        argument: "table-id",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "teardowns", "get"],
     operationId: "v2-get-warehouse-teardown",
     definition: "v2GetWarehouseTeardown",
