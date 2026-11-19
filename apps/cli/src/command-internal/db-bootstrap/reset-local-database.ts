@@ -29,14 +29,21 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
+import { isContainerNotFoundMessage } from "../container-cli.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { checkDbConfig, loadProjectEnvValues, readDbConfig } from "../db-config.read.ts";
+import { serviceContainerName } from "../docker-ids.ts";
+import { inspectContainerState } from "../docker-lifecycle.ts";
+import { configureLoopbackProxyBypass } from "../hostname.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
+import { resolveStorageCredentials, withStorageGatewayFetch } from "../storage-credentials.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
+import { waitForHealthyServices } from "./health-check.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
+import { KongReloadError, reloadKong, restartContainer } from "./restart-services.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackOpenReadyProject } from "../stack-local-database.ts";
 import {
@@ -97,7 +104,9 @@ const resetFailed = (message: string, cause?: unknown) =>
   new ResetLocalDbFailedError({ message, ...(cause === undefined ? {} : { cause }) });
 
 const suggestionOf = (error: unknown): string | undefined =>
-  error instanceof StackStorageUnavailableError || error instanceof StackStorageCapabilityError
+  error instanceof StackStorageUnavailableError ||
+  error instanceof StackStorageCapabilityError ||
+  error instanceof KongReloadError
     ? error.suggestion
     : undefined;
 
@@ -338,6 +347,39 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // stay consistent.
     setup: { ...setup, experimental },
   });
+
+  /* Restart PostgREST so its schema cache matches the reset database; failures only warn. */
+  const restId = serviceContainerName("rest", projectId);
+  yield* Effect.gen(function* () {
+    const restRunning = yield* inspectContainerState(spawner, restId).pipe(
+      Effect.map((state) => state.running),
+      Effect.catch((error) =>
+        isContainerNotFoundMessage(error.message) ? Effect.succeed(false) : Effect.fail(error),
+      ),
+    );
+    if (!restRunning) return;
+    yield* restartContainer(spawner, restId);
+    if (!(yield* reloadKong(spawner, projectId))) return;
+    const { localKongCa } = yield* resolveStorageCredentials({ projectRef: "" });
+    yield* Effect.sync(() => configureLoopbackProxyBypass());
+    yield* waitForHealthyServices(spawner, [restId], {
+      postgrest: {
+        containerId: restId,
+        apiExternalUrl: values.apiUrl,
+        secretKey: values.secretKey,
+      },
+    }).pipe(withStorageGatewayFetch(localKongCa));
+  }).pipe(
+    Effect.catch((error) => {
+      const suggestion = suggestionOf(error);
+      const nextStep = suggestion === undefined ? "" : `\n${suggestion}`;
+      return output.raw(
+        `${yellow("WARNING:")} PostgREST may not serve the reset schema yet: ${error.message}${nextStep}\n`,
+        "stderr",
+      );
+    }),
+    Effect.withSpan("DbBootstrap.restartPostgrest"),
+  );
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
   // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
