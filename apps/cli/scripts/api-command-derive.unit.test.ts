@@ -115,6 +115,32 @@ const named = (method: string) => ({ "x-operation": { group: "thing", method } }
 const create = named("create");
 
 describe("deriveApiCommands", () => {
+  it("applies CLI-only mutation policies and rejects an unused policy", () => {
+    const operations = {
+      "create-thing": operation({ ...create, description: "Rebuilds the thing." }),
+    };
+    const result = derive(operations, undefined, {
+      overrides: { policies: { "create-thing": { confirmDescription: true } } },
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.entries[0]).toMatchObject({ confirmDescription: true });
+    expect(
+      derive(operations, undefined, {
+        overrides: { policies: { "missing-thing": { confirmDescription: true } } },
+      }).problems,
+    ).toEqual([expect.stringContaining("missing-thing")]);
+  });
+
+  it.each([
+    { id: "get-thing", node: operation({ ...named("get"), description: "Reads the thing." }) },
+    { id: "create-thing", node: operation({ ...create }) },
+  ])("rejects confirmation descriptions on $id without a described mutation", ({ id, node }) => {
+    const result = derive({ [id]: node }, undefined, {
+      overrides: { policies: { [id]: { confirmDescription: true } } },
+    });
+    expect(result.problems).toEqual([expect.stringContaining("confirmation")]);
+  });
+
   it("binds envelope body fields by JSON pointer and the project ref to the target", () => {
     const result = derive({
       "create-thing": operation({

@@ -80,7 +80,12 @@ With `--wait`, the command also polls the read operation named in its reference 
 - Consent uses the command's summary as the action and lists what the validated request does: one
   `name: value` line per non-ref path parameter, query parameter and body field (for an envelope
   body, the fields under `data.attributes`). Scalars print as is; objects and arrays print as
-  compact JSON.
+  compact JSON. Commands with `confirmDescription` also show their API description before an
+  interactive prompt. These describe effects without a resolved plan.
+- Resync supports the same local request preview as add/remove, without a server-side dry-run
+  contract. Executing it resets one selected table through ETL and returns the immediate result;
+  it has no wait, idempotency or revision flags. Pipeline restarts can restart unfinished copies
+  of unrelated tables.
 
 ## `--wait`
 

@@ -61,6 +61,10 @@ describe("command surface", () => {
         "warehouse inspect",
         "warehouse inspect capacity",
         "warehouse inspect query-stats",
+        "warehouse replication",
+        "warehouse replication add",
+        "warehouse replication remove",
+        "warehouse replication resync",
         "warehouse status",
         "warehouse tables",
         "warehouse tables get",
@@ -110,6 +114,17 @@ describe("command surface", () => {
           expect(entry?.flags).not.toHaveProperty("wait");
         }
       }),
+  );
+
+  it.effect("describes local request preview results for every replication command", () =>
+    Effect.gen(function* () {
+      const warehouse = yield* warehouseVariant;
+      for (const action of ["add", "remove", "resync"]) {
+        const command = warehouse[`warehouse replication ${action}`];
+        expect(command?.flags).toHaveProperty("dry-run");
+        expect(titlesOf(command?.result)).toEqual(["response", "dryRun"]);
+      }
+    }),
   );
 
   it.effect("describes layout updates without unsupported backend workflow flags", () =>

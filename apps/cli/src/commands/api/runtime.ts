@@ -231,7 +231,10 @@ const handle = Effect.fn("api-command.run")(function* (
       if (!entry.readOnly) {
         yield* requireHostedMutationConsent({
           action: summaryText(entry),
-          details: consentDetails(entry, decoded),
+          details: [
+            ...(entry.confirmDescription && entry.description ? [entry.description] : []),
+            ...consentDetails(entry, decoded),
+          ],
         });
       }
 

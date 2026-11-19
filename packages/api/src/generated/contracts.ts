@@ -11551,6 +11551,142 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2AddWarehouseReplicationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      schema: Schema.String.annotate({
+        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+      }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      table: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Literal source table name. Omit to select the schema.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+    type: Schema.Literal("warehouse_replication_change").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
+export const V2AddWarehouseReplicationOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      action: Schema.Union([Schema.Literals(["add", "remove"]), OpenString]),
+      affected_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+      application_status: Schema.Union([
+        Schema.Literals(["configured", "restart_requested", "unchanged"]).annotate({
+          description:
+            "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion.",
+        }),
+        OpenString,
+      ]),
+      changed: Schema.Boolean,
+      includes_future_tables: Schema.Literal(false),
+      pipeline_id: Schema.String,
+      pipeline_status_before: Schema.String,
+      selected_table_count: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      source_data_preserved: Schema.Literal(true),
+      tables: Schema.Array(
+        Schema.Struct({
+          copy_name: Schema.String,
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          lag_ms: Schema.Union([
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            ),
+            Schema.Null,
+          ]),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          replication_state: Schema.Union([Schema.String, Schema.Null]),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Union([Schema.Literals(["error", "live", "syncing"]), Schema.Null]).annotate({
+              description:
+                "Last observed table state; null when unavailable. Does not establish completion of this request.",
+            }),
+            OpenString,
+          ]),
+        }),
+      ).annotate({
+        description: "Resulting configured selection, with best-effort replication observations.",
+      }),
+      unchanged_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+      warehouse_data_retained: Schema.Literal(true),
+      warehouse_enabled: Schema.Literal(true),
+    }),
+    id: Schema.String,
+    type: Schema.Literal("warehouse_replication_change").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
 export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$", "u")).annotate({
@@ -19895,6 +20031,244 @@ export const V2RemoveOrganizationMembersInput = Schema.Struct({
     }),
   ),
 });
+export const V2RemoveWarehouseReplicationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      schema: Schema.String.annotate({
+        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+      }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      table: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Literal source table name. Omit to select the schema.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+    type: Schema.Literal("warehouse_replication_change").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
+export const V2RemoveWarehouseReplicationOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      action: Schema.Union([Schema.Literals(["add", "remove"]), OpenString]),
+      affected_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+      application_status: Schema.Union([
+        Schema.Literals(["configured", "restart_requested", "unchanged"]).annotate({
+          description:
+            "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion.",
+        }),
+        OpenString,
+      ]),
+      changed: Schema.Boolean,
+      includes_future_tables: Schema.Literal(false),
+      pipeline_id: Schema.String,
+      pipeline_status_before: Schema.String,
+      selected_table_count: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        )
+        .check(
+          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+            expected: "a value less than or equal to 9007199254740991",
+          }),
+        ),
+      source_data_preserved: Schema.Literal(true),
+      tables: Schema.Array(
+        Schema.Struct({
+          copy_name: Schema.String,
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          lag_ms: Schema.Union([
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            ),
+            Schema.Null,
+          ]),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          replication_state: Schema.Union([Schema.String, Schema.Null]),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          state: Schema.Union([
+            Schema.Union([Schema.Literals(["error", "live", "syncing"]), Schema.Null]).annotate({
+              description:
+                "Last observed table state; null when unavailable. Does not establish completion of this request.",
+            }),
+            OpenString,
+          ]),
+        }),
+      ).annotate({
+        description: "Resulting configured selection, with best-effort replication observations.",
+      }),
+      unchanged_tables: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            )
+            .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+          name: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+          schema: Schema.String.check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+        }),
+      ),
+      warehouse_data_retained: Schema.Literal(true),
+      warehouse_enabled: Schema.Literal(true),
+    }),
+    id: Schema.String,
+    type: Schema.Literal("warehouse_replication_change").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
+export const V2ResyncWarehouseReplicationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      schema: Schema.String.annotate({
+        description: "Literal source PostgreSQL schema of the table.",
+      }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+      table: Schema.String.annotate({
+        description: "Literal name of the single source table to reset and recopy.",
+      }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
+    }),
+    type: Schema.Literal("warehouse_replication_resync").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
+export const V2ResyncWarehouseReplicationOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      application_status: Schema.Literal("reset").annotate({
+        description:
+          "ETL reset replication state. Destination rebuild and recopy may still be pending.",
+      }),
+      pipeline_id: Schema.String.annotate({ description: "Pipeline ID" }).check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      source_data_preserved: Schema.Literal(true),
+      source_table: Schema.Struct({
+        id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isLessThanOrEqualTo(4294967295).annotate({
+              expected: "a value less than or equal to 4294967295",
+            }),
+          )
+          .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+        name: Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+        schema: Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      }),
+      tables: Schema.Array(
+        Schema.Struct({
+          new_state: Schema.Union(
+            [
+              Schema.Struct({ name: Schema.Literal("queued") }),
+              Schema.Struct({ name: Schema.Literal("copying_table") }),
+              Schema.Struct({ name: Schema.Literal("copied_table") }),
+              Schema.Struct({ name: Schema.Literal("following_wal") }),
+              Schema.Struct({
+                name: Schema.Literal("error"),
+                reason: Schema.String,
+                retry_policy: Schema.Union(
+                  [
+                    Schema.Struct({ policy: Schema.Literal("no_retry") }),
+                    Schema.Struct({ policy: Schema.Literal("manual_retry") }),
+                    Schema.Struct({
+                      next_retry: Schema.String.annotate({
+                        description: "Next retry time (RFC 3339 timestamp)",
+                      }),
+                      policy: Schema.Literal("timed_retry"),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                solution: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+              }),
+            ],
+            { mode: "oneOf" },
+          ).annotate({ description: "Table replication state" }),
+          table_id: Schema.Number.annotate({ description: "Table id (Postgres OID)" })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(4294967295).annotate({
+                expected: "a value less than or equal to 4294967295",
+              }),
+            ),
+        }),
+      ).annotate({ description: "Rolled back tables" }),
+    }),
+    id: Schema.String,
+    type: Schema.Literal("warehouse_replication_resync").annotate({
+      description: "Resource type.",
+    }),
+  }),
+});
 export const V2RunProjectAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -21106,6 +21480,7 @@ export const openApiOperationIdMap = {
   "v1-upgrade-postgres-version": "v1UpgradePostgresVersion",
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
+  "v2-add-warehouse-replication": "v2AddWarehouseReplication",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
   "v2-create-a-branch": "v2CreateABranch",
   "v2-create-compute-instance-upload": "v2CreateComputeInstanceUpload",
@@ -21173,6 +21548,8 @@ export const openApiOperationIdMap = {
   "v2-projects-ref-webhooks-endpoints-id-test-post": "v2ProjectsRefWebhooksEndpointsIdTestPost",
   "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
   "v2-remove-organization-members": "v2RemoveOrganizationMembers",
+  "v2-remove-warehouse-replication": "v2RemoveWarehouseReplication",
+  "v2-resync-warehouse-replication": "v2ResyncWarehouseReplication",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
@@ -24021,6 +24398,20 @@ export const operationDefinitions = {
     inputSchema: V1VerifyDnsConfigInput,
     outputSchema: V1VerifyDnsConfigOutput,
   },
+  v2AddWarehouseReplication: {
+    id: "v2AddWarehouseReplication",
+    description:
+      "Adds one eligible source table or the currently eligible tables in a schema to an enabled Warehouse. Existing selections and layouts are preserved; already-selected tables are unchanged. Schema selection excludes future tables, except future partitions of selected partition roots. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline remains stopped and requires an explicit start before copying. Initial copy adds source reads; duration is unknown. Unsafe reattachment of retained data is rejected. The response describes configuration and restart acceptance, not completed copy or streaming. Failures may have partial effects; inspect table and pipeline state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/replication/add",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2AddWarehouseReplicationInput,
+    outputSchema: V2AddWarehouseReplicationOutput,
+  },
   v2AssignOrganizationMemberRole: {
     id: "v2AssignOrganizationMemberRole",
     description:
@@ -24855,6 +25246,34 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V2RemoveOrganizationMembersInput,
     outputSchema: V2RemoveOrganizationMembersOutput,
+  },
+  v2RemoveWarehouseReplication: {
+    id: "v2RemoveWarehouseReplication",
+    description:
+      "Removes one selected source table or all selected tables in a schema as a batch. Source PostgreSQL rows and existing Warehouse data are retained. The retained copy stops receiving updates. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline stays stopped. Removing an unselected target is unchanged. Removing the last target leaves Warehouse enabled with an empty selection. Publication changes and restart acceptance do not establish observed exclusion by active replication. Failures may have partial effects; inspect the selection and pipeline before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/replication/remove",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2RemoveWarehouseReplicationInput,
+    outputSchema: V2RemoveWarehouseReplicationOutput,
+  },
+  v2ResyncWarehouseReplication: {
+    id: "v2ResyncWarehouseReplication",
+    description:
+      "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no server-side preview, revision check, idempotency key or operation polling.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/replication/resync",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2ResyncWarehouseReplicationInput,
+    outputSchema: V2ResyncWarehouseReplicationOutput,
   },
   v2RunProjectAdvisors: {
     id: "v2RunProjectAdvisors",

@@ -317,6 +317,136 @@ const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
 
 describe("generated warehouse commands", () => {
+  describe("incremental replication", () => {
+    it.effect.each(["add", "remove", "resync"])(
+      "%s sends one literal selector and preserves the immediate API result",
+      (action) => {
+        const type =
+          action === "resync" ? "warehouse_replication_resync" : "warehouse_replication_change";
+        const attributes =
+          action === "resync"
+            ? {
+                pipeline_id: "101",
+                tables: [{ table_id: 42, new_state: { name: "queued" } }],
+                application_status: "reset",
+              }
+            : {
+                pipeline_id: "101",
+                application_status: "restart_requested",
+                tables: [],
+                changed: true,
+              };
+        const body = { data: { type, id: "101", attributes } };
+        const selector = { schema: "sales.*", table: 'Orders "2026"' };
+        const { sent, out, run } = setup(
+          [
+            "warehouse",
+            "replication",
+            action,
+            "--schema",
+            selector.schema,
+            "--table",
+            selector.table,
+            "--output-format",
+            "json",
+          ],
+          { yes: true, route: () => ({ status: 202, body }), outputFormat: "json" },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([
+            {
+              method: "POST",
+              path: `/v2/projects/${VALID_REF}/warehouse/replication/${action}`,
+              search: "",
+              body: { data: { type, attributes: selector } },
+            },
+          ]);
+          expect(decodeJson(out.stdoutText)).toEqual(body);
+        });
+      },
+    );
+
+    it.effect.each(["add", "remove"])("%s leaves schema expansion to the server", (action) => {
+      const { sent, run } = setup(["warehouse", "replication", action, "--schema", "public"], {
+        yes: true,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(bodiesOf(sent)).toEqual([
+          { data: { type: "warehouse_replication_change", attributes: { schema: "public" } } },
+        ]);
+      });
+    });
+
+    it.effect.each(["--idempotency-key=key", "--expected-revision=1", "--wait", "--timeout=10s"])(
+      "rejects resync %s before a request",
+      (flag) => {
+        const { console, calls } = fakeConsole();
+        const { sent, run } = setup(
+          ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders", flag],
+          { yes: true, route: accepted },
+        );
+        return Effect.gen(function* () {
+          const exit = yield* run.pipe(
+            Effect.provideService(Console.Console, console),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(calls.join("\n")).toContain(flag.split("=")[0]);
+          expect(sent).toEqual([]);
+        });
+      },
+    );
+
+    it.effect(
+      "shows rebuild effects and local preview in resync help without server operation flags",
+      () => {
+        const { console, calls } = fakeConsole();
+        const { sent, run } = setup(["warehouse", "replication", "resync", "--help"], {
+          route: accepted,
+        });
+        return Effect.gen(function* () {
+          yield* run.pipe(Effect.provideService(Console.Console, console));
+          const help = calls.join("\n");
+          expect(help).toContain("deleted and rebuilt");
+          expect(help).toContain("interrupts replication for other tables");
+          expect(help).toContain("--schema");
+          expect(help).toContain("--table");
+          expect(help).toContain("--dry-run");
+          for (const flag of ["--idempotency-key", "--expected-revision", "--wait", "--timeout"])
+            expect(help).not.toContain(flag);
+          expect(sent).toEqual([]);
+        });
+      },
+    );
+
+    it.effect("does not replay a resync after an uncertain server failure", () => {
+      const { sent, run } = setup(
+        ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders"],
+        {
+          yes: true,
+          route: () => ({
+            status: 503,
+            body: {
+              error: {
+                code: "warehouse_setup_unavailable",
+                message:
+                  "The table may have been reset. Inspect its state before repeating the request.",
+              },
+            },
+          }),
+        },
+      );
+      return Effect.gen(function* () {
+        const exit = yield* run.pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(sent).toHaveLength(1);
+      });
+    });
+  });
+
   describe("consolidated warehouse status", () => {
     const attributes = {
       project_ref: VALID_REF,
@@ -1402,26 +1532,40 @@ describe("generated warehouse commands", () => {
   });
 
   describe("consent and dry run", () => {
-    it.effect("prints exactly the request preview and sends nothing under --dry-run", () => {
-      const { out, sent, seen, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--table", "a", "--dry-run"],
-        { route: accepted },
-      );
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent).toEqual([]);
-        expect(seen).toEqual([]);
-        expect(decodeJson(out.stdoutText)).toEqual({
-          method: "POST",
-          path: ENABLE_PATH,
-          query: {},
-          headers: {},
-          body: {
-            data: { type: "warehouse_setup", attributes: { schema: "public", tables: ["a"] } },
-          },
+    it.effect.each([
+      {
+        command: ["enable"],
+        path: ENABLE_PATH,
+        type: "warehouse_setup",
+        attributes: { schema: "public", tables: ["a"] },
+      },
+      {
+        command: ["replication", "resync"],
+        path: `/v2/projects/${VALID_REF}/warehouse/replication/resync`,
+        type: "warehouse_replication_resync",
+        attributes: { schema: "public", table: "a" },
+      },
+    ])(
+      "$command prints exactly the request preview and sends nothing under --dry-run",
+      ({ command, path, type, attributes }) => {
+        const { out, sent, seen, run } = setup(
+          ["warehouse", ...command, "--schema", "public", "--table", "a", "--dry-run"],
+          { token: false, route: accepted },
+        );
+        return Effect.gen(function* () {
+          yield* run;
+          expect(sent).toEqual([]);
+          expect(seen).toEqual([]);
+          expect(decodeJson(out.stdoutText)).toEqual({
+            method: "POST",
+            path,
+            query: {},
+            headers: {},
+            body: { data: { type, attributes } },
+          });
         });
-      });
-    });
+      },
+    );
 
     it.effect(
       "previews a mutation for a literal --remote ref with no access token, no request and no cache write",
@@ -2363,8 +2507,81 @@ describeHostedConsent("warehouse tables layout update", {
       ["warehouse", "tables", "layout", "update", "16385", "--body", encodeJson(body)],
       { yes, route: accepted },
     );
+
     return {
       run: run.pipe(Effect.provide(cliServices(workdir, args))),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+describeHostedConsent("warehouse replication add", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication add")!.command,
+  invoke: ({ workdir, yes, out }) => {
+    const { args, sent, run } = execute(
+      ["warehouse", "replication", "add", "--schema", "public", "--table", "orders"],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (out.promptConfirmCalls.length > 0) {
+              expect(out.stderrText).toContain("interrupting replication for other tables");
+            }
+          }),
+        ),
+        Effect.provide(cliServices(workdir, args)),
+      ),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+describeHostedConsent("warehouse replication remove", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication remove")!
+    .command,
+  invoke: ({ workdir, yes, out }) => {
+    const { args, sent, run } = execute(
+      ["warehouse", "replication", "remove", "--schema", "public", "--table", "orders"],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (out.promptConfirmCalls.length > 0) {
+              expect(out.stderrText).toContain("retained copy stops receiving updates");
+            }
+          }),
+        ),
+        Effect.provide(cliServices(workdir, args)),
+      ),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+describeHostedConsent("warehouse replication resync", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication resync")!
+    .command,
+  invoke: ({ workdir, yes, out }) => {
+    const { args, sent, run } = execute(
+      ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders"],
+      { yes, route: accepted },
+    );
+    return {
+      run: run.pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (out.promptConfirmCalls.length > 0) {
+              expect(out.stderrText).toContain("deleted and rebuilt");
+              expect(out.stderrText).toContain("interrupts replication for other tables");
+            }
+          }),
+        ),
+        Effect.provide(cliServices(workdir, args)),
+      ),
       mutations: () => sent.filter((request) => request.method !== "GET").length,
     };
   },

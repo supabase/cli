@@ -83,6 +83,8 @@ export interface ApiCommandEntry {
   readonly summary: string;
   readonly description?: string;
   readonly readOnly: boolean;
+  /** Show the API description as impact details before hosted consent. */
+  readonly confirmDescription?: true;
   /** Feature that gates the command's noun. */
   readonly feature: string;
   /** Request body shape; `json-envelope` bodies wrap fields in `data.attributes`. */
