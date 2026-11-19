@@ -1,5 +1,6 @@
 import { Array as Arr, Context, Option } from "effect";
 import type { Command, HelpDoc } from "effect/cli";
+import { commandForDoc } from "./subcommand-help.ts";
 import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { TargetPolicyAnnotation } from "../../command-internal/target/target-policy.ts";
 
@@ -90,34 +91,6 @@ export function withRemoteFlagValue(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
     value: flag.type,
     valueOptional: true,
   }));
-}
-
-function findCommand(
-  root: Command.Command.Any,
-  path: ReadonlyArray<string>,
-): Command.Command.Any | undefined {
-  let current = root;
-  for (const segment of path) {
-    const next = current.subcommands
-      .flatMap((group) => group.commands)
-      .find((command) => command.name === segment || command.alias === segment);
-    if (next === undefined) return undefined;
-    current = next;
-  }
-  return current;
-}
-
-/** The command a help doc describes: its usage line starts with the command path, root first. */
-function commandForDoc(
-  root: Command.Command.Any,
-  doc: HelpDoc.HelpDoc,
-): Command.Command.Any | undefined {
-  const path: Array<string> = [];
-  for (const token of doc.usage.split(" ")) {
-    if (token.startsWith("<") || token.startsWith("[")) break;
-    path.push(token);
-  }
-  return findCommand(root, path.slice(1));
 }
 
 /** Scope label per subcommand row of a group's help, keyed by subcommand name. */

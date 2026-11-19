@@ -1,4 +1,5 @@
 import { CliOutput } from "effect/cli";
+import { withDeprecatedDescriptions } from "./subcommand-help.ts";
 import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
 import { withHelpMarkdown } from "./help-markdown.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
@@ -41,11 +42,12 @@ export function textCliOutputFormatter(
   return {
     ...base,
     formatHelpDoc: (doc) => {
+      const labeled = withDeprecatedDescriptions(doc, context?.rootCommand);
       const colors = supportsColor(stream, !agentMode);
       const help = CliOutput.defaultFormatter({ colors });
       const rendered = withHelpMarkdown(
         withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(doc, context?.rootCommand)),
+          withRemoteFlagUsage(labelSubcommands(labeled, context?.rootCommand)),
         ),
         colors,
       );

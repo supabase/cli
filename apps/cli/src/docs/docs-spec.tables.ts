@@ -2,9 +2,8 @@ import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data the Effect command tree cannot express structurally: docs-site section tags,
- * `--experimental`-required leaves, deprecated commands, and flag defaults that
- * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags and
+ * flag defaults that `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {
@@ -63,53 +62,6 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-vanity-subdomains": ["management-api"],
   "supabase-whoami": ["management-api"],
 };
-
-/** Leaves that require `--experimental`. */
-export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
-  "supabase-network-bans-get",
-  "supabase-network-bans-remove",
-  "supabase-network-restrictions-get",
-  "supabase-network-restrictions-update",
-  "supabase-postgres-config-delete",
-  "supabase-postgres-config-get",
-  "supabase-postgres-config-update",
-  "supabase-ssl-enforcement-get",
-  "supabase-ssl-enforcement-update",
-  "supabase-storage-cp",
-  "supabase-storage-ls",
-  "supabase-storage-mv",
-  "supabase-storage-rm",
-  "supabase-vanity-subdomains-activate",
-  "supabase-vanity-subdomains-check-availability",
-  "supabase-vanity-subdomains-delete",
-  "supabase-vanity-subdomains-get",
-]);
-
-/**
- * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled` (default true)
- * in config.toml — the flag is documented but not marked required, since the gate
- * is open unless config sets `enabled = false`.
- */
-export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
-  "supabase-db-schema-declarative-generate",
-  "supabase-db-schema-declarative-sync",
-]);
-
-/**
- * Deprecated commands: kept visible in `--help` (with a "(deprecated)"
- * suffix) but excluded from the published reference.
- */
-export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
-  "supabase-inspect-db-cache-hit",
-  "supabase-inspect-db-index-sizes",
-  "supabase-inspect-db-index-usage",
-  "supabase-inspect-db-role-configs",
-  "supabase-inspect-db-role-connections",
-  "supabase-inspect-db-seq-scans",
-  "supabase-inspect-db-table-record-counts",
-  "supabase-inspect-db-table-sizes",
-  "supabase-inspect-db-unused-indexes",
-]);
 
 /**
  * Flag defaults that differ from the primitive type's zero value, keyed
