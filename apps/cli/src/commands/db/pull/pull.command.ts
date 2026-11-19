@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -44,6 +45,7 @@ const config = {
   }),
   diffEngine: Flag.Literals("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "pg-delta" }),
     Flag.optional,
   ),
   strictCoverage: Flag.Boolean("strict-coverage").pipe(

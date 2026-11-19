@@ -1,9 +1,9 @@
 import type { DocsFlag } from "./docs-spec.ts";
-import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data the Effect command tree cannot express structurally: docs-site section tags and
- * flag defaults that `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags,
+ * argument usage exceptions and query-specific output formats.
+ * `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {
@@ -64,42 +64,6 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
 };
 
 /**
- * Flag defaults that differ from the primitive type's zero value, keyed
- * `"<doc id> <flag id>"` (root global flags use doc id `supabase`). TS-only
- * flags add entries by hand.
- */
-export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
-  ...genTypesLanguageFlagDefaults(),
-  "supabase agent": "auto",
-  "supabase dns-resolver": "native",
-  "supabase output": "pretty",
-  "supabase output-format": "text",
-  "supabase profile": "supabase",
-  "supabase-db-advisors fail-on": "none",
-  "supabase-db-advisors level": "warn",
-  "supabase-db-advisors type": "all",
-  "supabase-db-lint fail-on": "none",
-  "supabase-db-lint level": "warning",
-  "supabase-db-pull diff-engine": "pg-delta",
-  "supabase-db-schema-declarative-sync file": "declarative_sync",
-  "supabase-functions-deploy jobs": "1",
-  "supabase-functions-new auth": "apikey",
-  "supabase-gen-bearer-jwt payload": "{}",
-  "supabase-gen-bearer-jwt sub": "anonymous",
-  "supabase-gen-bearer-jwt valid-for": "30m0s",
-  "supabase-gen-signing-key algorithm": "ES256",
-  "supabase-gen-types lang": "typescript",
-  "supabase-gen-types query-timeout": "15s",
-  "supabase-inspect-report output-dir": ".",
-  "supabase-login name": "built-in token name generator",
-  "supabase-migration-down last": "1",
-  "supabase-storage-cp cache-control": "max-age=3600",
-  "supabase-storage-cp content-type": "auto-detect",
-  "supabase-storage-cp jobs": "1",
-  "supabase-test-new template": "pgtap",
-};
-
-/**
  * Flag docs injected into specific commands beyond what their Effect config
  * declares, keyed by doc id. `db query` reuses the global `-o, --output`
  * choice at parse time (which documents only the globally valid formats), so
@@ -121,16 +85,6 @@ export const DOCS_EXTRA_FLAGS: Readonly<Record<string, ReadonlyArray<DocsFlag>>>
   ],
 };
 
-export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "supabase output": ["env", "pretty", "json", "toml", "yaml"],
-};
-
-/**
- * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`. Validated at build
- * time like the other tables.
- */
-export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([]);
-
 /**
  * Usage argument overrides, keyed by doc id, for commands whose published argument rendering
  * can't be derived from the Effect tree: the parser accepts zero occurrences here
@@ -141,21 +95,6 @@ export const DOCS_ARG_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-secrets-set": "<NAME=VALUE> ...",
   "supabase-storage-rm": "<file> ...",
 };
-
-/**
- * Flags rendered with a Required badge on the docs site, keyed
- * `"<doc id> <flag id>"`. Effect optionality cannot express this — several
- * of these TS flags are intentionally `Flag.optional` at parse time for
- * validation-ordering reasons unrelated to required-ness.
- */
-export const DOCS_REQUIRED: ReadonlySet<string> = new Set([
-  "supabase-domains-create custom-hostname",
-  "supabase-gen-bearer-jwt role",
-  "supabase-migration-repair status",
-  "supabase-sso-add type",
-  "supabase-vanity-subdomains-activate desired-subdomain",
-  "supabase-vanity-subdomains-check-availability desired-subdomain",
-]);
 
 export const DOCS_INFO_DESCRIPTION =
   "Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform.";

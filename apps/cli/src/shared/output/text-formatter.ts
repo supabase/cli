@@ -2,6 +2,7 @@ import { CliOutput } from "effect/cli";
 import { withDeprecatedDescriptions } from "./subcommand-help.ts";
 import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
 import { withHelpMarkdown } from "./help-markdown.ts";
+import { withFlagDefaults } from "./flag-defaults-help.ts";
 import { withOptionalSubcommandUsage } from "./optional-subcommand-usage.ts";
 import {
   permissionSectionForHelp,
@@ -45,11 +46,14 @@ export function textCliOutputFormatter(
       const labeled = withDeprecatedDescriptions(doc, context?.rootCommand);
       const colors = supportsColor(stream, !agentMode);
       const help = CliOutput.defaultFormatter({ colors });
-      const rendered = withHelpMarkdown(
-        withOptionalSubcommandUsage(
-          withRemoteFlagUsage(labelSubcommands(labeled, context?.rootCommand)),
+      const rendered = withFlagDefaults(
+        withHelpMarkdown(
+          withOptionalSubcommandUsage(
+            withRemoteFlagUsage(labelSubcommands(labeled, context?.rootCommand)),
+          ),
+          colors,
         ),
-        colors,
+        context?.rootCommand,
       );
       // Effect indents only the first line of the description section.
       const text = help.formatHelpDoc({
