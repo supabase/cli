@@ -100,13 +100,12 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
     const routing = routingArgsFor(input.args);
     if (routing === undefined) return { projectState: undefined, stackBackend: undefined };
     const { routingArgs, path } = routing;
-    const routedPath = path[0] === "help" ? path.slice(1) : path;
-    const command = routedPath[0];
+    const command = path[0];
     const routed =
       command === undefined ||
       command === "stack" ||
       STACK_BACKEND_COMMANDS.has(command) ||
-      isFunctionsServePath(routedPath);
+      isFunctionsServePath(path);
 
     const projectState = yield* Effect.exit(projectStateMode({ ...input, args: routingArgs }));
     const stackBackend = routed

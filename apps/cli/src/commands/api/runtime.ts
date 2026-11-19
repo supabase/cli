@@ -37,6 +37,7 @@ import {
 } from "./api-command-execute.ts";
 import { type ApiFlagLocation, apiFlag } from "./api-command-flags.ts";
 import { type ApiNoun, nouns } from "./api-command-policy.ts";
+import { singleLine } from "./api-command.format.ts";
 import {
   assembleInput,
   consentDetails,
@@ -258,7 +259,7 @@ const handle = Effect.fn("api-command.run")(function* (
             ref,
             timeoutMillis,
             onPoll: (status) =>
-              update(status === undefined ? polling : `${polling} (status: ${status})`),
+              update(status === undefined ? polling : `${polling} (status: ${singleLine(status)})`),
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");

@@ -158,7 +158,7 @@ const failureForError = (
   }
   if (
     error instanceof TargetRemoteAmbiguousError &&
-    (error.status !== undefined || error.authFailure !== undefined)
+    (error.status === 401 || error.status === 403 || error.authFailure !== undefined)
   ) {
     const hint = error.suggestion ?? null;
     return error.status === undefined

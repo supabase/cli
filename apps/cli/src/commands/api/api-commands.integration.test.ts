@@ -513,6 +513,29 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("escapes control characters in a non-JSON success body as text", () => {
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok("\u001b[31mred\nsecond\u0007 line\n"),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe("\\u001b[31mred\nsecond\\u0007 line\n");
+      });
+    });
+
+    it.effect("passes a non-JSON success body through untouched as json", () => {
+      const raw = "\u001b[31mred\nsecond\n";
+      const { out, run } = setup(["warehouse", "status", "--output-format", "json"], {
+        route: ok(raw),
+        outputFormat: "json",
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toBe(raw);
+      });
+    });
+
     it.effect("labels configured readiness and unavailable observations in terminal output", () => {
       const { out, run } = setup(["warehouse", "status"], { route: ok(body), stdoutIsTty: true });
       return Effect.gen(function* () {
@@ -1907,6 +1930,20 @@ describe("generated warehouse commands", () => {
       expect(poll).toBeDefined();
       expect(poll !== undefined && sendsRequests(poll)).toBe(true);
     });
+
+    it.effect("renders the cache and poll permissions in help only for a sent request", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "enable", "--help"], { route: accepted });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        const lines = calls.join("\n").split("\n");
+        const section = lines.slice(lines.indexOf("PERMISSIONS")).join("\n");
+        expect(section).toContain(
+          "Optional, without --dry-run (command still runs without these):\n      project_admin_read",
+        );
+        expect(section).toContain("Required with --wait, without --dry-run:\n      database_read");
+      });
+    });
   });
 
   describe("help", () => {
@@ -2277,6 +2314,25 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("escapes control characters in the polled status shown in the task", () => {
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        stdoutIsTty: true,
+        route: enableThenPoll([
+          { status: 200, body: statusBody("\u001b[31mred") },
+          { status: 200, body: statusBody("succeeded") },
+        ]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        const shown = out.progressEvents.map((event) => event.message).join("\n");
+        expect(shown).toContain("(status: \\u001b[31mred)");
+        expect(shown).not.toContain("\u001b");
+      });
+    });
+
     it.effect("fails the polling task and keeps the standard error when the setup fails", () => {
       const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
@@ -2409,6 +2465,20 @@ describe("generated warehouse commands", () => {
       }),
     );
 
+    it.effect("completes the group and its subcommands after help", () =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" };
+        const names = (args: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            const apiFeatures = yield* resolve(env, tempRoot.current, args);
+            const completion = respondToComplete(rootCommandForFeatures({ apiFeatures }), args);
+            return completion?.candidates.map((candidate) => candidate.name) ?? [];
+          });
+        expect(yield* names(["__complete", "help", "ware"])).toContain("warehouse");
+        expect(yield* names(["__complete", "help", "warehouse", "en"])).toContain("enable");
+      }),
+    );
+
     it.effect("is on with experimental.warehouse in the project config", () =>
       Effect.gen(function* () {
         yield* withConfig("[experimental]\nwarehouse = true\n");
@@ -2423,6 +2493,12 @@ describe("generated warehouse commands", () => {
         args: ["__complete", "ware"],
         features: ["warehouse"],
       },
+      {
+        name: "help completion of the group",
+        args: ["__complete", "help", "ware"],
+        features: ["warehouse"],
+      },
+      { name: "help for the group", args: ["help", "warehouse"], features: ["warehouse"] },
       { name: "inspection parent help", args: ["inspect"], features: [] },
       {
         name: "Warehouse inspection",

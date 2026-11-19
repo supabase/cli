@@ -232,6 +232,17 @@ describe("standardFailureFor", () => {
       expected: { exitCode: 1, code: "forbidden", status: 403, hint: "Ask for branch access" },
     },
     {
+      name: "ambiguous remote whose branch listing was not found",
+      cause: Cause.fail(
+        new TargetRemoteAmbiguousError({
+          message: "Could not check branches",
+          suggestion: "Pass --project-ref",
+          status: 404,
+        }),
+      ),
+      expected: { exitCode: 2, code: "usage_error", status: null, hint: "Pass --project-ref" },
+    },
+    {
       name: "ambiguous remote with an invalid token",
       cause: Cause.fail(
         new TargetRemoteAmbiguousError({

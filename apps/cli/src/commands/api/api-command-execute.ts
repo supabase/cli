@@ -9,7 +9,7 @@ import { planGateFromResponse, sanitizeErrorBody } from "../../command-internal/
 import { Output } from "../../shared/output/output.service.ts";
 import { readPointer } from "./api-command-pointer.ts";
 import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
-import { renderDryRunText, renderResponseText } from "./api-command.format.ts";
+import { renderDryRunText, renderResponseText, singleLine } from "./api-command.format.ts";
 import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
@@ -165,7 +165,10 @@ export const writeApiResponse = Effect.fnUntraced(function* (
   if (format === "json") return yield* output.rawBytes(response.bytes);
   const text = textDecoder.decode(response.bytes);
   const parsed = decodeJsonText(text);
-  if (Option.isNone(parsed)) return yield* output.raw(text.endsWith("\n") ? text : `${text}\n`);
+  if (Option.isNone(parsed)) {
+    const lines = text.endsWith("\n") ? text.slice(0, -1) : text;
+    return yield* output.raw(`${lines.split("\n").map(singleLine).join("\n")}\n`);
+  }
   return yield* output.raw(renderResponseText(parsed.value));
 });
 
