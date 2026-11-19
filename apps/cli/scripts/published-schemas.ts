@@ -1,5 +1,5 @@
 import { withoutSafeIntegerBounds } from "@supabase/config/internal";
-import { HOSTED_LOCK_SCHEMA_URL, Lock, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { Lock, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
 import { JsonSchema, Predicate, Schema } from "effect";
 
 const DEFINITION_REF_PREFIX = "#/definitions/";
@@ -45,20 +45,6 @@ const dedupeDefinitions = ({ schema, definitions }: JsonSchema.Document<"draft-0
   };
 };
 
-/** `readLock` accepts the hosted `$schema` URL alongside the legacy one that writes still use. */
-const acceptHostedSchemaUrl = (schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
-  const properties = schema["properties"];
-  return Predicate.isObject(properties)
-    ? {
-        ...schema,
-        properties: {
-          ...properties,
-          $schema: { type: "string", enum: [LOCK_SCHEMA_URL, HOSTED_LOCK_SCHEMA_URL] },
-        },
-      }
-    : schema;
-};
-
 /** The draft-07 JSON Schema of `supabase/supabase.lock`, rendered from the stack's `Lock` schema. */
 export const lockSchemaDocument = () => {
   const generated = Schema.toJsonSchemaDocument(Lock);
@@ -71,10 +57,10 @@ export const lockSchemaDocument = () => {
   );
   return {
     $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07,
-    $id: HOSTED_LOCK_SCHEMA_URL,
+    $id: LOCK_SCHEMA_URL,
     title: "supabase.lock",
     description: "The service versions that supabase start pins in supabase/supabase.lock.",
-    ...acceptHostedSchemaUrl(schema),
+    ...schema,
     definitions,
   };
 };
