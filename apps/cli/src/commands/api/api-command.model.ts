@@ -46,7 +46,8 @@ export type ApiCommandBinding =
 export interface ApiCommandFlag {
   /** Kebab-case flag name without the leading dashes. */
   readonly name: string;
-  readonly type: "string" | "integer" | "number" | "boolean";
+  /** `json` takes a JSON value for a body field that is not a scalar or an array of scalars. */
+  readonly type: "string" | "integer" | "number" | "boolean" | "json";
   readonly choices?: readonly string[];
   readonly repeatable: boolean;
   readonly required: boolean;

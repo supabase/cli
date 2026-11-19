@@ -88,6 +88,17 @@ const initialBody = (entry: ApiCommandEntry): Readonly<Record<string, unknown>> 
   return {};
 };
 
+const parseJsonFlag = (flag: string, text: ApiFlagValue) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
+    Effect.mapError(
+      () =>
+        new ApiCommandUsageError({
+          message: `--${flag} is not valid JSON.`,
+          hint: `Pass a JSON value and quote it for the shell, e.g. --${flag} '{"key":"value"}'.`,
+        }),
+    ),
+  );
+
 /**
  * The flat operation input `{...bodyFields, ...query, ...headers, ref, <path parameter>}`. A body
  * override is the starting point when given, else the synthesized envelope; only flags that were
@@ -116,6 +127,9 @@ export const assembleInput = Effect.fnUntraced(function* (
       });
     }
   }
+  const jsonFlagNames = new Set(
+    entry.flags.filter((flag) => flag.type === "json").map((flag) => flag.name),
+  );
   let body: unknown = Option.getOrElse(bodyOverride, () => initialBody(entry));
   const query: Record<string, unknown> = {};
   const headers: Record<string, unknown> = {};
@@ -138,7 +152,12 @@ export const assembleInput = Effect.fnUntraced(function* (
     if (value === undefined || Option.isNone(value)) continue;
     if (binding.location === "query") query[binding.name] = value.value;
     if (binding.location === "header") headers[binding.name] = value.value;
-    if (binding.location === "body") body = writePointer(body, binding.pointer, value.value);
+    if (binding.location === "body") {
+      const parsed = jsonFlagNames.has(binding.flag)
+        ? yield* parseJsonFlag(binding.flag, value.value)
+        : value.value;
+      body = writePointer(body, binding.pointer, parsed);
+    }
   }
   return { ...(isRecord(body) ? body : {}), ...query, ...headers, ref, ...positional };
 });

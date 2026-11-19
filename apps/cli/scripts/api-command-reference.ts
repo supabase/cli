@@ -46,7 +46,10 @@ const bindsTo = (entry: ApiCommandEntry, flag: ApiCommandFlag): string => {
 
 const flagRows = (entry: ApiCommandEntry): ReadonlyArray<string> =>
   entry.flags.map((flag) => {
-    const label = flag.type === "boolean" ? `--${flag.name}` : `--${flag.name} <${flag.name}>`;
+    const label =
+      flag.type === "boolean"
+        ? `--${flag.name}`
+        : `--${flag.name} <${flag.type === "json" ? "json" : flag.name}>`;
     const notes = flag.sensitive === true ? " Sensitive: never echoed or recorded." : "";
     return `| ${code(label)} | ${cell(flagType(flag))} | ${flag.required ? "yes" : "no"} | ${flag.repeatable ? "yes" : "no"} | ${bindsTo(entry, flag)}${notes} |`;
   });

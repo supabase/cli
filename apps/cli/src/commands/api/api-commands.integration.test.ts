@@ -907,6 +907,75 @@ describe("generated warehouse commands", () => {
       },
     );
 
+    it.effect("sends the JSON values of --sort-by and --partition-by in the envelope", () => {
+      const { sent, run } = setup(
+        [...argv, "--sort-by", '{"kind":"none"}', "--partition-by", "[]"],
+        { yes: true, route: accepted },
+      );
+      return Effect.gen(function* () {
+        yield* run;
+        expect(bodiesOf(sent)).toEqual([
+          {
+            data: {
+              type: "warehouse_table_layout",
+              attributes: { sort_by: { kind: "none" }, partition_by: [] },
+            },
+          },
+        ]);
+      });
+    });
+
+    it.effect("keeps a JSON null from --sort-by as unmanaged sorting", () => {
+      const { sent, out, run } = setup([...argv, "--sort-by", "null", "--dry-run"], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([]);
+        expect(decodeJson(out.stdoutText)).toMatchObject({
+          body: { data: { attributes: { sort_by: null } } },
+        });
+      });
+    });
+
+    it.effect("lets a JSON flag replace only its own field of --body", () => {
+      const { sent, run } = setup([...argv, "--body", encodeJson(body), "--sort-by", "null"], {
+        yes: true,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(bodiesOf(sent)).toEqual([
+          {
+            data: {
+              type: "warehouse_table_layout",
+              attributes: { sort_by: null, partition_by: [] },
+            },
+          },
+        ]);
+      });
+    });
+
+    it.effect("rejects --sort-by text that is not JSON, naming the flag, and sends nothing", () => {
+      const { sent, run } = setup([...argv, "--sort-by", "{"], { yes: true, route: accepted });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandUsageError);
+        expect(failure).toMatchObject({ message: "--sort-by is not valid JSON." });
+        expect(sent).toEqual([]);
+      });
+    });
+
+    it.effect("rejects a --sort-by value outside the field schema before consent", () => {
+      const { sent, run } = setup([...argv, "--sort-by", '{"kind":"bogus"}'], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(ApiCommandUsageError);
+        expect(sent).toEqual([]);
+      });
+    });
+
     it.effect("rejects a non-boolean reset before making a hosted request", () => {
       const reset = {
         data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },

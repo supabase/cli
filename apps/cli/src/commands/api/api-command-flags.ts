@@ -13,6 +13,8 @@ const scalarFlag = (flag: ApiCommandFlag): Flag.Flag<string | number | boolean> 
   switch (flag.type) {
     case "string":
       return Flag.String(flag.name);
+    case "json":
+      return Flag.String(flag.name).pipe(Flag.withMetavar("json"));
     case "integer":
       return Flag.Int(flag.name);
     case "number":
@@ -26,7 +28,8 @@ const scalarFlag = (flag: ApiCommandFlag): Flag.Flag<string | number | boolean> 
 export type ApiFlagLocation = "query" | "header" | "body";
 
 const describedFlag = (flag: ApiCommandFlag, location: ApiFlagLocation): string => {
-  const description = flag.description ?? `Set ${flag.name}.`;
+  const base = flag.description ?? `Set ${flag.name}.`;
+  const description = flag.type === "json" ? `${base} Takes a JSON value.` : base;
   if (!flag.required) return description;
   return location === "body"
     ? `${description} Required unless the field is in --body or --file.`

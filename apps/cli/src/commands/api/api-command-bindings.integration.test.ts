@@ -149,7 +149,16 @@ const sampleOf = (schema: unknown): unknown => {
   }
 };
 
+/** Samples for the body fields that take a JSON value; a field without one fails loudly. */
+const JSON_SAMPLES: Readonly<Record<string, unknown>> = {
+  "v2-update-warehouse-table-layout.sort_by": { kind: "primary_key" },
+  "v2-update-warehouse-table-layout.partition_by": [
+    { column: "id", transform: { kind: "identity" } },
+  ],
+};
+
 interface Input {
+  readonly json: boolean;
   readonly location: "query" | "body";
   readonly field: string;
   readonly flag: string;
@@ -159,10 +168,11 @@ interface Input {
 }
 
 /**
- * Every scalar or scalar-array non-path input, read from openapi.json; the flag spelling comes from the
- * command's declared binding, since naming is the derivation's contract.
+ * Every non-path input, read from openapi.json; the flag spelling comes from the command's declared
+ * binding, since naming is the derivation's contract.
  */
 const inputsOf = (
+  operationId: string,
   operation: SpecOperation,
   bindings: ApiCommandEntry["bindings"],
 ): ReadonlyArray<Input> => {
@@ -175,6 +185,7 @@ const inputsOf = (
     .map((parameter): Input => {
       const field = String(parameter["name"]);
       return {
+        json: false,
         location: "query",
         field,
         flag: flagFor("query", field),
@@ -194,26 +205,25 @@ const inputsOf = (
   const container = envelope ? attributes : operation.requestSchema;
   const required = asList(container["required"]);
   const scalarTypes = ["boolean", "integer", "number", "string"];
-  const fields = Object.entries(asRecord(container["properties"]))
-    .filter(([, schema]) => {
-      const node = resolveRef(schema);
-      return (
-        scalarTypes.includes(String(node["type"])) ||
-        (node["type"] === "array" &&
-          scalarTypes.includes(String(resolveRef(node["items"])["type"])))
-      );
-    })
-    .map(([field, schema]): Input => {
-      const sample = sampleOf(schema);
-      return {
-        location: "body",
-        field,
-        flag: flagFor("body", field),
-        pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
-        required: required.includes(field),
-        sample,
-      };
-    });
+  const fields = Object.entries(asRecord(container["properties"])).map(([field, schema]): Input => {
+    const node = resolveRef(schema);
+    const scalar =
+      scalarTypes.includes(String(node["type"])) ||
+      (node["type"] === "array" && scalarTypes.includes(String(resolveRef(node["items"])["type"])));
+    const key = `${operationId}.${field}`;
+    if (!scalar && !Object.hasOwn(JSON_SAMPLES, key)) {
+      throw new Error(`no JSON sample for body field ${key}`);
+    }
+    return {
+      json: !scalar,
+      location: "body",
+      field,
+      flag: flagFor("body", field),
+      pointer: `${envelope ? "/data/attributes" : ""}/${field}`,
+      required: required.includes(field),
+      sample: scalar ? sampleOf(schema) : JSON_SAMPLES[key],
+    };
+  });
   return [...queries, ...fields];
 };
 
@@ -226,11 +236,15 @@ const positionalsOf = (operation: SpecOperation) =>
       sample: String(sampleOf(parameter["schema"])),
     }));
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const argvOf = (inputs: ReadonlyArray<Input>): ReadonlyArray<string> =>
   inputs.flatMap((input) =>
-    Array.isArray(input.sample)
-      ? input.sample.flatMap((item) => [`--${input.flag}`, String(item)])
-      : [`--${input.flag}`, String(input.sample)],
+    input.json
+      ? [`--${input.flag}`, encodeJson(input.sample)]
+      : Array.isArray(input.sample)
+        ? input.sample.flatMap((item) => [`--${input.flag}`, String(item)])
+        : [`--${input.flag}`, String(input.sample)],
   );
 
 const expectedQuery = (inputs: ReadonlyArray<Input>): Readonly<Record<string, string>> =>
@@ -357,7 +371,7 @@ describe("generated command bindings", () => {
   for (const row of rows) {
     const { operationId } = row.api;
     const operation = operationOf(operationId);
-    const inputs = inputsOf(operation, row.api.bindings);
+    const inputs = inputsOf(operationId, operation, row.api.bindings);
     const positionals = positionalsOf(operation);
     const expectedPath = positionals.reduce(
       (path, { name, sample }) => path.replace(`{${name}}`, sample),

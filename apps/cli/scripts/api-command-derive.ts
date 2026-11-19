@@ -824,7 +824,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       readonly writeOnly: boolean;
     }> = [];
 
-    const fileOnlyFields: Array<string> = [];
     const pathBindings: Array<ApiCommandBinding> = [];
     const pathNames: Array<string> = [];
     const positionals: Array<{
@@ -948,34 +947,26 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
           ? { contentType: "application/json", kind: "json-envelope", type: envelopeType }
           : { contentType: "application/json", kind: "json-object" };
         for (const [field, schema] of Object.entries(fieldProperties ?? {})) {
-          const shape = describeFlagSchema(spec, schema);
+          const scalarShape = describeFlagSchema(spec, schema);
+          const secret = findSecret(spec, schema, field);
           if (field === "dry_run") {
             fail('unsupported in this runtime: server-side "dry_run" body field');
-          } else if (shape === undefined) {
-            const secret = findSecret(spec, schema, field);
-            if (secret !== undefined) {
-              fail(
-                `unsupported in this runtime: body field "${field}" ${secret === field ? "is a secret" : `holds the secret "${secret}"`} without a flag, and the dry-run preview masks only flag-bound fields`,
-              );
-            } else if (credentialLike(field)) {
-              fail(
-                `body field "${field}" looks like a credential; mark its schema writeOnly, format: password or x-sensitive`,
-              );
-            }
-            fileOnlyFields.push(field);
-          } else {
-            fields.push({
-              location: "body",
-              key: field,
-              pointer: isEnvelope
-                ? `/data/attributes/${escapePointer(field)}`
-                : `/${escapePointer(field)}`,
-              shape,
-              required: required.includes(field),
-              description: schemaDescription(spec, schema),
-              writeOnly: findSecret(spec, schema, field) !== undefined,
-            });
+          } else if (scalarShape === undefined && secret !== undefined) {
+            fail(
+              `unsupported in this runtime: body field "${field}" ${secret === field ? "is a secret" : `holds the secret "${secret}"`}, and the dry-run preview masks only scalar flag values`,
+            );
           }
+          fields.push({
+            location: "body",
+            key: field,
+            pointer: isEnvelope
+              ? `/data/attributes/${escapePointer(field)}`
+              : `/${escapePointer(field)}`,
+            shape: scalarShape ?? { type: "json", repeatable: false },
+            required: required.includes(field),
+            description: schemaDescription(spec, schema),
+            writeOnly: secret !== undefined,
+          });
         }
       }
     }
@@ -1003,14 +994,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     const bindings: Array<ApiCommandBinding> = [...pathBindings];
     const seenNames = new Set<string>();
     const seenKeys = new Set<string>(pathNames);
-    for (const key of fileOnlyFields) {
-      if (seenKeys.has(key)) {
-        fail(
-          `"${key}" is used by more than one of: path parameter, header parameter, query parameter, body field`,
-        );
-      }
-      seenKeys.add(key);
-    }
     for (const field of fields) {
       const flagName =
         field.location === "body" && field.shape.repeatable

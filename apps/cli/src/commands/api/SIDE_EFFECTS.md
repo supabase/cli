@@ -67,6 +67,8 @@ With `--wait`, the command also polls the read operation named in its reference 
 ### Request input
 
 - `--body` or `--file` supply the whole body; a flag replaces its own field and nothing else.
+- A flag for a nested body field (an object, an array of objects or a union) takes a JSON value for
+  that field, `null` included; text that is not JSON is a usage error naming the flag.
 - The input is validated before consent and before the command request: a top-level body key
   outside the declared request-body fields, an unknown nested field or a missing required flag
   fails with no command request sent. Target resolution runs first, so the project picker and

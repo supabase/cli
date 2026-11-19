@@ -500,12 +500,28 @@ export const apiCommands = [
     },
     flags: [
       {
+        name: "partition-by",
+        type: "json",
+        repeatable: false,
+        required: false,
+        description:
+          "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+      },
+      {
         name: "reset-table",
         type: "boolean",
         repeatable: false,
         required: false,
         description:
           "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+      },
+      {
+        name: "sort-by",
+        type: "json",
+        repeatable: false,
+        required: false,
+        description:
+          "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
       },
     ],
     bindings: [
@@ -522,10 +538,24 @@ export const apiCommands = [
       },
       {
         location: "body",
+        name: "partition_by",
+        pointer: "/data/attributes/partition_by",
+        source: "flag",
+        flag: "partition-by",
+      },
+      {
+        location: "body",
         name: "reset_table",
         pointer: "/data/attributes/reset_table",
         source: "flag",
         flag: "reset-table",
+      },
+      {
+        location: "body",
+        name: "sort_by",
+        pointer: "/data/attributes/sort_by",
+        source: "flag",
+        flag: "sort-by",
       },
     ],
   },

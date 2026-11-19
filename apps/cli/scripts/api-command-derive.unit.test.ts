@@ -217,24 +217,40 @@ describe("deriveApiCommands", () => {
     expect(result.problems.join("\n")).toContain("binary or streaming");
   });
 
-  describe("body fields without a flag", () => {
+  describe("nested body fields", () => {
     const writeOnlyString = { type: "string", writeOnly: true };
     const nestedBody = (nested: Record<string, unknown>) =>
       derive({
         "create-thing": operation({ ...create, requestBody: envelope({ nested }) }),
       });
 
-    it("keeps the operation and describes the field in the request schema without a flag or binding", () => {
-      const result = nestedBody({ type: "object", properties: { size: { type: "string" } } });
+    it("binds an object and an array of objects to JSON flags named after the field", () => {
+      const result = derive({
+        "create-thing": operation({
+          ...create,
+          requestBody: envelope({
+            name: { type: "string" },
+            nested: { type: "object", properties: { size: { type: "string" } } },
+            rules: { type: "array", items: { type: "object", properties: {} } },
+          }),
+        }),
+      });
 
       expect(result.problems).toEqual([]);
       const [entry] = result.entries;
-      expect(entry?.flags.map((flag) => flag.name)).toEqual(["name"]);
-      expect(entry?.bindings.filter((binding) => binding.location === "body")).toHaveLength(1);
-      expect(JSON.stringify(result.schemas["create-thing"]?.request)).toContain('"nested"');
+      expect(entry?.flags).toMatchObject([
+        { name: "name", type: "string" },
+        { name: "nested", type: "json", repeatable: false },
+        { name: "rules", type: "json", repeatable: false },
+      ]);
+      expect(entry?.bindings.filter((binding) => binding.location === "body")).toMatchObject([
+        { pointer: "/data/attributes/name", flag: "name" },
+        { pointer: "/data/attributes/nested", flag: "nested" },
+        { pointer: "/data/attributes/rules", flag: "rules" },
+      ]);
     });
 
-    it("rejects a sensitive field that has no flag", () => {
+    it("rejects a sensitive nested field", () => {
       const result = nestedBody({
         type: "object",
         writeOnly: true,
@@ -243,11 +259,11 @@ describe("deriveApiCommands", () => {
 
       expect(result.entries).toEqual([]);
       expect(result.problems.join("\n")).toContain(
-        'unsupported in this runtime: body field "nested" is a secret without a flag',
+        'unsupported in this runtime: body field "nested" is a secret',
       );
     });
 
-    it("rejects an unmarked credential-like field that has no flag", () => {
+    it("rejects an unmarked credential-like nested field", () => {
       const result = derive({
         "create-thing": operation({
           ...create,
@@ -287,16 +303,16 @@ describe("deriveApiCommands", () => {
         { anyOf: [{ type: "object", properties: { pin: writeOnlyString } }, { type: "null" }] },
         "nested.pin",
       ],
-    ])("rejects a file-only field that holds %s", (_label, nested, secretPath) => {
+    ])("rejects a nested field that holds %s", (_label, nested, secretPath) => {
       const result = nestedBody(nested);
 
       expect(result.entries).toEqual([]);
       expect(result.problems).toEqual([
-        `create-thing: unsupported in this runtime: body field "nested" holds the secret "${secretPath}" without a flag, and the dry-run preview masks only flag-bound fields`,
+        `create-thing: unsupported in this runtime: body field "nested" holds the secret "${secretPath}", and the dry-run preview masks only scalar flag values`,
       ]);
     });
 
-    it("rejects a file-only field whose patternProperties value is a secret", () => {
+    it("rejects a nested field whose patternProperties value is a secret", () => {
       const result = nestedBody({
         type: "object",
         patternProperties: { ".*": { type: "string", format: "password" } },
@@ -304,11 +320,11 @@ describe("deriveApiCommands", () => {
 
       expect(result.entries).toEqual([]);
       expect(result.problems).toEqual([
-        'create-thing: unsupported in this runtime: body field "nested" is a secret without a flag, and the dry-run preview masks only flag-bound fields',
+        'create-thing: unsupported in this runtime: body field "nested" is a secret, and the dry-run preview masks only scalar flag values',
       ]);
     });
 
-    it("accepts a file-only field whose schema refers back to itself when it holds no secret", () => {
+    it("accepts a nested field whose schema refers back to itself when it holds no secret", () => {
       const node = {
         type: "object",
         properties: { label: { type: "string" }, child: { $ref: "#/components/schemas/Node" } },
@@ -1481,7 +1497,7 @@ describe("deriveApiCommands", () => {
         'create-thing: unsupported in this runtime: server-side "dry_run" body field',
       ],
       [
-        "a file-only body field named like a path parameter",
+        "a nested body field named like a path parameter",
         {
           "create-thing": operation({
             ...create,

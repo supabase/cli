@@ -277,7 +277,7 @@ describe("generated command shapes", () => {
     });
   });
 
-  describe("a body field without a flag", () => {
+  describe("a nested body field", () => {
     const USER_ID = "55555555-5555-4555-8555-555555555555";
     const roles = [
       { role: "postgres", allowed_networks: { allowed_cidrs: [{ cidr: "10.0.0.0/8" }] } },
@@ -318,13 +318,23 @@ describe("generated command shapes", () => {
       }).pipe(Effect.provide(BunServices.layer));
     });
 
-    it.effect("has no flag in --help while its scalar sibling has one", () => {
+    it.effect("is a JSON-valued flag in --help, named after the field", () => {
       const { help, effect } = run([...update, "--help"]);
       return Effect.gen(function* () {
         yield* effect;
-        expect(help()).toContain("--user-id");
-        expect(help()).not.toContain("--roles");
+        const rolesLine = help()
+          .split("\n")
+          .find((line) => line.includes("--roles "));
+        expect(rolesLine).toContain("Takes a JSON value.");
         expect(help()).not.toContain("--role ");
+      });
+    });
+
+    it.effect("is sent from its own flag", () => {
+      const { sent, effect } = run([...update, "--user-id", USER_ID, "--roles", encodeJson(roles)]);
+      return Effect.gen(function* () {
+        yield* effect;
+        expect(sent.map((request) => request.body)).toEqual([{ user_id: USER_ID, roles }]);
       });
     });
   });

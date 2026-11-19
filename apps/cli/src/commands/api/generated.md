@@ -161,9 +161,11 @@ Updates saved sorting and partitioning rules for one source table object identif
 
 ### Flags
 
-| Flag            | Type    | Required | Repeatable | Binds to                            |
-| --------------- | ------- | -------- | ---------- | ----------------------------------- |
-| `--reset-table` | boolean | no       | no         | body `/data/attributes/reset_table` |
+| Flag                    | Type    | Required | Repeatable | Binds to                             |
+| ----------------------- | ------- | -------- | ---------- | ------------------------------------ |
+| `--partition-by <json>` | json    | no       | no         | body `/data/attributes/partition_by` |
+| `--reset-table`         | boolean | no       | no         | body `/data/attributes/reset_table`  |
+| `--sort-by <json>`      | json    | no       | no         | body `/data/attributes/sort_by`      |
 
 ## `supabase warehouse tables list`
 
