@@ -105,7 +105,7 @@ describe("domains reverify integration", () => {
         },
       });
       expect(api.requests).toHaveLength(1);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

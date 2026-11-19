@@ -175,7 +175,7 @@ describe("domains create integration", () => {
       expect(api.requests).toHaveLength(2);
       expect(postedToInitialize(api)).toBe(true);
       assertPermissionDrift({ command: "domains create", requests: api.requests });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -190,7 +190,7 @@ describe("domains create integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(2);
       expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
     }).pipe(Effect.provide(layer));
   });
 
