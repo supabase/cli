@@ -1283,6 +1283,19 @@ describe("generated warehouse commands", () => {
   });
 
   describe("help", () => {
+    it.effect("shows a body file in the layout update example", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "tables", "layout", "update", "--help"], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        expect(calls.join("\n")).toContain(
+          "supabase warehouse tables layout update <table-id> --file <path>",
+        );
+      });
+    });
+
     it.effect("marks a required API flag as required in its description", () => {
       const { console, calls } = fakeConsole();
       const { run } = setup(["warehouse", "enable", "--help"], { route: accepted });
