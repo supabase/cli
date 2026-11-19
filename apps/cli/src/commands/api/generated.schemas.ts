@@ -1884,7 +1884,16 @@ export const apiCommandSchemas = {
                   type: "string",
                 },
               },
-              required: ["desired", "name", "observation_status", "observed", "schema"],
+              required: [
+                "application_status",
+                "desired",
+                "name",
+                "observation_status",
+                "observed",
+                "pipeline_id",
+                "reset_table",
+                "schema",
+              ],
               type: "object",
             },
             id: {

@@ -15560,12 +15560,10 @@ export const V2GetWarehouseTableLayoutInput = Schema.Struct({
 export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
   data: Schema.Struct({
     attributes: Schema.Struct({
-      application_status: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
-        }),
-      ),
+      application_status: Schema.String.annotate({
+        description:
+          "Backend orchestration state. Runtime acceptance does not establish that the desired layout has been observed in the catalog.",
+      }),
       desired: Schema.Struct({
         partition_by: Schema.Union([
           Schema.Array(
@@ -15666,15 +15664,13 @@ export const V2GetWarehouseTableLayoutOutput = Schema.Struct({
         }),
         Schema.Null,
       ]),
-      pipeline_id: Schema.optionalKey(
-        Schema.String.annotate({ description: "Warehouse replication pipeline identity." }),
-      ),
-      reset_table: Schema.optionalKey(
-        Schema.Boolean.annotate({
-          description:
-            "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
-        }),
-      ),
+      pipeline_id: Schema.String.annotate({
+        description: "Warehouse replication pipeline identity.",
+      }),
+      reset_table: Schema.Boolean.annotate({
+        description:
+          "Whether this update reset source replication state. False for unchanged layouts and reads; reads do not retain reset history. True does not establish completion of recopy.",
+      }),
       schema: Schema.String.annotate({ description: "Source PostgreSQL schema of the table." }),
     }),
     id: Schema.String.annotate({

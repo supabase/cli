@@ -146,40 +146,6 @@ describe("database OpenAPI response contract", () => {
 });
 
 describe("makeApiClient", () => {
-  test("decodes Warehouse layout reads without update orchestration fields", () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const body = {
-          data: {
-            type: "warehouse_table_layout",
-            id: "16385",
-            attributes: {
-              schema: "public",
-              name: "events",
-              desired: { sort_by: null, partition_by: [] },
-              observation_status: "observed",
-              observed: {
-                sort_by: [],
-                partition_by: [],
-                observed_at: "2026-11-18T09:30:00Z",
-              },
-            },
-          },
-        };
-        const client = yield* makeApiClient(config).pipe(
-          Effect.provide(
-            httpClientLayer((request) => Effect.succeed(jsonResponse(request, 200, body))),
-          ),
-        );
-
-        const result = yield* client.v2.getWarehouseTableLayout({
-          ref: "abcdefghijklmnopqrst",
-          table_id: "16385",
-        });
-        expect(result).toEqual(body);
-      }),
-    ));
-
   test("allows raw operations to override generated request headers", () =>
     Effect.runPromise(
       Effect.gen(function* () {
