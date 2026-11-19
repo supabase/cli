@@ -48,7 +48,7 @@ describe("renderResponseText", () => {
     expect(output.indexOf("sample-2")).toBeGreaterThanOrEqual(0);
     expect(output.indexOf("sample-2")).toBeLessThan(output.indexOf("sample-11"));
     expect(output).toContain(
-      "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+      "Showing last 10 of 12 samples; 2 omitted; use --output-format json for all samples.",
     );
     expect(renderResponseText({ points: points.slice(2) })).not.toContain("omitted");
   });

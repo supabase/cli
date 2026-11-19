@@ -245,14 +245,17 @@ export const errorsContractForRun = (
   return node === undefined ? "legacy" : readCommandErrorsContract(node);
 };
 
-/** Whether failures render as the JSON document: a machine `-o`, a resolved non-text output format, or stdout that is not a TTY. */
+/** Whether output is machine-readable: stdout is not a TTY or the resolved output format is not text. */
+export const isMachineOutput = (stdoutIsTty: boolean, outputFormat: OutputFormat): boolean =>
+  !stdoutIsTty || outputFormat !== "text";
+
+/** Whether failures render as the JSON document: a machine `-o` or machine output. */
 export const isMachineFailureMode = (
   args: ReadonlyArray<string>,
   stdoutIsTty: boolean,
   outputFormat: OutputFormat,
 ): boolean =>
-  !stdoutIsTty ||
-  outputFormat !== "text" ||
+  isMachineOutput(stdoutIsTty, outputFormat) ||
   isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)));
 
 /** Renders the failure as the stderr text: a leading blank line plus JSON, or a human message and hint. */

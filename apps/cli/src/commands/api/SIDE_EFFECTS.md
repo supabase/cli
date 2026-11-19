@@ -71,20 +71,25 @@ With `--wait`, the command also polls the read operation named in its reference 
   that field, `null` included; text that is not JSON is a usage error naming the flag.
 - The input is validated before consent and before the command request: a top-level body key
   outside the declared request-body fields, an unknown nested field or a missing required flag
-  fails with no command request sent. Target resolution runs first, so the project picker and
+  fails with no command request sent. `-o`/`--output` and an invalid `--timeout` fail first, before
+  target resolution; for other input errors target resolution runs first, so the project picker and
   branch lookups in the table above can still run.
 - A body whose fields form alternatives (the request needs one of several fields) reports a missing
   choice as `Pass at least one of --a, --b`.
 - `--dry-run` prints `{method, path, query, headers, body}` and sends no command request, before
   consent. The linked-project cache read in the table above can still run. It shows the local
   request, not a server-resolved impact.
-- Consent uses the command's summary as the action; it does not render an impact plan.
+- Consent uses the command's summary as the action and lists what the validated request does: one
+  `name: value` line per non-ref path parameter, query parameter and body field (for an envelope
+  body, the fields under `data.attributes`). Scalars print as is; objects and arrays print as
+  compact JSON.
 
 ## `--wait`
 
 A command whose reference entry has a Wait section accepts `--wait` and `--timeout <duration>`
 (a duration such as `90s` or `10m`; default `10m`; an invalid or non-positive value is a usage
-error).
+error). `--timeout` is validated whenever it is passed, even without `--wait`, before consent and
+before any command request.
 
 - A mutation first sends its request, then reads the identity the wait needs from the response by
   the pointers in its reference entry. A missing value is a defect in the response and ends the wait
@@ -148,20 +153,18 @@ and `--wait` record `true`. Generated field flags, `--body`, `--file` and `--tim
 
 ## Output
 
-Text rendering applies on a terminal by default, with `--output-format text` (also when piped), and
-with `-o pretty`. Piped runs, agent runs, `--output-format json|stream-json` and `-o json` keep the
-API's JSON bytes. `-o` takes precedence over `--output-format`.
+The presentation is text only when `--output-format` is `text` and stdout is a terminal; successes
+and failures follow the same rule. Piped runs (even with `--output-format text`), agent runs and
+`--output-format json|stream-json` keep the API's JSON bytes. `-o`/`--output` is a usage error that
+points to `--output-format`, raised before target resolution, consent or any request.
 
-| Mode                           | stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| text presentation              | the response as labelled fields and tables, nested objects as indented blocks; a collection prints its scalar fields as a table, with each item's nested fields, null shown as `-`, in a block below it, and a `points` sample series shows its last 10 samples in response order with an omission notice (`-o json` shows all of them), `-` for null or empty values; with `--wait` the final read response; an empty response prints `Done.` and an empty collection `No results` |
-| JSON presentation              | the API's JSON response bytes, unchanged, preserving unknown and null fields; with `--wait` the final read response                                                                                                                                                                                                                                                                                                                                                                 |
-| `-o json`                      | the same bytes; no `target` key is added                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `-o yaml`                      | the same document as YAML; `-o pretty` selects text; other `-o` values are a usage error                                                                                                                                                                                                                                                                                                                                                                                            |
-| `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `--dry-run` otherwise          | the request preview in the selected JSON or YAML presentation                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Mode                           | stdout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| text presentation              | the response as labelled fields and tables, nested objects as indented blocks; a collection prints its scalar fields as a table, with each item's nested fields, null shown as `-`, in a block below it, and a `points` sample series shows its last 10 samples in response order with an omission notice (`--output-format json` shows all of them), `-` for null or empty values; with `--wait` the final read response; an empty response prints `Done.` and an empty collection `No results` |
+| JSON presentation              | the API's JSON response bytes, unchanged, preserving unknown and null fields; with `--wait` the final read response                                                                                                                                                                                                                                                                                                                                                                              |
+| `--dry-run`, text presentation | `Dry run: <METHOD> <path>`, then `Query`, `Headers` and indented JSON `Body` blocks                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `--dry-run` otherwise          | the request preview in the selected JSON presentation                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
-When the presentation is text and `--output-format` is `text`, each request, and with `--wait` the
-whole polling phase, runs under a task that shows the polled status after 200 ms. On a terminal it
-is a spinner; when stdout is not a terminal (for example `--output-format text` piped) the task
-message prints as a step line on stdout before the response. JSON and YAML output show no progress.
+With the text presentation, each request, and with `--wait` the whole polling phase, runs under a
+task that shows the polled status after 200 ms, as a spinner on the terminal. JSON output shows no
+progress.

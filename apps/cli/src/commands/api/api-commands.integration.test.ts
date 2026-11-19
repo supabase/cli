@@ -1,7 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { OperationOutput } from "@supabase/api/effect";
-import { parse as parseYaml } from "yaml";
 import {
   Cause,
   Console,
@@ -23,7 +22,7 @@ import { respondToComplete } from "../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
 import { ExperimentalFlag, ROOT_GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { HostedMutationConsentRequiredError } from "../../command-internal/hosted-consent/hosted-consent.errors.ts";
-import { InvalidOutputFormatError } from "../../command-internal/output-formats.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { ExperimentalFeatureFlagError } from "../../shared/config/experimental-feature.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -59,7 +58,7 @@ import { apiCommands } from "./generated.ts";
 import { readApiCommand } from "./api-command.annotation.ts";
 import { readCommandStage } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { withApiCommands } from "./runtime.ts";
-import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
+import { isMachineFailureMode, standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
 import { resolveApiCommandFeatures } from "./api-command-features.ts";
 
@@ -264,6 +263,8 @@ interface CliOpts {
   readonly outputFormat?: OutputFormat;
   /** Whether stdout is a terminal; defaults to a pipe. */
   readonly stdoutIsTty?: boolean;
+  /** Runs on an interactive terminal that answers the consent prompt with these responses. */
+  readonly confirmResponses?: ReadonlyArray<boolean>;
 }
 
 /**
@@ -281,7 +282,12 @@ const execute = (argv: ReadonlyArray<string>, opts: CliOpts) => {
 };
 
 const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
-  const out = mockOutput({ format: opts.outputFormat ?? "text" });
+  const interactive = opts.confirmResponses !== undefined;
+  const out = mockOutput({
+    format: opts.outputFormat ?? "text",
+    interactive,
+    ...(interactive ? { promptConfirmResponses: opts.confirmResponses } : {}),
+  });
   const { args, sent, run } = execute(argv, opts);
   const layer = Layer.mergeAll(
     buildTestRuntime({
@@ -289,13 +295,13 @@ const setup = (argv: ReadonlyArray<string>, opts: CliOpts) => {
       api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      tty: mockTty({ stdinIsTty: false, stdoutIsTty: opts.stdoutIsTty ?? false }),
+      tty: mockTty({ stdinIsTty: interactive, stdoutIsTty: opts.stdoutIsTty ?? interactive }),
       stdin: mockStdin(false),
       cliArgs: args,
     }),
     cliServices(tempRoot.current, args),
   );
-  return { out, sent, run: run.pipe(Effect.provide(layer)) };
+  return { args, out, sent, run: run.pipe(Effect.provide(layer)) };
 };
 
 const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
@@ -355,30 +361,22 @@ describe("generated warehouse commands", () => {
       },
     };
 
-    it.effect.each(["json", "yaml"] as const)(
-      "preserves zero targets, capabilities and unavailable observations as %s",
-      (format) => {
-        const { out, sent, run } = setup(
-          ["warehouse", "status", ...(format === "yaml" ? ["-o", "yaml"] : [])],
-          { route: ok(body) },
-        );
-        return Effect.gen(function* () {
-          yield* run;
-          expect(sent).toEqual([
-            {
-              method: "GET",
-              path: `/v2/projects/${VALID_REF}/warehouse/status`,
-              search: "",
-              body: undefined,
-            },
-          ]);
-          expect(
-            format === "yaml" ? Bun.YAML.parse(out.stdoutText) : decodeJson(out.stdoutText),
-          ).toEqual(body);
-          expect(out.progressEvents).toEqual([]);
-        });
-      },
-    );
+    it.effect("preserves zero targets, capabilities and unavailable observations as JSON", () => {
+      const { out, sent, run } = setup(["warehouse", "status"], { route: ok(body) });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([
+          {
+            method: "GET",
+            path: `/v2/projects/${VALID_REF}/warehouse/status`,
+            search: "",
+            body: undefined,
+          },
+        ]);
+        expect(decodeJson(out.stdoutText)).toEqual(body);
+        expect(out.progressEvents).toEqual([]);
+      });
+    });
 
     it.effect("labels configured readiness and unavailable observations in terminal output", () => {
       const { out, run } = setup(["warehouse", "status"], { route: ok(body), stdoutIsTty: true });
@@ -491,7 +489,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect("passes the document, including replication feedback, through as JSON", () => {
-      const { out, run } = setup(["warehouse", "tables", "list", "-o", "json"], {
+      const { out, run } = setup(["warehouse", "tables", "list"], {
         route: ok(body),
       });
       return Effect.gen(function* () {
@@ -565,7 +563,7 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(out.stdoutText).toContain(
-          "Showing last 10 of 12 samples; 2 omitted; use -o json for all samples.",
+          "Showing last 10 of 12 samples; 2 omitted; use --output-format json for all samples.",
         );
         expect(out.stdoutText).not.toContain("1001");
         expect(out.stdoutText).not.toContain("1002");
@@ -584,12 +582,9 @@ describe("generated warehouse commands", () => {
           "query_rate,query_duration_p95",
           "--interval",
           "5m",
-          "-o",
-          "json",
         ],
         {
           route: ok(response),
-          stdoutIsTty: true,
         },
       );
       return Effect.gen(function* () {
@@ -609,28 +604,26 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("forwards fixed timestamps unchanged and preserves null samples in YAML", () => {
+    it.effect("forwards fixed timestamps unchanged and preserves null samples in JSON", () => {
       const from = "2026-11-18T09:30:00+01:00";
       const to = "2026-11-18T10:00:00+01:00";
-      const { sent, out, run } = setup([...argv, "--from", from, "--to", to, "-o", "yaml"], {
+      const { sent, out, run } = setup([...argv, "--from", from, "--to", to], {
         route: ok(response),
-        stdoutIsTty: true,
       });
       return Effect.gen(function* () {
         yield* run;
         expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({ from, to });
-        expect(parseYaml(out.stdoutText)).toEqual(response);
+        expect(decodeJson(out.stdoutText)).toEqual(response);
       });
     });
 
     it.effect.each([
-      { name: "terminal default", flags: [], stdoutIsTty: true },
-      { name: "explicit text", flags: ["--output-format", "text"], stdoutIsTty: false },
-      { name: "pretty alias", flags: ["-o", "pretty"], stdoutIsTty: false },
-    ])("shows ranges, dimensions, and sample values with $name", ({ flags, stdoutIsTty }) => {
+      { name: "terminal default", flags: [] },
+      { name: "explicit text on a terminal", flags: ["--output-format", "text"] },
+    ])("shows ranges, dimensions, and sample values with $name", ({ flags }) => {
       const { out, run } = setup([...argv, ...flags], {
         route: ok(response),
-        stdoutIsTty,
+        stdoutIsTty: true,
       });
       return Effect.gen(function* () {
         yield* run;
@@ -723,14 +716,14 @@ describe("generated warehouse commands", () => {
     );
 
     it.effect(
-      "forwards fixed timestamps and metric selection and keeps all dimensions in YAML",
+      "forwards fixed timestamps and metric selection and keeps all dimensions in JSON",
       () => {
         const from = "2026-11-18T09:30:00+01:00";
         const to = "2026-11-18T10:00:00+01:00";
         const selection = "activation_duration_p95,worker_admission_occupied";
         const { sent, out, run } = setup(
-          [...argv, "--from", from, "--to", to, "--attributes", selection, "-o", "yaml"],
-          { route: ok(response), stdoutIsTty: true },
+          [...argv, "--from", from, "--to", to, "--attributes", selection],
+          { route: ok(response) },
         );
         return Effect.gen(function* () {
           yield* run;
@@ -740,7 +733,7 @@ describe("generated warehouse commands", () => {
             to,
             attributes: selection,
           });
-          expect(parseYaml(out.stdoutText)).toEqual(response);
+          expect(decodeJson(out.stdoutText)).toEqual(response);
         });
       },
     );
@@ -1464,31 +1457,20 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("prints the dry-run preview as YAML under -o yaml", () => {
-      const { out, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--dry-run", "-o", "yaml"],
-        { route: accepted },
-      );
-      return Effect.gen(function* () {
-        yield* run;
-        expect(Bun.YAML.parse(out.stdoutText)).toEqual({
-          method: "POST",
-          path: ENABLE_PATH,
-          query: {},
-          headers: {},
-          body: { data: { type: "warehouse_setup", attributes: { schema: "public" } } },
-        });
-      });
-    });
-
     it.effect.each([
       { name: "a send", argv: ["warehouse", "enable", "--schema", "public"] },
       { name: "a dry run", argv: ["warehouse", "enable", "--schema", "public", "--dry-run"] },
       { name: "a read", argv: ["warehouse", "status"] },
-    ])("rejects -o env for $name as a usage error and sends nothing", ({ argv }) => {
-      const { sent, run } = setup([...argv, "-o", "env"], { yes: true, route: accepted });
+    ])("rejects -o json for $name as a usage error and sends nothing", ({ argv }) => {
+      const { sent, run } = setup([...argv, "-o", "json"], { yes: true, route: accepted });
       return Effect.gen(function* () {
-        expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(InvalidOutputFormatError);
+        const exit = yield* Effect.exit(run);
+        expect(failureOf(exit)).toEqual(
+          new ApiCommandUsageError({
+            message: unsupportedOutputFlagMessage(argv.slice(0, 2).join(" ")),
+          }),
+        );
+        expect(Exit.isFailure(exit) && standardFailureFor(exit.cause).exitCode).toBe(2);
         expect(sent).toEqual([]);
       });
     });
@@ -1667,17 +1649,6 @@ describe("generated warehouse commands", () => {
           "entitlement",
         );
         expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
-      });
-    });
-
-    it.effect("prints a JSON response as YAML of the parsed document under -o yaml", () => {
-      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "-o", "yaml"], {
-        yes: true,
-        route: accepted,
-      });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(Bun.YAML.parse(out.stdoutText)).toEqual(ACCEPTED);
       });
     });
   });
@@ -1876,30 +1847,14 @@ describe("generated warehouse commands", () => {
       },
     );
 
-    it.effect("prints the final status read as YAML under -o yaml", () => {
-      const { out, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--wait", "-o", "yaml"],
-        {
-          yes: true,
-          route: enableThenPoll([
-            { status: 200, body: statusBody("pending") },
-            { status: 200, body: statusBody("succeeded") },
-          ]),
-        },
-      );
-      return Effect.gen(function* () {
-        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* driveClock(fiber);
-        yield* Fiber.join(fiber);
-        expect(Bun.YAML.parse(out.stdoutText)).toEqual(statusBody("succeeded"));
-      });
-    });
-
-    it.effect("rejects an invalid --timeout before sending anything", () => {
-      const { sent, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "soon"],
-        { yes: true, route: accepted },
-      );
+    it.effect.each([
+      {
+        name: "with --wait",
+        argv: ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "soon"],
+      },
+      { name: "without --wait", argv: ["warehouse", "disable", "--timeout", "soon"] },
+    ])("rejects an invalid --timeout $name before sending anything", ({ argv }) => {
+      const { sent, run } = setup(argv, { yes: true, route: accepted });
       return Effect.gen(function* () {
         expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(ApiCommandUsageError);
         expect(sent).toEqual([]);
@@ -1963,53 +1918,47 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("renders text through a pipe when --output-format text is explicit", () => {
+    it.effect("keeps JSON for success and failure when --output-format text is piped", () => {
+      const piped = ["--output-format", "text"];
+      const succeeded = setup(["warehouse", "enable", "--schema", "public", "--wait", ...piped], {
+        yes: true,
+        route: enableThenPoll([{ status: 200, body: RICH_STATUS }]),
+      });
+      const failed = setup(["warehouse", "status", ...piped], {
+        route: () => ({ status: 401, body: { message: "bad token" } }),
+      });
+      return Effect.gen(function* () {
+        yield* succeeded.run;
+        expect(succeeded.out.stdoutText).toBe(encodeJson(RICH_STATUS));
+        expect(succeeded.out.progressEvents).toEqual([]);
+
+        const exit = yield* Effect.exit(failed.run);
+        expect(failureOf(exit)).toBeInstanceOf(ApiCommandStatusError);
+        expect(failed.out.stdoutText).toBe("");
+        expect(isMachineFailureMode(failed.args, false, "text")).toBe(true);
+      });
+    });
+
+    it.effect("keeps the API bytes and shows no progress for stream-json on a terminal", () => {
       const { out, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--wait", "--output-format", "text"],
+        ["warehouse", "enable", "--schema", "public", "--wait", "--output-format", "stream-json"],
         {
           yes: true,
           route: enableThenPoll([{ status: 200, body: RICH_STATUS }]),
+          outputFormat: "stream-json",
+          stdoutIsTty: true,
         },
       );
       return Effect.gen(function* () {
         yield* run;
-        expect(out.stdoutText).toBe(STATUS_TEXT);
+        expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
+        expect(out.progressEvents).toEqual([]);
       });
     });
 
-    it.effect(
-      "prints only the text rendering for -o pretty under --output-format stream-json",
-      () => {
-        const { out, run } = setup(
-          [
-            "warehouse",
-            "enable",
-            "--schema",
-            "public",
-            "--wait",
-            "-o",
-            "pretty",
-            "--output-format",
-            "stream-json",
-          ],
-          {
-            yes: true,
-            route: enableThenPoll([{ status: 200, body: RICH_STATUS }]),
-            outputFormat: "stream-json",
-            stdoutIsTty: true,
-          },
-        );
-        return Effect.gen(function* () {
-          yield* run;
-          expect(out.stdoutText).toBe(STATUS_TEXT);
-          expect(out.progressEvents).toEqual([]);
-        });
-      },
-    );
-
-    it.effect("keeps the API bytes for -o json on a terminal", () => {
+    it.effect("renders text on a terminal when --output-format text is explicit", () => {
       const { out, run } = setup(
-        ["warehouse", "enable", "--schema", "public", "--wait", "-o", "json"],
+        ["warehouse", "enable", "--schema", "public", "--wait", "--output-format", "text"],
         {
           yes: true,
           route: enableThenPoll([{ status: 200, body: RICH_STATUS }]),
@@ -2018,7 +1967,7 @@ describe("generated warehouse commands", () => {
       );
       return Effect.gen(function* () {
         yield* run;
-        expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
+        expect(out.stdoutText).toBe(STATUS_TEXT);
       });
     });
 
@@ -2110,7 +2059,7 @@ describe("generated warehouse commands", () => {
           "--output-format",
           "text",
         ],
-        { route: ok({}) },
+        { route: ok({}), stdoutIsTty: true },
       );
       return Effect.gen(function* () {
         yield* run;
@@ -2321,6 +2270,41 @@ describeHostedConsent("warehouse enable", {
       mutations: () => sent.filter((request) => request.method !== "GET").length,
     };
   },
+});
+
+describe("hosted consent details", () => {
+  it.effect.each([
+    {
+      name: "a disable that deletes data",
+      argv: ["warehouse", "disable", "--delete-data"],
+      shown: ["delete_data: true"],
+    },
+    {
+      name: "a layout update with a reset",
+      argv: [
+        "warehouse",
+        "tables",
+        "layout",
+        "update",
+        "16385",
+        "--body",
+        encodeJson({
+          data: {
+            type: "warehouse_table_layout",
+            attributes: { sort_by: null, reset_table: true },
+          },
+        }),
+      ],
+      shown: ["table_id: 16385", "sort_by: null", "reset_table: true"],
+    },
+  ])("lists what $name will send before asking", ({ argv, shown }) => {
+    const { out, sent, run } = setup(argv, { route: accepted, confirmResponses: [false] });
+    return Effect.gen(function* () {
+      yield* Effect.exit(run);
+      for (const line of shown) expect(out.stderrText).toContain(line);
+      expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
+    });
+  });
 });
 
 const disableConsentCommand = commandTreeFor({ apiFeatures: ["warehouse"] }).get(

@@ -10,18 +10,17 @@ import {
   withCommandStage,
 } from "../../command-internal/command-stage/command-stage.annotation.ts";
 import { parseDuration } from "../../command-internal/duration.ts";
-import { OutputFlag } from "../../command-internal/global-flags.ts";
+import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
+import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
 import { resolveProjectTarget } from "../../command-internal/target/resolve-project-target.ts";
 import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { projectRefPicker } from "../../config/project-ref.layer.ts";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { readExplicitOutputFormat } from "../../shared/cli/agent-output.ts";
+import { isMachineOutput } from "../../shared/cli/standard-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import type { OutputFormat } from "../../shared/output/types.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -40,6 +39,7 @@ import { type ApiFlagLocation, apiFlag } from "./api-command-flags.ts";
 import { type ApiNoun, nouns } from "./api-command-policy.ts";
 import {
   assembleInput,
+  consentDetails,
   decodeInput,
   previewRequest,
   readBodyOverride,
@@ -159,27 +159,6 @@ const parseTimeoutMillis = (value: string) =>
 const summaryText = (entry: Pick<ApiCommandEntry, "summary">): string =>
   entry.summary.replace(/\.$/, "");
 
-const OUTPUT_FORMATS: ReadonlyArray<string> = ["json", "yaml", "pretty"];
-
-/**
- * How the result prints: `-o` decides first, then an explicit `--output-format`, then text only
- * for a text-mode run on a terminal; everything else keeps the API's JSON.
- */
-const presentationOf = (input: {
-  readonly outputFlag: Option.Option<string>;
-  readonly args: ReadonlyArray<string>;
-  readonly outputFormat: OutputFormat;
-  readonly stdoutIsTty: boolean;
-}): ApiOutputFormat => {
-  const flag = Option.getOrUndefined(input.outputFlag);
-  if (flag === "yaml") return "yaml";
-  if (flag === "json") return "json";
-  if (flag === "pretty") return "text";
-  const explicit = readExplicitOutputFormat(input.args);
-  if (Option.isSome(explicit)) return explicit.value === "text" ? "text" : "json";
-  return input.outputFormat === "text" && input.stdoutIsTty ? "text" : "json";
-};
-
 /**
  * Runs `use` under a progress task when `visible`, handing it the task's message updater; the
  * task is cleared on success and marked failed or cancelled otherwise.
@@ -227,21 +206,23 @@ const handle = Effect.fn("api-command.run")(function* (
   const telemetryState = yield* TelemetryState;
   const cache = yield* LinkedProjectCache;
   const output = yield* Output;
-  const format = presentationOf({
-    outputFlag: yield* OutputFlag,
-    args: (yield* CliArgs).args,
-    outputFormat: output.format,
-    stdoutIsTty: (yield* Tty).stdoutIsTty,
-  });
-  const progress = format === "text" && output.format === "text";
+  const outputFlag = yield* OutputFlag;
+  const format: ApiOutputFormat = isMachineOutput((yield* Tty).stdoutIsTty, output.format)
+    ? "json"
+    : "text";
+  const progress = format === "text";
   yield* Effect.annotateCurrentSpan("output.presentation", format);
   yield* Effect.gen(function* () {
+    if (Option.isSome(outputFlag)) {
+      return yield* new ApiCommandUsageError({
+        message: unsupportedOutputFlagMessage(entry.command.join(" ")),
+      });
+    }
+    const timeoutMillis =
+      flags.timeout === undefined ? 0 : yield* parseTimeoutMillis(flags.timeout);
     const ref = yield* resolveProjectTarget(flags);
     yield* Effect.gen(function* () {
       const waiting = resolved !== undefined && flags.wait === true;
-      const timeoutMillis = waiting
-        ? yield* parseTimeoutMillis(flags.timeout ?? DEFAULT_WAIT_TIMEOUT)
-        : 0;
       const override = yield* readBodyOverride({
         body: flags.body ?? Option.none(),
         file: flags.file ?? Option.none(),
@@ -254,7 +235,10 @@ const handle = Effect.fn("api-command.run")(function* (
         return yield* writeDryRun(previewRequest(entry, decoded), format);
       }
       if (!entry.readOnly) {
-        yield* requireHostedMutationConsent({ action: summaryText(entry) });
+        yield* requireHostedMutationConsent({
+          action: summaryText(entry),
+          details: consentDetails(entry, decoded),
+        });
       }
 
       if (waiting) {
@@ -358,7 +342,7 @@ const leafOf = (entry: ApiCommandEntry, entries: ReadonlyArray<ApiCommandEntry>)
     Command.withHandler((flags) => {
       const { api: _generated, argument: _argument, ...recorded } = flags;
       return handle(entry, resolved, flags).pipe(
-        withCommandTelemetry({ flags: recorded, outputFormats: OUTPUT_FORMATS }),
+        withCommandTelemetry({ flags: recorded, outputFormats: GLOBAL_OUTPUT_FORMATS }),
       );
     }),
     // `stdinLayer`: `--file -` reads the request body from piped stdin.

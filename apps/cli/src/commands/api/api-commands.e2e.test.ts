@@ -150,7 +150,7 @@ it.live.each([
 
 it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status", "-o", "json"], () =>
+    const { result } = yield* runWarehouse(["status", "--output-format", "json"], () =>
       json(409, {
         error: {
           code: "selection_conflict",
@@ -220,7 +220,7 @@ it.live("warehouse enable --wait --output-format text renders the final response
 it.live("warehouse enable without --yes refuses to run when stdin is piped", () =>
   Effect.gen(function* () {
     const { result, requests } = yield* runWarehouse(
-      ["enable", "--schema", "public", "-o", "json"],
+      ["enable", "--schema", "public", "--output-format", "json"],
       () => json(202, {}),
       { stdin: "" },
     );
@@ -239,7 +239,17 @@ it.live("warehouse enable without --yes refuses to run when stdin is piped", () 
 it.live("warehouse enable --wait prints the final status read", () =>
   Effect.gen(function* () {
     const { result, requests } = yield* runWarehouse(
-      ["enable", "--schema", "public", "--yes", "--wait", "--timeout", "30s", "-o", "json"],
+      [
+        "enable",
+        "--schema",
+        "public",
+        "--yes",
+        "--wait",
+        "--timeout",
+        "30s",
+        "--output-format",
+        "json",
+      ],
       ({ method }) => {
         if (method === "POST") return json(202, { data: { attributes: { selection_id: SEL } } });
         return statusBody("succeeded");
@@ -257,7 +267,7 @@ it.live("warehouse enable --file - reads the request body piped on stdin", () =>
     const accepted = `{"data":{"type":"warehouse_setup","attributes":{"selection_id":"${SEL}","status":"pending","future_field":{"nested":[1, 2]}}}}`;
     const body = '{"data":{"type":"warehouse_setup","attributes":{"schema":"public"}}}';
     const { result, requests, bodies } = yield* runWarehouse(
-      ["enable", "--file", "-", "--yes", "-o", "json"],
+      ["enable", "--file", "-", "--yes", "--output-format", "json"],
       () => ({ status: 202, body: accepted }),
       { stdin: body },
     );

@@ -133,7 +133,7 @@ const arrayLines = (
     offset === 0
       ? []
       : [
-          `${indent}${INDENT}Showing last ${preview.length} of ${items.length} samples; ${offset} omitted; use -o json for all samples.`,
+          `${indent}${INDENT}Showing last ${preview.length} of ${items.length} samples; ${offset} omitted; use --output-format json for all samples.`,
         ];
   if (isFlatObjectArray(preview)) {
     return [...notice, ...objectTable(preview, unionKeys(preview), indent)];

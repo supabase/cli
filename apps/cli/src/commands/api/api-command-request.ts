@@ -318,3 +318,30 @@ export const previewRequest = (entry: ApiCommandEntry, decoded: object): ApiRequ
     body,
   };
 };
+
+const detailLine = (name: string, value: unknown): string =>
+  `${name}: ${typeof value === "string" ? value : (JSON.stringify(value) ?? "null")}`;
+
+/**
+ * The `name: value` lines a consent prompt lists for a validated request: each path parameter
+ * other than the project ref, each query parameter and each body field, with an envelope body
+ * listing the fields of its `data.attributes`. Sensitive flag values stay masked.
+ */
+export const consentDetails = (entry: ApiCommandEntry, decoded: object): ReadonlyArray<string> => {
+  const { pathParams } = definitionOf(entry);
+  const preview = previewRequest(entry, decoded);
+  const attributes = readPointer(preview.body, "/data/attributes");
+  const bodyFields =
+    entry.body?.kind === "json-envelope" && isRecord(attributes)
+      ? attributes
+      : isRecord(preview.body)
+        ? preview.body
+        : {};
+  return [
+    ...pathParams
+      .filter((name) => name !== "ref")
+      .map((name) => detailLine(name, Reflect.get(decoded, name))),
+    ...Object.entries(preview.query).map(([name, value]) => detailLine(name, value)),
+    ...Object.entries(bodyFields).map(([name, value]) => detailLine(name, value)),
+  ];
+};
