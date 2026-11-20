@@ -43,6 +43,23 @@ const MigrationBody = Schema.Struct({
   version: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
+const parseDryRun = (value: string | null): boolean | undefined => {
+  if (value === null) return false;
+  switch (value.toLowerCase()) {
+    case "true":
+    case "1":
+      return true;
+    case "false":
+    case "0":
+      return false;
+    default:
+      return undefined;
+  }
+};
+
+const bearerToken = (request: HttpServerRequest.HttpServerRequest): string | undefined =>
+  /^Bearer\s+(\S+)$/iu.exec(request.headers["authorization"] ?? "")?.[1];
+
 const corsHeaders = { "access-control-allow-origin": "*" };
 
 const json = (body: unknown, status = 200, headers: Readonly<Record<string, string>> = {}) =>
@@ -169,6 +186,8 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     name: string,
     wanted?: string,
   ) {
+    if (wanted !== undefined && !/^\d+$/u.test(wanted))
+      return yield* rejected("22023", "migration version must contain digits only");
     const forSpark = yield* prepareStatements(sql);
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
     if (forSpark.length === 0) return [];
@@ -186,6 +205,8 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     name: string,
     wanted?: string,
   ) {
+    if (wanted !== undefined && !/^\d+$/u.test(wanted))
+      return yield* rejected("22023", "migration version must contain digits only");
     const forSpark = yield* prepareStatements(sql);
     yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
     // Only Studio's grant loops: nothing for Spark, and no migration.
@@ -410,6 +431,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
   /** The Management API subset MCP and the CLI call; any access token is accepted locally. */
   const management = Effect.fn("SparkMeta.management")(function* (
     request: HttpServerRequest.HttpServerRequest,
+    ref: string,
     rest: string,
     search: URLSearchParams,
   ) {
@@ -434,7 +456,10 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         Effect.mapError(() => rejected("22P02", "invalid request body")),
       );
       const name = body.name ?? "mcp";
-      if (search.get("dry_run") === "true" || search.get("dry_run") === "1")
+      const dryRun = parseDryRun(search.get("dry_run"));
+      if (dryRun === undefined)
+        return yield* rejected("22023", "dry_run must be true, false, 1 or 0");
+      if (dryRun)
         return json({
           statuses: yield* dryRunSchemaChange(body.query, name, body.version ?? undefined),
         });
@@ -448,7 +473,12 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         { headers: { ...corsHeaders, "content-type": "application/sql; charset=utf-8" } },
       );
     }
-    if (rest.startsWith("/api-keys") && method === "GET")
+    const keysRoute = rest.replace(/\/$/u, "");
+    if ((keysRoute === "/api-keys" || keysRoute === "/api-keys/legacy") && method === "GET") {
+      if (ref !== settings.projectRef) return json({ message: "project not found" }, 404);
+      if (bearerToken(request) === undefined)
+        return json({ message: "Access token not provided" }, 401);
+      if (keysRoute === "/api-keys/legacy") return json({ enabled: true });
       return json([
         { name: "anon", api_key: settings.anonKey, type: "legacy", id: "anon" },
         {
@@ -458,6 +488,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
           id: "service_role",
         },
       ]);
+    }
     if (rest === "/types/typescript" && method === "GET")
       return json({ types: yield* typesFor(search) });
     if (rest.startsWith("/advisors/") && method === "GET") return json({ lints: [] });
@@ -496,7 +527,12 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       const body = yield* HttpServerRequest.schemaBodyJson(QueryBody).pipe(
         Effect.mapError(() => rejected("22P02", "invalid request body")),
       );
-      const routed = yield* runSql(body.query, body.parameters ?? [], false, "studio");
+      const routed = yield* runSql(
+        body.query,
+        body.parameters ?? [],
+        body.read_only === true,
+        "studio",
+      );
       return json(routed.rows, 201, { "x-spark-target": routed.target });
     }
     if (p.startsWith("/pg/") && method === "GET")
@@ -518,7 +554,12 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       return json([{ id: "local", name: "Local" }]);
     const projectPath = /^\/v1\/projects\/([^/]+)(\/.*)?$/u.exec(p);
     if (projectPath !== null)
-      return yield* management(request, projectPath[2] ?? "", url.searchParams);
+      return yield* management(
+        request,
+        projectPath[1] ?? "",
+        projectPath[2] ?? "",
+        url.searchParams,
+      );
     return json({ message: "not found" }, 404);
   });
 

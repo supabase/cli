@@ -196,14 +196,19 @@ const withHandler = (spark: ReturnType<typeof fakeSpark>) =>
         gapsFile: path.join(root, "gaps.jsonl"),
       },
     );
-    const send = (method: string, target: string, body?: unknown) =>
+    const send = (
+      method: string,
+      target: string,
+      body?: unknown,
+      headers: Readonly<Record<string, string>> = {},
+    ) =>
       handler(
         HttpServerRequest.fromWeb(
           new Request(`http://localhost${target}`, {
             method,
-            ...(body === undefined
-              ? {}
-              : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
+            headers:
+              body === undefined ? headers : { "content-type": "application/json", ...headers },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           }),
         ),
       ).pipe(
@@ -534,4 +539,93 @@ it.live("dumps the schema as Postgres DDL with foreign keys after the tables", (
       'create policy "own" on "public"."orders" as permissive for all to "authenticated" using (true);',
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("rejects a migration version that is not digits before it can reach a file name", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send, migrationsDir, fs } = yield* withHandler(spark);
+
+    for (const version of ["abc", "../x"]) {
+      const { status, body } = yield* send("POST", "/v1/projects/default/database/migrations", {
+        query: "create table public.notes (id bigint primary key)",
+        version,
+      });
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ code: "22023" });
+    }
+    expect(spark.calls.some((call) => call.path === "/_spark/v1/migrations" && call.body)).toBe(
+      false,
+    );
+    expect(yield* fs.exists(migrationsDir)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("reads dry_run case-insensitively and refuses an unknown value instead of applying", () =>
+  Effect.gen(function* () {
+    const spark = fakeSpark();
+    const { send, migrationsDir, fs } = yield* withHandler(spark);
+    const migration = { query: "create table public.notes (id bigint primary key)" };
+
+    const dry = yield* send(
+      "POST",
+      "/v1/projects/default/database/migrations?dry_run=True",
+      migration,
+    );
+    const unknown = yield* send(
+      "POST",
+      "/v1/projects/default/database/migrations?dry_run=maybe",
+      migration,
+    );
+
+    expect(dry.status).toBe(200);
+    expect(dry.body).toMatchObject({ statuses: [{ status: "ok" }] });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body).toMatchObject({ code: "22023" });
+    expect(yield* fs.exists(migrationsDir)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("passes read_only from /pg/query to the DDL guard", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark());
+
+    const { status, body } = yield* send("POST", "/pg/query", {
+      query: "create table public.notes (id bigint primary key)",
+      read_only: true,
+    });
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ code: "25006" });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "serves the API keys only for the configured project, to a bearer token, on that exact path",
+  () =>
+    Effect.gen(function* () {
+      const { send } = yield* withHandler(fakeSpark());
+      const auth = { authorization: "Bearer local" };
+
+      const ok = yield* send("GET", "/v1/projects/default/api-keys?reveal=false", undefined, auth);
+      const slash = yield* send("GET", "/v1/projects/default/api-keys/", undefined, auth);
+      const anonymous = yield* send("GET", "/v1/projects/default/api-keys");
+      const otherProject = yield* send("GET", "/v1/projects/other/api-keys", undefined, auth);
+      const suffix = yield* send("GET", "/v1/projects/default/api-keys/other", undefined, auth);
+      const legacy = yield* send("GET", "/v1/projects/default/api-keys/legacy", undefined, auth);
+      const legacyAnonymous = yield* send("GET", "/v1/projects/default/api-keys/legacy");
+      const legacyOther = yield* send("GET", "/v1/projects/other/api-keys/legacy", undefined, auth);
+
+      expect(ok.status).toBe(200);
+      expect(ok.body).toMatchObject([{ name: "anon" }, { name: "service_role" }]);
+      expect(slash.status).toBe(200);
+      expect(anonymous.status).toBe(401);
+      expect(anonymous.text).not.toContain("service-key");
+      expect(otherProject.status).toBe(404);
+      expect(suffix.status).toBe(501);
+      expect(legacy.status).toBe(200);
+      expect(legacy.body).toEqual({ enabled: true });
+      expect(legacyAnonymous.status).toBe(401);
+      expect(legacyOther.status).toBe(404);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
