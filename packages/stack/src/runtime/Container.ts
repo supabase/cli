@@ -616,12 +616,18 @@ export const makeContainerRuntime = (options: {
       { timeout: undefined },
     ).pipe(
       Effect.timeout(DAEMON_PROBE_TIMEOUT),
-      Effect.map((info) => `responsive (${info})`),
+      Effect.map((info) => ({ outcome: "responsive", text: `responsive (${info})` })),
       Effect.catchTags({
-        TimeoutError: () => Effect.succeed(`unresponsive to info within ${DAEMON_PROBE_TIMEOUT}`),
-        ContainerError: (error) => Effect.succeed(`info failed: ${error.message}`),
+        TimeoutError: () =>
+          Effect.succeed({
+            outcome: "unresponsive",
+            text: `unresponsive to info within ${DAEMON_PROBE_TIMEOUT}`,
+          }),
+        ContainerError: (error) =>
+          Effect.succeed({ outcome: "failed", text: `info failed: ${error.message}` }),
       }),
-      Effect.tap((state) => Effect.annotateCurrentSpan("container.daemon_state", state)),
+      Effect.tap(({ outcome }) => Effect.annotateCurrentSpan("container.daemon_state", outcome)),
+      Effect.map(({ text }) => text),
       Effect.withSpan("Container.daemonState"),
     );
 
