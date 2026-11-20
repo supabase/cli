@@ -91,8 +91,7 @@ function findFailure(exit: Exit.Exit<unknown, unknown>): unknown {
 
 /**
  * Renders a handler failure exactly like the real CLI does and returns the captured stderr
- * writes (ANSI-stripped). Locks the composed stderr contract from SIDE_EFFECTS.md, not just
- * the error fields.
+ * writes (ANSI-stripped). Locks the composed stderr output, not just the error fields.
  */
 function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
   return Effect.gen(function* () {
