@@ -182,6 +182,23 @@ describe("buildKongContainerSpec", () => {
     }).pipe(Effect.provide(BunPath.layer));
   });
 
+  it.effect("lets Kong inject its nginx main and events directives", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const script = String(buildKongContainerSpec(base, { path, posixPath }).cmd?.[1]);
+      expect(script).toContain(
+        "> for _, el in ipairs(nginx_main_directives) do\n$(el.name) $(el.value);\n> end",
+      );
+      expect(script).toContain(
+        "> for _, el in ipairs(nginx_events_directives) do\n    $(el.name) $(el.value);\n> end",
+      );
+      expect(script).not.toMatch(
+        /^\s*(?:daemon|worker_processes|worker_rlimit_nofile|worker_connections|multi_accept)\b/m,
+      );
+    }).pipe(Effect.provide(BunPath.layer));
+  });
+
   it.effect("publishes 8000 to the host and exposes 8000/8443/8088 when TLS is disabled", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
