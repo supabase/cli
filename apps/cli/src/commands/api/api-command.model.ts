@@ -87,6 +87,8 @@ export interface ApiCommandEntry {
     readonly name: string;
     readonly description?: string;
   };
+  /** Concrete invocation examples maintained by the CLI command policy. */
+  readonly examples?: readonly { readonly command: string; readonly description: string }[];
   readonly flags: readonly ApiCommandFlag[];
   readonly bindings: readonly ApiCommandBinding[];
   readonly wait?: ApiCommandWait;
