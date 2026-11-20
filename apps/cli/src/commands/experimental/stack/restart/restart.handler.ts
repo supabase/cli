@@ -9,6 +9,7 @@ import {
   mapTargetError,
   missingStackAdvice,
   rejectStackOutput,
+  sharedMemorySuggestion,
   StackApi,
   StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
@@ -17,10 +18,12 @@ import type { StackRestartFlags } from "./restart.command.ts";
 
 const runtimeError = (cause: StackError) => {
   const detail = failedOutcomesDetail(cause);
+  const suggestion = sharedMemorySuggestion(`${cause.message}\n${detail ?? ""}`);
   return new StackCommandRestartError({
     reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
+    ...(suggestion === undefined ? {} : { suggestion }),
     cause,
   });
 };

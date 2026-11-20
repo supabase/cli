@@ -2514,6 +2514,42 @@ describe("db start stack backend", () => {
     });
   });
 
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(false);
+    const database: DatabaseInstance = {
+      ...databaseInstance(fixture.state),
+      start: Effect.fail(
+        new StackError({
+          operation: "start",
+          message:
+            "database-primary failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+        }),
+      ),
+    };
+    const stack: Stack = {
+      ...fixture.stack,
+      composition: { ...fixture.stack.composition, supabase: () => Effect.succeed([database]) },
+    };
+    return Effect.gen(function* () {
+      const error = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, { ...fixture, stack }, false),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        suggestion: expect.stringMatching(
+          /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+        ),
+      });
+    });
+  });
+
   it.effect("refuses --from-backup", () => {
     const { layer } = setup();
     const fixture = stackFixture(false);

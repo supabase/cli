@@ -334,7 +334,10 @@ const credentialsFor = (
   };
 };
 
-const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
+const fakeStack = (
+  compositionStart?: Stack["composition"]["start"],
+  databaseStart?: Effect.Effect<void, StackError>,
+) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   const memberCreations = new Map<string, ServiceCreation>();
   let stopped = 0;
@@ -368,7 +371,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** Builds a member from a creation, tracking it for a later `reassignEndpoint`. */
   const buildMember = (id: string, creation: ServiceCreation) => {
     memberCreations.set(id, creation);
-    return instance(creation, id, () => memberView(id));
+    const member = instance(creation, id, () => memberView(id));
+    return databaseStart === undefined || member.service !== "database"
+      ? member
+      : { ...member, start: databaseStart };
   };
   const stack: Stack = {
     id: "a".repeat(64),
@@ -1291,6 +1297,67 @@ describe("experimental stack start", () => {
         detail: "analytics (analytics-member-1): Service health timed out",
       });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      const fixture = fakeStack(
+        undefined,
+        Effect.fail(
+          new StackError({
+            operation: "start",
+            message:
+              "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+          }),
+        ),
+      );
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({
+        suggestion: expect.stringMatching(
+          /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+        ),
+      });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "points at running stacks when a relaunched PostgreSQL runs out of shared memory segments",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* lockProject();
+        const fixture = fakeStack(
+          Effect.fail(
+            new StackError({
+              operation: "composition.start",
+              message: "Composition start had failures",
+              outcomes: [
+                {
+                  id: "database-member-1",
+                  succeeded: false,
+                  error:
+                    "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+                },
+              ],
+            }),
+          ),
+        );
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        expect(error).toMatchObject({
+          message: "Composition start had failures",
+          suggestion: expect.stringMatching(
+            /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+          ),
+        });
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("loads Functions env only when Functions are selected", () =>
