@@ -4,6 +4,7 @@ import { Data, Effect, Exit, FileSystem, Path, type Scope } from "effect";
 import { fileURLToPath } from "node:url";
 import * as defaultEntrypoint from "./index.ts";
 import * as effectEntrypoint from "./effect.ts";
+import * as convertEntrypoint from "./convert.ts";
 import * as internalEntrypoint from "./internal.ts";
 
 // `src/index.ts` is the entrypoint Studio (a browser bundle) imports directly. It must stay
@@ -42,6 +43,7 @@ const packageJson = JSON.parse(
   readonly exports: {
     readonly ".": TypesBunDefaultExport;
     readonly "./internal": TypesBunDefaultExport;
+    readonly "./convert": TypesBunDefaultExport;
     readonly "./io": {
       readonly bun: string;
       readonly node: DistConditions;
@@ -301,7 +303,9 @@ const expectedPureGraphFiles = [
   "functions-manifest-model.ts",
   "sparse.ts",
   "schema-metadata.ts",
+  "lib/document-value.ts",
   "lib/env.ts",
+  "lib/own-property.ts",
   "lib/provider-signup.ts",
   "lib/resolve.ts",
   "lib/schema.ts",
@@ -583,6 +587,39 @@ describe("src/internal.ts export surface", () => {
   });
 });
 
+const convertGraph = await runPlatform(collectImportGraph(join(srcDir, "convert.ts")));
+
+const isEffectOrRuntimeBuiltin = (specifier: string): boolean =>
+  specifier === "effect" ||
+  specifier.startsWith("effect/") ||
+  specifier.startsWith("@effect/") ||
+  specifier.startsWith("node:") ||
+  specifier.startsWith("bun:");
+
+describe("src/convert.ts stays effect-free", () => {
+  test("the traversal actually walked the real module graph", () => {
+    expect(convertGraph.visitedFiles.size).toBeGreaterThan(1);
+    expect(convertGraph.bareSpecifiers.has("smol-toml")).toBe(true);
+  });
+
+  test("no module reachable from convert.ts imports effect or a runtime builtin", () => {
+    expect([...convertGraph.bareSpecifiers].filter(isEffectOrRuntimeBuiltin)).toEqual([]);
+  });
+
+  test("only smol-toml and jsonc-parser are reachable as bare dependencies", () => {
+    expect([...convertGraph.bareSpecifiers].sort()).toEqual(["jsonc-parser", "smol-toml"]);
+  });
+
+  test("pins the exact set of runtime export names", () => {
+    expect(Object.keys(convertEntrypoint).sort()).toMatchInlineSnapshot(`
+      [
+        "CliConfigConvertError",
+        "convertCliConfigTomlToJsonc",
+      ]
+    `);
+  });
+});
+
 describe("package.json exports map", () => {
   test("./io exposes exactly the bun/node/browser/default conditions, in that order", () => {
     const ioExports = packageJson.exports["./io"];
@@ -598,6 +635,7 @@ describe("package.json exports map", () => {
       packageJson.exports["."],
       packageJson.exports["./effect"],
       packageJson.exports["./internal"],
+      packageJson.exports["./convert"],
       packageJson.exports["./io"].node,
       packageJson.exports["./io"].browser,
       packageJson.exports["./io"].default,
@@ -608,15 +646,23 @@ describe("package.json exports map", () => {
     }
   });
 
-  test("'.', './effect', and './internal' lead with the 'bun' condition (CLI-2234)", () => {
-    for (const key of [".", "./effect", "./internal"] as const) {
+  test("'.', './effect', './internal', and './convert' lead with the 'bun' condition (CLI-2234)", () => {
+    for (const key of [".", "./effect", "./internal", "./convert"] as const) {
       expect(Object.keys(packageJson.exports[key])[0]).toBe("bun");
     }
   });
 
   test("pins the exact top-level exports-map subpath set", () => {
     expect(Object.keys(packageJson.exports).sort()).toEqual(
-      [".", "./internal", "./io", "./effect", "./schema.json", "./project-schema.json"].sort(),
+      [
+        ".",
+        "./internal",
+        "./convert",
+        "./io",
+        "./effect",
+        "./schema.json",
+        "./project-schema.json",
+      ].sort(),
     );
   });
 
@@ -634,11 +680,11 @@ describe("package.json exports map", () => {
       }),
     ));
 
-  test("the '.', './effect', and './internal' bun condition targets exist on disk", () =>
+  test("the '.', './effect', './internal', and './convert' bun condition targets exist on disk", () =>
     runPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        for (const key of [".", "./effect", "./internal"] as const) {
+        for (const key of [".", "./effect", "./internal", "./convert"] as const) {
           const target = packageJson.exports[key].bun;
           const read = yield* Effect.exit(fs.readFile(join(packageRoot, target)));
           expect(Exit.isSuccess(read)).toBe(true);

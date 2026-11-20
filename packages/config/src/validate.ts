@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { CliConfigSchema, RemotesSchema } from "./base.ts";
-import { isObject } from "./config-document.ts";
+import { isObject } from "./lib/document-value.ts";
 import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 
 const decodeCliConfig = Schema.decodeUnknownEffect(CliConfigSchema);
