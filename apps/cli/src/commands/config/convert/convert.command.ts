@@ -2,6 +2,7 @@ import type * as CliCommand from "effect/cli/Command";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
@@ -54,6 +55,7 @@ export const configConvertCommand = Command.make("convert", config).pipe(
   Command.withDescription(
     "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and moves the TOML file to supabase/config.toml.bak. Everyone on the project needs Supabase CLI 3.1.0 or later. With `--to toml`, converts supabase/config.jsonc (or config.json) back to supabase/config.toml and moves the JSON file to a `.bak` backup.",
   ),
+  withSidebar({ title: "Convert between config.toml and config.jsonc" }),
   Command.withShortDescription("Convert config.toml to config.jsonc, or back with --to toml"),
   Command.withExamples([
     {

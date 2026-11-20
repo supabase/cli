@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { Argument, Command, Flag } from "effect/cli";
@@ -74,6 +75,7 @@ const commandConfig = {
 } as const;
 
 export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
+  withSidebar({ title: "Serve functions locally" }),
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
   Command.withHandler((flags) =>

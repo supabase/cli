@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -33,6 +34,7 @@ const config = {
 export type BootstrapFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const bootstrapCommand = Command.make("bootstrap", config).pipe(
+  withSidebar({ category: "general", title: "Launch a quick start template" }),
   Command.withDescription("Bootstrap a Supabase project from a starter template."),
   Command.withShortDescription("Bootstrap a Supabase project from a starter template"),
   withPermissions(

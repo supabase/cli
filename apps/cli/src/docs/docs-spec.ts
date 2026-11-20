@@ -14,14 +14,7 @@ import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { flagDefault, flagDocumentation } from "../command-internal/flag-documentation.ts";
 import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
 import { remoteFlagName } from "../shared/output/target-help.ts";
-import {
-  DOCS_ARG_OVERRIDES,
-  DOCS_EXTRA_FLAGS,
-  DOCS_INFO_DESCRIPTION,
-  DOCS_INFO_TAGS,
-  DOCS_TAGS,
-} from "./docs-spec.tables.ts";
-import type { DocsInfoTag } from "./docs-spec.tables.ts";
+import { DOCS_ARG_OVERRIDES, DOCS_EXTRA_FLAGS, DOCS_INFO_DESCRIPTION } from "./docs-spec.tables.ts";
 
 /**
  * Builds the `clispec 001` document consumed by the supabase.com CLI reference
@@ -59,7 +52,7 @@ export interface DocsCommand {
   readonly summary: string;
   readonly description: string;
   readonly examples?: ReadonlyArray<DocsExample>;
-  readonly tags: ReadonlyArray<string>;
+  readonly tags: ReadonlyArray<never>;
   readonly links: ReadonlyArray<never>;
   readonly usage?: string;
   readonly subcommands: ReadonlyArray<string>;
@@ -75,7 +68,7 @@ interface DocsInfo {
   readonly bugs: string;
   readonly spec: string;
   readonly description: string;
-  readonly tags: ReadonlyArray<DocsInfoTag>;
+  readonly tags: ReadonlyArray<never>;
 }
 
 export interface DocsSpec {
@@ -244,7 +237,8 @@ function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Comman
     .toSorted((a, b) => docsCompare(a.name, b.name));
 }
 
-function walkDocsCommands(
+/** Visits every published command depth-first, children in byte-wise name order. */
+export function walkDocsCommands(
   root: Command.Command.Any,
   onCommand: (
     command: Command.Command.Any,
@@ -292,7 +286,7 @@ export function docsCommandTree(
 }
 
 /** First line of a command's long description, for the listing summary fallback. */
-function docsSummary(command: Command.Command.Any): string {
+export function docsSummary(command: Command.Command.Any): string {
   if (command.shortDescription !== undefined) return command.shortDescription;
   const description = command.description ?? "";
   const newline = description.indexOf("\n");
@@ -419,13 +413,6 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       ].join(" ");
     }
 
-    const tags = DOCS_TAGS[docId];
-    if (tags === undefined && commandPath.length === 2) {
-      throw new Error(
-        `docs-spec.ts: top-level command "${docId}" has no DOCS_TAGS entry — add its docs-site section tag (or "other-commands") to docs-spec.tables.ts.`,
-      );
-    }
-
     const commandExamples =
       command.examples.length > 0
         ? command.examples.map((example, index) => {
@@ -445,7 +432,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       summary: docsSummary(command),
       description,
       ...(commandExamples === undefined ? {} : { examples: commandExamples }),
-      tags: tags ?? [],
+      tags: [],
       links: [],
       ...(usage === undefined ? {} : { usage }),
       subcommands: publishedChildren.map((child) => [...commandPath, child.name].join("-")),
@@ -478,7 +465,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       bugs: "https://github.com/supabase/cli/issues",
       spec: "https://github.com/supabase/spec/cli_v1_commands.yaml",
       description: DOCS_INFO_DESCRIPTION,
-      tags: DOCS_INFO_TAGS,
+      tags: [],
     },
     flags: rootFlags,
     commands,
@@ -511,9 +498,6 @@ function validateDocsTables(seen: {
   readonly consumedExtraFlagIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
-  for (const id of Object.keys(DOCS_TAGS)) {
-    if (!seen.emittedIds.has(id)) stale.push(`DOCS_TAGS: "${id}"`);
-  }
   for (const id of Object.keys(DOCS_EXTRA_FLAGS)) {
     if (!seen.consumedExtraFlagIds.has(id)) stale.push(`DOCS_EXTRA_FLAGS: "${id}"`);
   }

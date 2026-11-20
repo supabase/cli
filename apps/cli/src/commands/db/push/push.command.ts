@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -52,6 +53,7 @@ const config = {
 export type DbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbPushCommand = Command.make("push", config).pipe(
+  withSidebar({ title: "Push migration to remote database" }),
   Command.withDescription(
     "Push new migrations to a database. Vault secrets from the config file are updated before migrations unless --skip-vault is set.",
   ),

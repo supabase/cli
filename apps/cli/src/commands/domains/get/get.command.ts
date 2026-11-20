@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -32,6 +33,7 @@ const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
 export type DomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const domainsGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve custom hostname config" }),
   Command.withDescription(
     "Retrieve the custom hostname config for your project, as stored in the Supabase platform.",
   ),

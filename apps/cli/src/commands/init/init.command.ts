@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -46,6 +47,7 @@ const config = {
 export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const initCommand = Command.make("init", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
   Command.withExamples([

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -27,6 +28,7 @@ const config = {
 export type StorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const storageMvCommand = Command.make("mv", config).pipe(
+  withSidebar({ title: "Move objects within a bucket" }),
   Command.withDescription("Move objects from src to dst path."),
   Command.withShortDescription("Move objects from src to dst path"),
   Command.withExamples([

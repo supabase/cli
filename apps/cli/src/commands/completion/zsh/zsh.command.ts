@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -14,6 +15,7 @@ const config = {
 export type CompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const completionZshCommand = Command.make("zsh", config).pipe(
+  withSidebar({ title: "Generate zsh script" }),
   Command.withDescription(
     "Generate the autocompletion script for the zsh shell.\n\n" +
       "If shell completion is not already enabled in your environment you will need\n" +
