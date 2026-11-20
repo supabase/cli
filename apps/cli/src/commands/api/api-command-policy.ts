@@ -1,3 +1,4 @@
+import type { ApiCommandEntry } from "./api-command.model.ts";
 import type { OpenApiOperationId } from "@supabase/api/effect";
 import type { ExperimentalFeature } from "../../shared/config/experimental-feature.ts";
 
@@ -26,19 +27,43 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-add-warehouse-replication",
   "v2-remove-warehouse-replication",
   "v2-resync-warehouse-replication",
+  "v2-restart-warehouse-replication",
 ];
 
 export interface ApiCommandPolicy {
   readonly confirmDescription?: true;
+  readonly examples?: ApiCommandEntry["examples"];
 }
 
 /** CLI presentation choices, independent of the API's operation metadata. */
 export const commandPolicies = {
   "v2-disable-warehouse": { confirmDescription: true },
-  "v2-update-warehouse-table-layout": { confirmDescription: true },
+  "v2-update-warehouse-table-layout": {
+    confirmDescription: true,
+    examples: [
+      {
+        command: `supabase warehouse tables layout update <table-id> --partition-by '[{"column":"event_at","transform":{"kind":"day"}}]' --sort-by '{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}'`,
+        description:
+          "Partition new files by event day and sort within files; preserve historical files.",
+      },
+      {
+        command: `supabase warehouse tables layout update <table-id> --partition-by '[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]' --dry-run`,
+        description: "Preview eight hash buckets locally without changing the Warehouse.",
+      },
+      {
+        command: `supabase warehouse tables layout update <table-id> --partition-by '[]' --sort-by '{"kind":"none"}'`,
+        description: "Clear partitioning and sorting for future writes.",
+      },
+      {
+        command: `supabase warehouse tables layout update <table-id> --partition-by 'null' --sort-by 'null'`,
+        description: "Stop managing both settings; omitted flags preserve their saved values.",
+      },
+    ],
+  },
   "v2-add-warehouse-replication": { confirmDescription: true },
   "v2-remove-warehouse-replication": { confirmDescription: true },
   "v2-resync-warehouse-replication": { confirmDescription: true },
+  "v2-restart-warehouse-replication": { confirmDescription: true },
 } satisfies Partial<Record<OpenApiOperationId, ApiCommandPolicy>>;
 
 export const nouns = {

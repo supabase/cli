@@ -154,6 +154,17 @@ Removes one selected source table or all selected tables in a schema as a batch.
 | `--schema <schema>` | string | yes, unless `--body` or `--file` has the field | no         | body `/data/attributes/schema` |
 | `--table <table>`   | string | no                                             | no         | body `/data/attributes/table`  |
 
+## `supabase warehouse replication restart`
+
+Start or restart Warehouse replication
+
+Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.
+
+- Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
+- Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
+- Consent: prints the API description before the interactive confirmation.
+- Request: `POST /v2/projects/{ref}/warehouse/replication/restart` (`v2-restart-warehouse-replication`), success 202 json.
+
 ## `supabase warehouse replication resync`
 
 Reset and rebuild one Warehouse table
@@ -177,7 +188,7 @@ Resets replication for one selected source table using its currently saved layou
 
 Get consolidated Warehouse status and capabilities
 
-Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.
+Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions. Runtime diagnostics classify current failures. Table errors and progress are explicitly current, last-known or unavailable; they do not establish completion of a particular restart or resync. Capabilities describe Management API operations: workload_metrics includes query-stats and capacity; query_explain does not describe SQL EXPLAIN through the Warehouse connection.
 
 - Access: read-only, no consent.
 - Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
@@ -208,6 +219,30 @@ Returns the sorting and partitioning rules saved for one replicated table, by so
 ## `supabase warehouse tables layout update`
 
 Update the layout of a table replicated to Warehouse
+
+Partition new files by event day and sort within files; preserve historical files.
+
+```sh
+supabase warehouse tables layout update <table-id> --partition-by '[{"column":"event_at","transform":{"kind":"day"}}]' --sort-by '{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}'
+```
+
+Preview eight hash buckets locally without changing the Warehouse.
+
+```sh
+supabase warehouse tables layout update <table-id> --partition-by '[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]' --dry-run
+```
+
+Clear partitioning and sorting for future writes.
+
+```sh
+supabase warehouse tables layout update <table-id> --partition-by '[]' --sort-by '{"kind":"none"}'
+```
+
+Stop managing both settings; omitted flags preserve their saved values.
+
+```sh
+supabase warehouse tables layout update <table-id> --partition-by 'null' --sort-by 'null'
+```
 
 Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.
 

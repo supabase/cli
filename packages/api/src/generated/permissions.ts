@@ -480,4 +480,8 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["database_write", "project_admin_write"]],
     oauthScope: "database:write",
   },
+  "v2-restart-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
 };

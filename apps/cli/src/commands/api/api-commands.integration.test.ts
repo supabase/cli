@@ -449,6 +449,64 @@ describe("generated warehouse commands", () => {
     });
   });
 
+  describe("warehouse replication restart", () => {
+    const argv = ["warehouse", "replication", "restart"];
+    const response = {
+      data: {
+        type: "warehouse_replication_restart",
+        id: "pipeline-1",
+        attributes: {
+          pipeline_id: "pipeline-1",
+          action: "start",
+          application_status: "accepted",
+          pipeline_status_before: "stopped",
+        },
+      },
+    };
+
+    it.effect("sends one restart and returns acceptance without polling old readiness", () => {
+      const { sent, out, run } = setup(argv, {
+        yes: true,
+        route: () => ({ status: 202, body: response }),
+        outputFormat: "json",
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(sent).toEqual([
+          {
+            method: "POST",
+            path: `/v2/projects/${VALID_REF}/warehouse/replication/restart`,
+            search: "",
+            body: undefined,
+          },
+        ]);
+        expect(decodeJson(out.stdoutText)).toEqual(response);
+      });
+    });
+
+    it.effect("does not retry an uncertain restart", () => {
+      const { sent, run } = setup(argv, {
+        yes: true,
+        route: () => ({
+          status: 503,
+          body: { message: "Inspect pipeline state before retrying." },
+        }),
+      });
+      return Effect.gen(function* () {
+        expect(Exit.isFailure(yield* Effect.exit(run))).toBe(true);
+        expect(sent).toHaveLength(1);
+      });
+    });
+
+    it.effect("rejects --wait without sending a request", () => {
+      const { sent, run } = setup([...argv, "--wait"], { yes: true, route: accepted });
+      return Effect.gen(function* () {
+        expect(Exit.isFailure(yield* Effect.exit(run))).toBe(true);
+        expect(sent).toEqual([]);
+      });
+    });
+  });
+
   describe("consolidated warehouse status", () => {
     const attributes = {
       project_ref: VALID_REF,
@@ -471,6 +529,7 @@ describe("generated warehouse commands", () => {
         unavailable_reason: null,
         observed_at: "2026-11-17T10:00:00Z",
         items: [],
+        progress: null,
       },
       replication: {
         status: "unavailable",
@@ -483,6 +542,7 @@ describe("generated warehouse commands", () => {
         query_explain: false,
         replication_add: false,
         replication_remove: true,
+        replication_restart: true,
         table_layout_read: true,
         table_layout_update: false,
         table_resync: false,
@@ -552,11 +612,75 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("shows runtime diagnostics beside last-known table errors and progress", () => {
+      const response = {
+        data: {
+          ...body.data,
+          attributes: {
+            ...attributes,
+            pipeline: {
+              id: "pipeline-1",
+              status: "failed",
+              diagnostic: {
+                code: "process_exited",
+                message: "The pipeline process exited unsuccessfully.",
+                exit_code: 1,
+              },
+              observed_at: attributes.observed_at,
+              unavailable_reason: null,
+            },
+            tables: {
+              ...attributes.tables,
+              progress: {
+                observation: "last_known",
+                selected: 1,
+                queued: 0,
+                copying_table: 0,
+                copied_table: 0,
+                following_wal: 0,
+                error: 1,
+                unknown: 0,
+              },
+              items: [
+                {
+                  id: 16385,
+                  schema: "public",
+                  name: "orders",
+                  replication_state: "error",
+                  state_observation: "last_known",
+                  sync_lag: null,
+                  error: {
+                    reason: "The table layout could not be applied.",
+                    solution: "Inspect the saved layout.",
+                    retry_policy: { policy: "manual_retry" },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+      const { out, run } = setup(["warehouse", "status"], {
+        route: ok(response),
+        stdoutIsTty: true,
+      });
+      return Effect.gen(function* () {
+        yield* run;
+        expect(out.stdoutText).toContain("process_exited");
+        expect(out.stdoutText).toContain("The table layout could not be applied.");
+        expect(out.stdoutText).toContain("manual_retry");
+        expect(out.stdoutText).toMatch(/Observation\s+last_known/);
+        expect(out.stdoutText).toMatch(/Selected\s+1/);
+      });
+    });
+
     it.effect("lists every table of a large warehouse in terminal output", () => {
       const items = Array.from({ length: 12 }, (_, index) => ({
         id: 20000 + index,
         schema: "public",
         name: `table_${index}`,
+        error: null,
+        state_observation: "current" as const,
         replication_state: index === 0 ? ("error" as const) : ("following_wal" as const),
         sync_lag:
           index === 1
@@ -582,7 +706,7 @@ describe("generated warehouse commands", () => {
       return Effect.gen(function* () {
         yield* run;
         expect(out.stdoutText).toMatch(
-          /ID\s+20000\n\s+Schema\s+public\n\s+Name\s+table_0\n\s+Replication state\s+error\n/,
+          /ID\s+20000\n\s+Schema\s+public\n\s+Name\s+table_0\n\s+Error\s+-\n\s+State observation\s+current\n\s+Replication state\s+error\n/,
         );
         for (const item of items) expect(out.stdoutText).toContain(String(item.id));
         expect(out.stdoutText).not.toContain("omitted");
@@ -1087,6 +1211,48 @@ describe("generated warehouse commands", () => {
             },
           },
         ]);
+      });
+    });
+
+    it.effect("accepts every displayed layout JSON example through the parser", () => {
+      const examples = entryOf("warehouse tables layout update").examples ?? [];
+      const expected = [
+        {
+          partition_by: [{ column: "event_at", transform: { kind: "day" } }],
+          sort_by: {
+            kind: "columns",
+            columns: [
+              { name: "tenant_id", direction: "asc" },
+              { name: "event_at", direction: "desc", nulls: "last" },
+            ],
+          },
+        },
+        { partition_by: [{ column: "tenant_id", transform: { kind: "bucket", count: 8 } }] },
+        { partition_by: [], sort_by: { kind: "none" } },
+        { partition_by: null, sort_by: null },
+      ];
+      expect(examples).toHaveLength(expected.length);
+      return Effect.gen(function* () {
+        for (const [index, example] of examples.entries()) {
+          const args =
+            example.command
+              .replace(/^supabase /, "")
+              .replace("<table-id>", "16385")
+              .match(/'[^']*'|\S+/g)
+              ?.map((token) => token.replace(/^'|'$/g, "")) ?? [];
+          const preview = args.includes("--dry-run");
+          const { sent, out, run } = setup(args, { yes: true, route: accepted });
+          yield* run;
+          const body = preview
+            ? (yield* Schema.decodeEffect(
+                Schema.fromJsonString(Schema.Struct({ body: Schema.Unknown })),
+              )(out.stdoutText)).body
+            : sent[0]?.body;
+          expect(body).toEqual({
+            data: { type: "warehouse_table_layout", attributes: expected[index] },
+          });
+          expect(sent).toHaveLength(preview ? 0 : 1);
+        }
       });
     });
 
@@ -1948,6 +2114,16 @@ describe("generated warehouse commands", () => {
   });
 
   describe("help", () => {
+    it.effect("distinguishes Management API capabilities from SQL EXPLAIN in status help", () => {
+      const { console, calls } = fakeConsole();
+      const { run } = setup(["warehouse", "status", "--help"], { route: accepted });
+      return Effect.gen(function* () {
+        yield* run.pipe(Effect.provideService(Console.Console, console));
+        expect(calls.join("\n")).toContain("Capabilities describe Management API operations");
+        expect(calls.join("\n")).toContain("SQL EXPLAIN");
+      });
+    });
+
     it.effect("shows a body file in the layout update example", () => {
       const { console, calls } = fakeConsole();
       const { run } = setup(["warehouse", "tables", "layout", "update", "--help"], {
@@ -1958,6 +2134,10 @@ describe("generated warehouse commands", () => {
         expect(calls.join("\n")).toContain(
           "supabase warehouse tables layout update <table-id> --file <path>",
         );
+        expect(calls.join("\n")).toContain(
+          `--partition-by '[{"column":"event_at","transform":{"kind":"day"}}]'`,
+        );
+        expect(calls.join("\n")).toContain(`--sort-by '{"kind":"none"}'`);
       });
     });
 
@@ -2724,6 +2904,21 @@ describeHostedConsent("warehouse replication resync", {
         ),
         Effect.provide(cliServices(workdir, args)),
       ),
+      mutations: () => sent.filter((request) => request.method !== "GET").length,
+    };
+  },
+});
+
+describeHostedConsent("warehouse replication restart", {
+  command: commandTreeFor({ apiFeatures: ["warehouse"] }).get("warehouse replication restart")!
+    .command,
+  invoke: ({ workdir, yes }) => {
+    const { args, sent, run } = execute(["warehouse", "replication", "restart"], {
+      yes,
+      route: accepted,
+    });
+    return {
+      run: run.pipe(Effect.provide(cliServices(workdir, args))),
       mutations: () => sent.filter((request) => request.method !== "GET").length,
     };
   },
