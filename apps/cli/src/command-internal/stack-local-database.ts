@@ -15,6 +15,7 @@ import { StackApi } from "./stack-api.ts";
 import {
   describeStackSelector,
   selectedStack,
+  sharedMemorySuggestion,
   unmatchedStackIdAdvice,
   type StackSelectorFlags,
   StackTargetError,
@@ -59,11 +60,14 @@ const unavailable = (cause: { readonly message: string; readonly suggestion?: st
         ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
         cause,
       });
-const startFailed = (cause: { readonly message: string }) =>
-  new LocalDbRunningError({
+const startFailed = (cause: { readonly message: string }) => {
+  const suggestion = sharedMemorySuggestion(cause.message);
+  return new LocalDbRunningError({
     message: `failed to start local database: ${cause.message}`,
+    ...(suggestion === undefined ? {} : { suggestion }),
     cause,
   });
+};
 
 type StackInstances = Effect.Success<Stack["services"]["list"]>;
 

@@ -403,3 +403,9 @@ export const failedOutcomesDetail = (
     ? undefined
     : failed.map((outcome) => `${label(outcome.id)}: ${outcome.error ?? "failed"}`).join("\n");
 };
+
+/* ENOSPC only: other shmget errnos are size or RAM limits, not the segment limit stacks use up. */
+export const sharedMemorySuggestion = (text: string): string | undefined =>
+  text.includes("could not create shared memory segment: No space left on device")
+    ? "Each running native stack's database holds a shared memory segment, and the system limit for them has been reached. Run `supabase stack list`, then stop native stacks you no longer use with `supabase stack stop --stack <id>`, or find stacks whose project directory no longer exists with `supabase stack prune --dry-run`."
+    : undefined;
