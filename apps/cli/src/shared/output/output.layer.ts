@@ -231,6 +231,7 @@ export const textOutputLayer = Layer.effect(
         readonly placeholder?: string;
         readonly maxItems?: number;
         readonly stream?: "stdout" | "stderr";
+        readonly silentCancel?: boolean;
       } = {},
     ) =>
       Effect.gen(function* () {
@@ -263,10 +264,12 @@ export const textOutputLayer = Layer.effect(
               }),
         );
         if (isCancel(value)) {
-          cancel(
-            "Operation cancelled.",
-            clackOutput !== undefined ? { output: clackOutput } : undefined,
-          );
+          if (behavior.silentCancel !== true) {
+            cancel(
+              "Operation cancelled.",
+              clackOutput !== undefined ? { output: clackOutput } : undefined,
+            );
+          }
           return yield* Effect.interrupt;
         }
         return value;

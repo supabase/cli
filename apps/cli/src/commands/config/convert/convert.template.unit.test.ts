@@ -1,5 +1,5 @@
-import { convertCliConfigTomlToJsonc, parseJsonc } from "@supabase/config/internal";
-import { Effect } from "effect";
+import { convertCliConfigJsoncToToml, convertCliConfigTomlToJsonc } from "@supabase/config/convert";
+import { parseJsonc } from "@supabase/config/internal";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
@@ -47,7 +47,7 @@ function commentedMembers(lines: ReadonlyArray<string>): Array<readonly [number,
 
 describe("converted init template", () => {
   const template = renderCliConfigTemplate("demo", false);
-  const jsonc = Effect.runSync(convertCliConfigTomlToJsonc(template)).text;
+  const jsonc = convertCliConfigTomlToJsonc(template).text;
   const lines = jsonc.split("\n");
   const example = /^# (\[[^\]]+\]|[\w."'-]+ = .+)$/;
 
@@ -77,5 +77,16 @@ describe("converted init template", () => {
     expect(members.length).toBeGreaterThan(30);
     expect(seen.get("auth.hook.custom_access_token.enabled")).toBe(true);
     expect(seen).toEqual(expected);
+  });
+
+  it("round-trips through config.toml with the same values and the same example comments", () => {
+    const { text: toml, movedComments } = convertCliConfigJsoncToToml(jsonc);
+    const examples = (text: string) => text.split("\n").filter((line) => example.test(line));
+
+    expect(toml.startsWith("#:schema ")).toBe(true);
+    expect(parseToml(toml)).toEqual(parseToml(template));
+    expect(examples(toml).length).toBeGreaterThan(30);
+    expect(examples(toml).toSorted()).toEqual(examples(template).toSorted());
+    expect(movedComments).toEqual([]);
   });
 });

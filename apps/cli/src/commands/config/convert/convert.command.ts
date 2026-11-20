@@ -10,13 +10,28 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { CONVERT_REASONS } from "../../../telemetry/command-telemetry-attributes.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { configConvert } from "./convert.handler.ts";
 
+const CONVERT_TARGETS = ["json", "toml"] as const;
+
 const config = {
   dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the converted config.jsonc to stdout without writing any file."),
+    Flag.withDescription("Print the converted configuration to stdout without writing files."),
     Flag.withDefault(false),
+  ),
+  to: Flag.Literals("to", CONVERT_TARGETS).pipe(
+    Flag.withDescription(
+      "Choose json to write supabase/config.jsonc or toml to write supabase/config.toml.",
+    ),
+    Flag.withDefault("json"),
+  ),
+  reason: Flag.Literals("reason", CONVERT_REASONS).pipe(
+    Flag.withDescription(
+      "Why you're switching back to TOML. The CLI uses this choice only for usage telemetry.",
+    ),
+    Flag.optional,
   ),
 } as const;
 
@@ -31,15 +46,15 @@ const configConvertRuntimeLayer = Layer.mergeAll(
 const configConvertHandler = (flags: ConfigConvertFlags) =>
   configConvert(flags).pipe(
     // The handler rejects `-o/--output` itself with a pointer to `--output-format`.
-    withCommandTelemetry({ flags, outputFormats: GLOBAL_OUTPUT_FORMATS }),
+    withCommandTelemetry({ flags, config, outputFormats: GLOBAL_OUTPUT_FORMATS }),
     withJsonErrorHandling,
   );
 
 export const configConvertCommand = Command.make("convert", config).pipe(
   Command.withDescription(
-    "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and moves the TOML file to supabase/config.toml.bak. Everyone on the project needs Supabase CLI 3.1.0 or later.",
+    "Converts supabase/config.toml to supabase/config.jsonc, carrying comments over, and moves the TOML file to supabase/config.toml.bak. Everyone on the project needs Supabase CLI 3.1.0 or later. With `--to toml`, converts supabase/config.jsonc (or config.json) back to supabase/config.toml and moves the JSON file to a `.bak` backup.",
   ),
-  Command.withShortDescription("Convert config.toml to config.jsonc"),
+  Command.withShortDescription("Convert config.toml to config.jsonc, or back with --to toml"),
   Command.withExamples([
     {
       command: "supabase config convert --dry-run",
@@ -49,8 +64,12 @@ export const configConvertCommand = Command.make("convert", config).pipe(
       command: "supabase config convert",
       description: "Convert supabase/config.toml to supabase/config.jsonc",
     },
+    {
+      command: "supabase config convert --to toml",
+      description: "Convert supabase/config.jsonc back to supabase/config.toml",
+    },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["dry-run"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["dry-run", "to", "reason"] }),
   Command.withHandler(configConvertHandler),
   Command.provide(configConvertRuntimeLayer),
   withTargetPolicy({ group: "local-only", consent: "none" }),
