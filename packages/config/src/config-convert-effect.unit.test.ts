@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { Cause, Effect, Exit } from "effect";
 import { CliConfigConvertError } from "./config-convert.ts";
-import { convertCliConfigTomlToJsonc } from "./config-convert-effect.ts";
+import {
+  convertCliConfigJsoncToToml,
+  convertCliConfigTomlToJsonc,
+} from "./config-convert-effect.ts";
 
 describe("convertCliConfigTomlToJsonc (Effect)", () => {
   test("succeeds with the converted document", () => {
@@ -21,6 +24,23 @@ describe("convertCliConfigTomlToJsonc (Effect)", () => {
 
   test("a non-refusal throw is a defect", () => {
     const exit = Effect.runSyncExit(convertCliConfigTomlToJsonc(undefined as never));
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+  });
+});
+
+describe("convertCliConfigJsoncToToml (Effect)", () => {
+  test("succeeds with the converted document", () => {
+    expect(Effect.runSync(convertCliConfigJsoncToToml('{ "a": 1 }')).text).toContain("a = 1");
+  });
+
+  test("a refusal fails typed", () => {
+    const error = Effect.runSync(Effect.flip(convertCliConfigJsoncToToml('{ "a": null }')));
+    expect(error).toBeInstanceOf(CliConfigConvertError);
+    expect(error.reason).toBe("unsupported_value");
+  });
+
+  test("a non-refusal throw is a defect", () => {
+    const exit = Effect.runSyncExit(convertCliConfigJsoncToToml(undefined as never));
     expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 import { CliConfigConvertError } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
+import { toTomlReport } from "./convert-to-toml.format.ts";
 import {
   convertReport,
   PLAIN_REPORT_STYLE,
@@ -92,5 +93,34 @@ describe("convert format", () => {
       "    <g>+</g> Created  <c>supabase/config.jsonc</c>",
       "    <u>></u> Moved    <c>supabase/config.toml</c> <d>to</d> <c>supabase/config.toml.bak</c>",
     ]);
+  });
+
+  it("escapes control characters in relocated comments of the forward report", () => {
+    const report = convertReport({
+      dryRun: false,
+      backup: "supabase/config.toml.bak",
+      undo: "mv a b",
+      moved: [{ line: 1, text: "# \u001b[31mred", anchor: ["a\nb"] }],
+      vscodeUpdated: false,
+      vscodeFailure: undefined,
+    });
+
+    expect(report).toContain("\\u001b");
+    expect(report).toContain("a\\u000ab");
+    expect(report).not.toContain("\u001b");
+  });
+
+  it("escapes control characters in relocated comments of the TOML report", () => {
+    const report = toTomlReport({
+      dryRun: false,
+      jsonFile: "config.jsonc",
+      backup: "supabase/config.jsonc.bak",
+      undo: "mv a b",
+      moved: [{ line: 1, text: "// \u001b[31mred", anchor: ["a\nb"] }],
+    });
+
+    expect(report).toContain("\\u001b");
+    expect(report).toContain("a\\u000ab");
+    expect(report).not.toContain("\u001b");
   });
 });

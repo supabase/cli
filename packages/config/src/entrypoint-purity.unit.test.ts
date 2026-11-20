@@ -542,6 +542,7 @@ describe("src/internal.ts export surface", () => {
         "cliConfigSmtpIssues",
         "cliConfigStandIn",
         "collectCliConfigEnvReferences",
+        "convertCliConfigJsoncToToml",
         "convertCliConfigTomlToJsonc",
         "createCliConfigDocumentText",
         "decodeCliConfigDocumentForValidationEffect",
@@ -598,6 +599,7 @@ describe("src/convert.ts stays effect-free", () => {
     expect(Object.keys(convertEntrypoint).sort()).toMatchInlineSnapshot(`
       [
         "CliConfigConvertError",
+        "convertCliConfigJsoncToToml",
         "convertCliConfigTomlToJsonc",
       ]
     `);

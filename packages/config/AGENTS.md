@@ -22,10 +22,11 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`, `DiffProjectConfigOptions` — a pure,
   synchronous comparison between two `ProjectConfig` projections (ADR 0022), promoted here from
   `./internal` now that Studio is a second consumer.
-- `@supabase/config/convert` — the `config.toml` → `config.jsonc` converter as plain, synchronous,
-  effect-free code: `convertCliConfigTomlToJsonc(source)` returns the converted document or throws
-  `CliConfigConvertError` (a plain `Error` subclass with `_tag`, `reason`, `detail`, `sourceLine?`),
-  plus the `CliConfigConverted`/`MovedTomlComment` types. Its import graph reaches only
+- `@supabase/config/convert` — the `config.toml` ↔ `config.jsonc` converters as plain, synchronous,
+  effect-free code: `convertCliConfigTomlToJsonc(source)` and `convertCliConfigJsoncToToml(source)`
+  return the converted document or throw `CliConfigConvertError` (a plain `Error` subclass with
+  `_tag`, `reason`, `detail`, `sourceLine?`), plus the `CliConfigConverted`/`CliConfigConvertedToml`
+  and `MovedTomlComment`/`MovedJsoncComment` types. Its import graph reaches only
   `smol-toml` and `jsonc-parser` (pinned by `src/entrypoint-purity.unit.test.ts`).
 - `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
   consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
@@ -51,7 +52,7 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
-  `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` (`supabase config convert`: a pure, verified `config.toml` → `config.jsonc` converter that carries comments over; `./internal` wraps the plain `./convert` function in an Effect failing with `CliConfigConvertError`) with its `MovedTomlComment` type, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` and `convertCliConfigJsoncToToml` (`supabase config convert`, with `--to toml` for the reverse: pure, verified converters that carry comments over; `./internal` wraps the plain `./convert` functions in an Effect failing with `CliConfigConvertError`) with their `MovedTomlComment`/`CliConfigConvertedToml`/`MovedJsoncComment` types, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
   `remoteProjectIdEntries`, the atomic single-file writers `writeCliConfigDocumentText` (replace) and
   `createCliConfigDocumentText` (create, never replacing)/`CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
