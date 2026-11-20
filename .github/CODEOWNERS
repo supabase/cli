@@ -21,5 +21,4 @@
 /.github/workflows/github-scripts-ci.yml @supabase/cli
 /.github/workflows/cli-artifacts-infra.yml @supabase/cli
 
-# The canonical PostHog event and property catalog belongs to Growth Engineering alone.
 /apps/cli/src/shared/telemetry/event-catalog.ts @supabase/growth-eng
