@@ -69,7 +69,7 @@ export const configConvertCommand = Command.make("convert", config).pipe(
       description: "Convert supabase/config.jsonc back to supabase/config.toml",
     },
   ]),
-  withPermissions({ operations: [], noApiEffectFlags: ["dry-run"] }),
+  withPermissions({ operations: [], noApiEffectFlags: ["dry-run", "to", "reason"] }),
   Command.withHandler(configConvertHandler),
   Command.provide(configConvertRuntimeLayer),
   withTargetPolicy({ group: "local-only", consent: "none" }),
