@@ -167,12 +167,16 @@ const bracketBalance = (text: string): number => {
   return depth;
 };
 
-const displayPath = (path: ReadonlyArray<string>): string =>
-  path.reduce(
-    (text, segment) =>
-      segment.startsWith("[") ? text + segment : text === "" ? segment : `${text}.${segment}`,
-    "",
-  );
+const BARE_KEY = /^[A-Za-z0-9_-]+$/;
+
+const displayPath = (path: ReadonlyArray<string | number>): string =>
+  path.reduce<string>((text, segment) => {
+    if (typeof segment === "number") {
+      return `${text}[${segment}]`;
+    }
+    const key = BARE_KEY.test(segment) ? segment : JSON.stringify(segment);
+    return text === "" ? key : `${text}.${key}`;
+  }, "");
 
 /** Every comment is appended to `comments`; a comment's id is its index there. */
 class Parser {
@@ -228,7 +232,7 @@ class Parser {
     return { lead, root, end };
   }
 
-  value(path: ReadonlyArray<string>): JsoncNode {
+  value(path: ReadonlyArray<string | number>): JsoncNode {
     const token = this.peek();
     if (token === undefined) {
       return refuse("parse_error", "unexpected end of document");
@@ -259,7 +263,7 @@ class Parser {
     return refuse("parse_error", "unexpected token", token.line);
   }
 
-  private array(path: ReadonlyArray<string>): ArrayNode {
+  private array(path: ReadonlyArray<string | number>): ArrayNode {
     const open = this.peek();
     this.index++;
     const node: ArrayNode = { kind: "array", items: [], tail: [], multiline: false };
@@ -293,7 +297,7 @@ class Parser {
         return node;
       } else {
         const item: ArrayItem = {
-          value: this.value([...path, `[${node.items.length}]`]),
+          value: this.value([...path, node.items.length]),
           lead: pending,
         };
         pending = [];
@@ -305,7 +309,7 @@ class Parser {
     return refuse("parse_error", "unterminated array", open?.line);
   }
 
-  private object(path: ReadonlyArray<string>): ObjectNode {
+  private object(path: ReadonlyArray<string | number>): ObjectNode {
     this.index++;
     const slots: Array<Slot> = [];
     const keys = new Set<string>();

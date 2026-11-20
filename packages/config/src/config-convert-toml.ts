@@ -15,12 +15,14 @@ import { JsoncSyntaxError, parseJsonc } from "./jsonc.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 import { readCliConfigSchemaDeclaration } from "./schema-version.ts";
 
+/** A JSONC comment that moved to a nearby TOML line, with its source line and anchor key path. */
 export interface MovedJsoncComment {
   readonly line: number;
   readonly text: string;
   readonly anchor: ReadonlyArray<string>;
 }
 
+/** The TOML text converted from a JSONC config, with its schema reference and moved comments. */
 export interface CliConfigConvertedToml {
   readonly text: string;
   readonly schemaRef: string;

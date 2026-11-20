@@ -18,18 +18,18 @@ const CONVERT_TARGETS = ["json", "toml"] as const;
 
 const config = {
   dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the converted config to stdout without writing any file."),
+    Flag.withDescription("Print the converted configuration to stdout without writing files."),
     Flag.withDefault(false),
   ),
   to: Flag.Literals("to", CONVERT_TARGETS).pipe(
     Flag.withDescription(
-      "Format to convert supabase/config to: json (writes config.jsonc) or toml.",
+      "Choose json to write supabase/config.jsonc or toml to write supabase/config.toml.",
     ),
     Flag.withDefault("json"),
   ),
   reason: Flag.Literals("reason", CONVERT_REASONS).pipe(
     Flag.withDescription(
-      "Why you're switching back to TOML. Only recorded as anonymous usage telemetry.",
+      "Why you're switching back to TOML. The CLI uses this choice only for usage telemetry.",
     ),
     Flag.optional,
   ),

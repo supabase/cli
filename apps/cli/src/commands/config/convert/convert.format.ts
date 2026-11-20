@@ -1,5 +1,6 @@
 import type { CliConfigConvertError, MovedTomlComment } from "@supabase/config/internal";
 
+import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
 import { shellQuoteArgument, type ShellPlatform } from "../../../command-internal/shell-quote.ts";
 
 export const CONFIG_JSONC_MIN_CLI_VERSION = "3.1.0";
@@ -191,7 +192,7 @@ export function convertReport(
       `    ${dim("Comments inside nested arrays or inline tables move to the line above their key.")}`,
       ...input.moved.map(
         (comment) =>
-          `    line ${comment.line} → ${code(comment.anchor.join("."))}  ${dim(comment.text)}`,
+          `    line ${comment.line} → ${code(escapeControlCharacters(comment.anchor.join(".")))}  ${dim(escapeControlCharacters(comment.text))}`,
       ),
     );
   }

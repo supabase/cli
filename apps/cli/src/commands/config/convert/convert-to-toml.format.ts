@@ -1,6 +1,7 @@
 import type { MovedJsoncComment } from "@supabase/config/internal";
 
 import { shellQuoteArgument, type ShellPlatform } from "../../../command-internal/shell-quote.ts";
+import { escapeControlCharacters } from "../../../shared/output/escape-control-characters.ts";
 import {
   CONVERT_REASONS,
   type ConvertReason,
@@ -12,7 +13,7 @@ export const REASON_WITHOUT_TOML_TARGET_MESSAGE =
 
 export const ALREADY_TOML_MESSAGE = "supabase/config.toml is already TOML. Nothing to convert.";
 
-export const REASON_PROMPT = "What made you switch back to TOML? (optional, anonymous)";
+export const REASON_PROMPT = "What made you switch back to TOML? (optional)";
 
 const SKIP_REASON_VALUE = "skip";
 
@@ -168,7 +169,7 @@ export function toTomlReport(
       `    ${dim("Comments that cannot sit at their place in TOML move to a nearby line.")}`,
       ...input.moved.map(
         (comment) =>
-          `    line ${comment.line} → ${code(anchorLabel(comment.anchor))}  ${dim(comment.text)}`,
+          `    line ${comment.line} → ${code(escapeControlCharacters(anchorLabel(comment.anchor)))}  ${dim(escapeControlCharacters(comment.text))}`,
       ),
     );
   }

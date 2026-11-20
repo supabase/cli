@@ -109,6 +109,13 @@ describe("convertCliConfigJsoncToToml", () => {
     });
   });
 
+  test("quotes keys that are not bare and indexes array items in the null path", () => {
+    expect(refusalOf('{ "a.b": [ { "c": null } ] }')).toMatchObject({
+      reason: "unsupported_value",
+      detail: expect.stringContaining('`"a.b"[0].c` is null'),
+    });
+  });
+
   test("refuses syntax errors and duplicate keys as parse errors", () => {
     expect(refusalOf('{ "a": ')).toMatchObject({ reason: "parse_error" });
     expect(refusalOf('{ "a": 1, "a": 2 }')).toMatchObject({

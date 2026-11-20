@@ -2,7 +2,7 @@
 
 Converts `supabase/config.toml` to `supabase/config.jsonc` and moves the TOML file to `supabase/config.toml.bak`. Comments are carried over as `//` comments and the document gets a `$schema` entry, so editors validate it against the hosted config schema.
 
-`--to json` is the default and selects this conversion; `--to toml` converts back (see below).
+`--to json` is the default. For `--to toml`, see [Convert back to TOML](#convert-back-to-toml).
 
 The conversion reads the file as written: values keep their meaning, `env(NAME)` references are copied as text, and nothing is resolved from your environment. Numbers are written in JSON form, so `0x1F` becomes `31` and `1_000` becomes `1000`. The converted document is parsed again and compared with the original before anything is written; if the two differ, the file is not valid UTF-8, or it holds a value JSON cannot represent (a TOML date, `inf` or `nan`), the command refuses and leaves `config.toml` untouched.
 
@@ -20,9 +20,9 @@ If only `supabase/config.json` or `supabase/config.jsonc` exists, the command re
 
 ## Convert back to TOML
 
-`--to toml` converts `supabase/config.jsonc` or `supabase/config.json` to `supabase/config.toml` and moves the JSON file to `supabase/config.jsonc.bak` (or `config.json.bak`). It works for any project, including one created on JSONC. The `$schema` entry becomes a `#:schema` line, comments are carried over as `#` comments, and commented-out members become commented-out TOML (`# key = value`, `# [section]`). Comments that TOML has no place for, such as one inside an array or inline table, move to a nearby line and the command lists each one. The result is parsed again and compared with the original before anything is written; the command refuses and changes nothing if they differ, or if the file holds a `null` or is nested too deeply to convert.
+`--to toml` converts `supabase/config.jsonc` or `supabase/config.json` to `supabase/config.toml` and moves the JSON file to a backup such as `supabase/config.jsonc.bak` (numbered, such as `config.jsonc.2.bak`, when that name is taken). It works for any project, including one created on JSONC. The `$schema` entry becomes a `#:schema` line, comments are carried over as `#` comments, and commented-out members become commented-out TOML (`# key = value`, `# [section]`), except inside a value TOML has to write inline, such as an array mixing tables and scalars, where the commented-out member moves above the key as written. Comments that TOML has no place for, such as one inside an array or inline table, move to a nearby line and the command lists each one. Before writing, the CLI parses the TOML and compares its values with the original. If they differ, it stops without writing. It also stops without writing if the file contains `null` or is nested too deeply to convert.
 
-If `supabase/config.toml` already exists, the command fails, because converting would overwrite it; move or delete it first. If the project is already on `config.toml`, it reports that there is nothing to convert and exits 0. `--dry-run` prints the TOML to stdout and the summary to stderr, and the printed undo command restores the JSON file.
+If `supabase/config.toml` already exists, the command fails, because converting would overwrite it; move or delete it first. If the project is already on `config.toml`, it reports that there is nothing to convert and exits 0. `--dry-run` prints the TOML to stdout and the summary to stderr in text mode; with `--output-format json`, the TOML is in the result's `content` field. The printed undo command restores the JSON file.
 
 In an interactive terminal, unless you've opted out of telemetry, the command then asks what made you switch back. The answer is optional and is recorded with the command's telemetry. `--reason editor|third-party-tool|older-cli|ci-or-deploy|ai-agent|preference|other` answers it without the prompt, and requires `--to toml`.
 

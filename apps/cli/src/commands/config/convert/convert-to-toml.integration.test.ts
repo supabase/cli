@@ -23,7 +23,7 @@ import {
   type ConvertReason,
 } from "../../../telemetry/command-telemetry-attributes.ts";
 import { configConvert } from "./convert.handler.ts";
-import { jsonSymlinkMessage, undoToTomlCommand } from "./convert-to-toml.format.ts";
+import { jsonSymlinkMessage } from "./convert-to-toml.format.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-convert-to-toml-");
 
@@ -41,6 +41,7 @@ interface SetupOpts {
   readonly format?: OutputFormat;
   readonly interactive?: boolean;
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly promptSelectInterrupt?: boolean;
   readonly consent?: "granted" | "denied";
 }
 
@@ -51,6 +52,9 @@ function setup(opts: SetupOpts = {}) {
     ...(opts.promptSelectResponses === undefined
       ? {}
       : { promptSelectResponses: opts.promptSelectResponses }),
+    ...(opts.promptSelectInterrupt === undefined
+      ? {}
+      : { promptSelectInterrupt: opts.promptSelectInterrupt }),
   });
   const telemetry = mockTelemetryStateTracked();
   const recorded: Array<CommandTelemetryAttributeValues> = [];
@@ -130,7 +134,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* materializedConfig()).toEqual(before);
       expect(out.stdoutText).toContain("Converted supabase/config.jsonc to supabase/config.toml");
       expect(out.stdoutText).toContain(
-        undoToTomlCommand("", "supabase/config.jsonc.bak", "config.jsonc", "posix"),
+        "mv -- supabase/config.jsonc.bak supabase/config.jsonc && rm -- supabase/config.toml",
       );
       expect(recorded).toContainEqual({ convert_target: "toml" });
       expect(recorded).toContainEqual({ convert_moved_comment_count: 0 });
@@ -269,6 +273,40 @@ describe("config convert --to toml integration", () => {
 
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(recorded).toContainEqual({ convert_target: "toml" });
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("records the target when the workdir does not exist or is a file", () => {
+    const { layer, recorded } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(tempRoot.current, { recursive: true });
+
+      const missing = yield* run().pipe(Effect.provide(layer), Effect.exit);
+      expect(missing._tag).toBe("Failure");
+      expect(recorded).toContainEqual({ convert_target: "toml" });
+
+      yield* fs.writeFileString(tempRoot.current, "not a directory");
+      recorded.length = 0;
+
+      const file = yield* run().pipe(Effect.provide(layer), Effect.exit);
+      expect(file._tag).toBe("Failure");
+      expect(recorded).toContainEqual({ convert_target: "toml" });
+      yield* fs.remove(tempRoot.current);
+      yield* fs.makeDirectory(tempRoot.current);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("converts and records no reason when the picker is interrupted", () => {
+    const { layer, out, recorded } = setup({ interactive: true, promptSelectInterrupt: true });
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.jsonc"], SIMPLE_JSONC);
+
+      yield* run().pipe(Effect.provide(layer));
+
+      expect(out.promptSelectCalls).toHaveLength(1);
+      expect(yield* exists("supabase", "config.toml")).toBe(true);
+      expect(reasonsRecorded(recorded)).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer));
   });
 

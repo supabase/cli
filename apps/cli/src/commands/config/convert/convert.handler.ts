@@ -99,6 +99,9 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* Effect.gen(function* () {
+    if (flags.to === "toml") {
+      yield* recordCommandTelemetry({ [PropConvertTarget]: "toml" });
+    }
     if (Option.isSome(outputFlag)) {
       return yield* new ConfigConvertOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config convert"),
@@ -115,7 +118,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       });
     }
     if (flags.to === "toml") {
-      yield* recordCommandTelemetry({ [PropConvertTarget]: "toml" });
       return yield* configConvertToToml(flags);
     }
 
