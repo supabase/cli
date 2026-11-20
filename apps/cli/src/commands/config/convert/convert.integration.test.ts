@@ -9,7 +9,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -54,6 +54,7 @@ function setup(opts: SetupOpts = {}) {
       opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
+    mockTty(),
     BunServices.layer,
   );
   return { layer, out, telemetry };
@@ -92,7 +93,7 @@ const materializedConfig = Effect.fnUntraced(
   Effect.provide(Layer.mergeAll(configValuesLayer(), BunServices.layer)),
 );
 
-const run = (dryRun = false) => configConvert({ dryRun });
+const run = (dryRun = false) => configConvert({ dryRun, to: "json", reason: Option.none() });
 
 const configTomlPath = projectPath("supabase", "config.toml");
 

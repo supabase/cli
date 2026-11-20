@@ -45,9 +45,9 @@ function vscodeFailureWarning(detail: string): string {
   return `Could not update .vscode/settings.json: ${detail}. ${VSCODE_MANUAL_STEP}`;
 }
 
-export function refusalMessage(error: CliConfigConvertError): string {
+export function refusalMessage(error: CliConfigConvertError, file = "config.toml"): string {
   const location = error.sourceLine === undefined ? "" : ` at line ${error.sourceLine}`;
-  return `cannot convert supabase/config.toml${location}: ${error.detail}. supabase/config.toml was not changed.`;
+  return `cannot convert supabase/${file}${location}: ${error.detail}. supabase/${file} was not changed.`;
 }
 
 export const NOT_UTF8_MESSAGE =

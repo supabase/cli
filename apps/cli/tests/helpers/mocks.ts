@@ -264,6 +264,7 @@ export function mockOutput(
           autocompleteThreshold?: number;
           placeholder?: string;
           maxItems?: number;
+          silentCancel?: boolean;
         }
       | undefined;
   }> = [];

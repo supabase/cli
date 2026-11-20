@@ -32,6 +32,8 @@ interface OutputSelectBehavior {
    * signed token).
    */
   readonly stream?: "stdout" | "stderr";
+  /** Skips clack's "Operation cancelled." line when the picker is cancelled; the cancel still interrupts. */
+  readonly silentCancel?: boolean;
 }
 
 /**
