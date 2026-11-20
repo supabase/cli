@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { inspectDbBloatCommand } from "./bloat/bloat.command.ts";
 import { inspectDbBlockingCommand } from "./blocking/blocking.command.ts";
@@ -29,6 +30,7 @@ import { inspectDbVacuumStatsCommand } from "./vacuum-stats/vacuum-stats.command
 import { inspectDbXidAgeCommand } from "./xid-age/xid-age.command.ts";
 
 export const inspectDbCommand = Command.make("db").pipe(
+  withSidebar({ title: "Inspect database statistics" }),
   Command.withDescription(
     "Tools to inspect your Supabase database. They inspect the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
   ),

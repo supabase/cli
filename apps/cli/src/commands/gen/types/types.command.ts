@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag, Param } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -122,6 +123,7 @@ const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandCo
   );
 
 export const genTypesCommand = Command.make("types", commandConfig).pipe(
+  withSidebar({ title: "Generate types (Postgres schema)" }),
   Command.withDescription("Generate types from Postgres schema."),
   Command.withShortDescription("Generate types from Postgres schema"),
   Command.withExamples([

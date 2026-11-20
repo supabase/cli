@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbVacuumStats } from "./vacuum-stats.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbVacuumStatsCommand = Command.make("vacuum-stats", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show statistics related to vacuum operations" }),
   Command.withDescription("Show statistics related to vacuum operations per table."),
   Command.withShortDescription("Show vacuum stats"),
   withPermissions(INSPECT_DB_PERMISSIONS),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -27,6 +28,7 @@ const config = {
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationUpCommand = Command.make("up", config).pipe(
+  withSidebar({ title: "Apply pending migration files" }),
   Command.withDescription("Apply pending migrations to a database."),
   Command.withShortDescription("Apply pending migrations to a database"),
   Command.withHandler((flags) =>

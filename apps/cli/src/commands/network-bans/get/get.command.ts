@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -26,6 +27,7 @@ const config = {
 export type NetworkBansGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkBansGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve network bans" }),
   Command.withDescription("Get the current network bans."),
   Command.withShortDescription("Get the current network bans"),
   withPermissions(

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -24,6 +25,7 @@ const config = {
 export type DbStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbStartCommand = Command.make("start", config).pipe(
+  withSidebar({ title: "Start only the local database" }),
   Command.withDescription("Starts local Postgres database."),
   Command.withShortDescription("Starts local Postgres database"),
   Command.withHandler((flags) =>
