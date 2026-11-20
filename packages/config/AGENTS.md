@@ -5,8 +5,8 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 
 ## Entrypoints
 
-Six supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): four
-module entrypoints (`.`, `./io`, `./effect`, `./internal`) plus two generated JSON Schema
+Seven supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): five
+module entrypoints (`.`, `./io`, `./effect`, `./convert`, `./internal`) plus two generated JSON Schema
 artifacts (`./schema.json`, `./project-schema.json`).
 
 - `@supabase/config` (`.`) — pure, browser/edge-safe surface. `CliConfigSchema`/`ProjectConfigSchema`

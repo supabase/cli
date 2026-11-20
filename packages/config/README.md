@@ -358,7 +358,7 @@ try {
 
 ## Semver and the published contract
 
-The runtime export surface of `.`, `./io`, and `./effect`, plus the two generated JSON Schema
+The runtime export surface of `.`, `./io`, `./effect`, and `./convert`, plus the two generated JSON Schema
 artifacts (`./schema.json`, `./project-schema.json`), is this package's published contract.
 `./internal` carries no such guarantee. See [AGENTS.md](https://github.com/supabase/cli/blob/develop/packages/config/AGENTS.md) for how that contract is
 enforced (export-surface snapshots, purity walkers, and a base-vs-head type-surface diff advisory
