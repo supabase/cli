@@ -76,7 +76,7 @@ It is emitted once per handled command invocation and includes:
   file is read
 - `convert_reason` (`editor`, `third-party-tool`, `older-cli`, `ci-or-deploy`, `ai-agent`,
   `preference` or `other`) on `config convert --to toml`, from `--reason` or the interactive
-  prompt; omitted when the user skips
+  prompt, which is not shown when telemetry is opted out; omitted when the user skips
 - `convert_moved_comment_count` (number) on `config convert` after a conversion renders, in either
   direction, counting comments that could not keep their place and moved to a nearby line
 

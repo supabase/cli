@@ -9,7 +9,12 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
@@ -55,6 +60,7 @@ function setup(opts: SetupOpts = {}) {
     ),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
     mockTty(),
+    mockTelemetryRuntime(),
     BunServices.layer,
   );
   return { layer, out, telemetry };

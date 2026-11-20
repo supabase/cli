@@ -24,7 +24,7 @@ If only `supabase/config.json` or `supabase/config.jsonc` exists, the command re
 
 If `supabase/config.toml` already exists, the command fails, because converting would overwrite it; move or delete it first. If the project is already on `config.toml`, it reports that there is nothing to convert and exits 0. `--dry-run` prints the TOML to stdout and the summary to stderr, and the printed undo command restores the JSON file.
 
-In an interactive terminal, the command then asks what made you switch back. The answer is optional and is recorded with the command's telemetry. `--reason editor|third-party-tool|older-cli|ci-or-deploy|ai-agent|preference|other` answers it without the prompt, and requires `--to toml`.
+In an interactive terminal, unless you've opted out of telemetry, the command then asks what made you switch back. The answer is optional and is recorded with the command's telemetry. `--reason editor|third-party-tool|older-cli|ci-or-deploy|ai-agent|preference|other` answers it without the prompt, and requires `--to toml`.
 
 ## Undo
 

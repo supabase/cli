@@ -8,7 +8,12 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
@@ -36,6 +41,7 @@ interface SetupOpts {
   readonly format?: OutputFormat;
   readonly interactive?: boolean;
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly consent?: "granted" | "denied";
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -55,6 +61,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     mockTty({ stdinIsTty: opts.interactive ?? false, stdoutIsTty: opts.interactive ?? false }),
+    mockTelemetryRuntime({ consent: opts.consent ?? "granted" }),
     Layer.succeed(CommandTelemetryAttributes, {
       record: (values) => Effect.sync(() => void recorded.push(values)),
     }),
@@ -214,6 +221,19 @@ describe("config convert --to toml integration", () => {
 
       expect(out.promptSelectCalls).toHaveLength(1);
       expect(reasonsRecorded(recorded)).toEqual(["editor"]);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("does not ask for a reason when telemetry is opted out", () => {
+    const { layer, out, recorded } = setup({ interactive: true, consent: "denied" });
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.jsonc"], SIMPLE_JSONC);
+
+      yield* run().pipe(Effect.provide(layer));
+
+      expect(yield* exists("supabase", "config.toml")).toBe(true);
+      expect(out.promptSelectCalls).toEqual([]);
+      expect(reasonsRecorded(recorded)).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer));
   });
 
