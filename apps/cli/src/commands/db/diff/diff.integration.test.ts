@@ -19,7 +19,13 @@ import {
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
+import {
+  StackError,
+  type DatabaseInstance,
+  type ServiceCreationInput,
+  type ServiceInstances,
+  type Stack,
+} from "@supabase/stack/effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -110,6 +116,11 @@ import {
   EdgeRuntimeScript,
 } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
+import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
+import { pgDeltaNextEngineLayer } from "../shared/pgdelta-engine.next.layer.ts";
+import { PgDeltaNextAdapter } from "../shared/pgdelta-next-adapter.service.ts";
+import { pgDeltaNextShadowLayer } from "../shared/pgdelta-next-shadow.layer.ts";
 import {
   PgDeltaEngine,
   type PgDeltaDatabaseDiffInput,
@@ -241,7 +252,7 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
 
 const STACK_SQL_PORT = 54329;
 
-const runningStackApi = (projectRoot: string) => {
+const runningStackApi = (projectRoot: string, shadowStartFailure?: string) => {
   const unused = Effect.die("unused by db diff");
   const database: DatabaseInstance = {
     id: "database-primary",
@@ -302,8 +313,29 @@ const runningStackApi = (projectRoot: string) => {
     gateway: unusedGateway,
     commands: { run: () => unused },
   };
+  const shadowStack = (startFailure: string): Stack => {
+    function create<Input extends ServiceCreationInput>(
+      creation: Input,
+    ): Effect.Effect<ServiceInstances[Input["service"]], StackError>;
+    function create(): Effect.Effect<
+      ServiceInstances[ServiceCreationInput["service"]],
+      StackError
+    > {
+      return Effect.succeed({
+        ...database,
+        start: Effect.fail(new StackError({ operation: "start", message: startFailure })),
+      });
+    }
+    return {
+      ...stack,
+      id: "c".repeat(64),
+      services: { ...stack.services, create },
+      destroy: Effect.void,
+    };
+  };
   return Layer.succeed(StackApi, {
-    create: () => unused,
+    create: () =>
+      shadowStartFailure === undefined ? unused : Effect.succeed(shadowStack(shadowStartFailure)),
     open: () => Effect.succeed(stack),
     discover: () => unused,
     find: () =>
@@ -1568,6 +1600,45 @@ describe("db diff", () => {
         ),
       );
     });
+
+    it.effect(
+      "--from migrations --to local on the stack backend suggests stopping stacks when the shadow runs out of shared memory",
+      () => {
+        const s = setup(tmp.current, { dirs: ["supabase/migrations"] });
+        const stackApi = runningStackApi(
+          tmp.current,
+          "database-primary failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+        );
+        const services = Layer.mergeAll(s.layer, stackBackendLayer("stack"), stackApi);
+        const engine = pgDeltaNextEngineLayer.pipe(
+          Layer.provide(pgDeltaNextShadowLayer),
+          Layer.provide(
+            Layer.succeed(PgDeltaNextAdapter, {
+              diff: () => Effect.die("adapter not used"),
+              exportDeclarativeSchema: () => Effect.die("adapter not used"),
+              planDeclarativeSchema: () => Effect.die("adapter not used"),
+              captureSnapshot: () => Effect.die("adapter not used"),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
+          ),
+          Layer.provide(services),
+        );
+        return Effect.gen(function* () {
+          const error = yield* dbDiff(
+            flags({ from: Option.some("migrations"), to: Option.some("local") }),
+          ).pipe(Effect.flip);
+          expect(normalizeCliError(error)).toMatchObject({
+            code: "PgDeltaEngineError",
+            message: expect.stringContaining("could not create shared memory segment"),
+            suggestion: expect.stringMatching(
+              /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+            ),
+          });
+        }).pipe(Effect.provide(Layer.mergeAll(services, engine)));
+      },
+    );
 
     it.effect("--from <malformed db-url> fails before the hosted side resolves, unechoed", () => {
       const s = setup(tmp.current, { isLocal: false });

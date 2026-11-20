@@ -91,6 +91,12 @@ const nextShadowError = (cause: unknown) =>
         Reflect.get(cause, "reason") === "docker_daemon"
           ? { docker: "daemon" as const }
           : {}),
+        ...(typeof cause === "object" &&
+        cause !== null &&
+        "suggestion" in cause &&
+        typeof cause.suggestion === "string"
+          ? { suggestion: cause.suggestion }
+          : {}),
       });
 
 interface NativeShadowInput {
