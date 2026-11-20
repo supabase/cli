@@ -7,7 +7,7 @@ name: Lint Pull Request
 # Label events retrigger this cheap check so adding `run-ci` on a draft starts
 # lint without waiting for a push.
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - edited
@@ -28,21 +28,22 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   main:
     if: |
       github.event_name == 'merge_group' ||
-      (github.event_name == 'pull_request_target' &&
-        !startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
+      (github.event_name == 'pull_request' &&
+        !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-notes/')) &&
         (github.event.pull_request.draft == false ||
           contains(github.event.pull_request.labels.*.name, 'run-ci')))
     name: Lint Pull Request
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - if: github.event_name == 'pull_request_target'
+      - if: github.event_name == 'pull_request'
         uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
