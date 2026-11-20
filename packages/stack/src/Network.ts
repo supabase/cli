@@ -43,6 +43,8 @@ export interface NetworkEndpoint {
   readonly join?: ReadonlyArray<RouteContribution>;
   /** Sends each write to this endpoint, on every route, over a fresh upstream connection. */
   readonly freshWrites?: boolean;
+  /** Refuses non-loopback browser origins on this endpoint's dedicated listener. */
+  readonly localOriginOnly?: boolean;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -327,7 +329,15 @@ const makeNetwork = (options: {
                                     /* Like a container port map, a dedicated port leaves CORS to its service. */
                                     toHttpRoutes(
                                       id,
-                                      [{ prefix: "/", upstreamCors: true }],
+                                      [
+                                        {
+                                          prefix: "/",
+                                          upstreamCors: true,
+                                          ...(endpoint.localOriginOnly === true
+                                            ? { localOriginOnly: true }
+                                            : {}),
+                                        },
+                                      ],
                                       endpoint,
                                       false,
                                     ),

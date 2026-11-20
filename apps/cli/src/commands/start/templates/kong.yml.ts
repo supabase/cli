@@ -9,7 +9,17 @@ const LOCAL_ORIGIN_GUARD = `      - name: pre-function
                 local host = value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)")
                 host = host and host:gsub("%.$", "")
                 if not (host == "localhost" or host == "[::1]" or (host and (host:sub(-10) == ".localhost" or host:match("^127%.%d+%.%d+%.%d+$")))) then
+                  kong.ctx.shared.local_origin_refused = true
                   return kong.response.exit(403, { message = "Forbidden" })
+                end
+              end
+      - name: post-function
+        config:
+          header_filter:
+            - |
+              if kong.ctx.shared.local_origin_refused then
+                for _, name in ipairs({ "Allow-Origin", "Allow-Credentials", "Allow-Methods", "Allow-Headers", "Expose-Headers", "Max-Age" }) do
+                  kong.response.clear_header("Access-Control-" .. name)
                 end
               end
 `;

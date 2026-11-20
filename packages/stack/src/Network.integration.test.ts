@@ -776,6 +776,38 @@ it.live("leaves CORS on a dedicated listener to its service", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("refuses cross-site browser requests on a local-origin-only dedicated listener", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-local-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backendWith((incoming, response) => response.end(incoming.method));
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const pgmeta = yield* network.register({
+        id: "pgmeta",
+        endpoints: { http: { ...endpoint(target, Effect.succeed(true)), localOriginOnly: true } },
+      });
+      yield* pgmeta.bind;
+      const address = yield* pgmeta.address("http", "host");
+      const client = yield* HttpClient.HttpClient;
+      const send = (method: "OPTIONS" | "POST", origin: string) =>
+        client.execute(
+          HttpClientRequest.make(method)(`http://${address.host}:${address.port}/query`).pipe(
+            HttpClientRequest.setHeaders({ origin }),
+          ),
+        );
+      for (const method of ["OPTIONS", "POST"] as const) {
+        const refused = yield* send(method, "https://evil.example");
+        expect(refused.status).toBe(403);
+        expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+      }
+      expect(yield* (yield* send("POST", "http://localhost:54323")).text).toBe("POST");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("addresses docker runtime endpoints through the stack host alias", () =>
   Effect.scoped(
     Effect.gen(function* () {

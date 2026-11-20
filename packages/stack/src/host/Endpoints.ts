@@ -220,6 +220,10 @@ export const joinRoutes = (
 export const freshWrites = (creation: EndpointIntents, name: string): boolean =>
   creation.service === "studio" && name === "http";
 
+/** Whether an endpoint is an unauthenticated admin API that only loopback browser origins may call. */
+export const localOriginOnly = (creation: EndpointIntents, name: string): boolean =>
+  creation.service === "pgmeta" && name === "http";
+
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
 export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>
   endpoint.kind === "unix"

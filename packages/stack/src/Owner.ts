@@ -48,6 +48,7 @@ import {
   endpointNames,
   endpointPort,
   freshWrites,
+  localOriginOnly,
   joinRoutes,
   outputsFor,
   publicUrl,
@@ -605,6 +606,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
           backend: backendFor(name),
           enabled,
           ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
+          ...(localOriginOnly(initial, name) ? { localOriginOnly: true } : {}),
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
         };

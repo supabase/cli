@@ -630,7 +630,7 @@ describe("functions serve runtime template (offline)", () => {
           "-e",
           "KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
           "-e",
-          "KONG_PLUGINS=request-transformer,cors,pre-function",
+          "KONG_PLUGINS=request-transformer,cors,pre-function,post-function",
           "-e",
           "KONG_NGINX_WORKER_PROCESSES=1",
           "-v",
@@ -711,6 +711,39 @@ describe("functions serve runtime template (offline)", () => {
         );
         expect(reusedCustomResponse.status).toBe(200);
         expect(reusedCustomResponse.headers["x-function-slug"]).toBe("custom");
+
+        // `/pg` and `/mcp` upstreams render as an unresolvable host, so an admitted request fails at the proxy.
+        const admin = (method: "OPTIONS" | "POST", route: string, origin?: string) =>
+          HttpClient.execute(
+            HttpClientRequest.make(method)(`http://127.0.0.1:${port}${route}`, {
+              headers: {
+                "access-control-request-method": "POST",
+                ...(origin === undefined ? {} : { origin }),
+              },
+            }),
+          ).pipe(Effect.timeout(Duration.seconds(5)));
+        for (const route of ["/pg/query", "/mcp"]) {
+          for (const method of ["OPTIONS", "POST"] as const) {
+            for (const origin of [
+              "https://evil.example",
+              "null",
+              "http://localhost.evil.example",
+            ]) {
+              const refused = yield* admin(method, route, origin);
+              expect(refused.status).toBe(403);
+              expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+            }
+          }
+          for (const origin of [
+            undefined,
+            "http://localhost:3000",
+            "http://app.dev.localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+          ]) {
+            expect([502, 503]).toContain((yield* admin("POST", route, origin)).status);
+          }
+        }
       }).pipe(Effect.provide(testLayer)),
     SERVE_OFFLINE_TEST_TIMEOUT_MS,
   );
