@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Console, Effect, Exit, Layer, Schema, Stdio } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/cli";
+import { commandExecutorLayer } from "../../command-internal/command-executor.ts";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
@@ -20,7 +21,11 @@ import {
 
 const textOutputLayer = () => {
   const out = mockOutput({ format: "text" });
-  return Layer.mergeAll(out.layer, commandTargetLayer.pipe(Layer.provide(out.layer)));
+  return Layer.mergeAll(
+    out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
+    commandExecutorLayer,
+  );
 };
 
 const testBranchesCommand = branchesCommand.pipe(

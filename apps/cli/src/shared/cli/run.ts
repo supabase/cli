@@ -12,6 +12,7 @@ import {
   Path,
   PlatformError,
   Predicate,
+  Ref,
   Runtime,
   Scope,
   Stdio,
@@ -72,6 +73,7 @@ import {
   type RemoteArgvLeaf,
 } from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
+import { TerminalResponse } from "./terminal-response.service.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
@@ -808,7 +810,18 @@ export const runCli = Effect.fnUntraced(function* <
       const processControl = yield* ProcessControl;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
-      const exit = yield* program.pipe(Effect.exit);
+      const terminalAttempted = yield* Ref.make(false);
+      const reportFailure = (cause: Cause.Cause<unknown>) =>
+        shouldReportFailure(exitCodeForFailure(cause))
+          ? ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)))
+          : Effect.void;
+      const exit = yield* program.pipe(
+        Effect.provideService(TerminalResponse, {
+          markAttempt: Ref.set(terminalAttempted, true),
+          reportFailure,
+        }),
+        Effect.exit,
+      );
       const afterSuccessHook = options.afterSuccess;
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
         code === 0
@@ -850,9 +863,7 @@ export const runCli = Effect.fnUntraced(function* <
         const exitCode = exitCodeForFailure(cause);
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
-        if (shouldReportFailure(exitCode)) {
-          yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
-        }
+        if (!(yield* Ref.get(terminalAttempted))) yield* reportFailure(cause);
         yield* afterSuccess(exitCode, true);
         return exitCode;
       }

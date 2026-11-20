@@ -58,6 +58,7 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
+import { commandExecutorLayer } from "../command-internal/command-executor.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
@@ -243,6 +244,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
               : stackBackendLayer(options.stackBackend),
             commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
             machineErrorContextLayer,
+            commandExecutorLayer,
             Layer.succeed(AiTool, aiTool),
           );
         }),
