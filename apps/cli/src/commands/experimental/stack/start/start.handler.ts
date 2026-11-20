@@ -170,7 +170,7 @@ const stackError = (
   });
   const suggestion =
     portConflictSuggestion(cause.conflict, requested, portSaved, configFile) ??
-    sharedMemorySuggestion(cause.message);
+    sharedMemorySuggestion(`${cause.message}\n${detail ?? ""}`);
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,
