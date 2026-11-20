@@ -2,11 +2,11 @@ import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
+import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import { writeProviderSignupPreferredKeys } from "./lib/provider-signup.ts";
-import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
+import { getDefaultCliConfig, subtractValue } from "./sparse.ts";
 import type { CliProjectEnvironment } from "./project.ts";
-
-export const cliConfigSchemaKey = "$schema";
 
 export type CliConfigValueSource = "environment" | "local" | "remote";
 
@@ -118,10 +118,6 @@ export interface SaveCliConfigOptions {
   readonly config: CliConfig;
   readonly format?: ConfigFormat;
   readonly schemaRef?: string;
-}
-
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const encodeCliConfig = Schema.encodeSync(CliConfigSchema);

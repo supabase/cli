@@ -1,6 +1,6 @@
 import { Cause, Exit, Option, Schema, type SchemaIssue } from "effect";
 import { CliConfigSchema, RemotesSchema } from "./base.ts";
-import { cliConfigSchemaKey, isObject } from "./config-document.ts";
+import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
 
 const parseOptions = { onExcessProperty: "error", errors: "all", disableChecks: true } as const;
 const decodeCliConfig = Schema.decodeUnknownExit(CliConfigSchema, parseOptions);

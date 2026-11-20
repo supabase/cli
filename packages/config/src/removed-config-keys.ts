@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { isObject } from "./config-document.ts";
+import { isObject } from "./lib/document-value.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import { CliConfigRemovedKeyError } from "./errors.ts";
 
