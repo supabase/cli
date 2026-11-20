@@ -13,6 +13,7 @@ import { renderDryRunText, renderResponseText, singleLine } from "./api-command.
 import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
+  ApiCommandUnexpectedResponseError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry, ApiCommandWait, ApiPollRead } from "./api-command.model.ts";
@@ -232,9 +233,24 @@ const readPoll = (wait: ApiCommandWait, response: ApiCommandResponse): PollRead 
   return { response, body, status: typeof status === "string" ? status : undefined };
 };
 
-const classify = (wait: ApiCommandWait, read: PollRead, statusHint: string) => {
+const classify = (
+  wait: ApiCommandWait,
+  read: PollRead,
+  statusHint: string,
+): Effect.Effect<
+  PollOutcome,
+  ApiCommandOperationFailedError | ApiCommandUnexpectedResponseError
+> => {
   const { response, body, status } = read;
-  if (status !== undefined && wait.failed.includes(status)) {
+  if (status === undefined) {
+    return Effect.fail(
+      new ApiCommandUnexpectedResponseError({
+        message: `${wait.read} returned no status at ${wait.status}.`,
+        hint: statusHint,
+      }),
+    );
+  }
+  if (wait.failed.includes(status)) {
     const reason =
       wait.error === undefined ? undefined : failureReason(readPointer(body, wait.error));
     return Effect.fail(
@@ -245,7 +261,7 @@ const classify = (wait: ApiCommandWait, read: PollRead, statusHint: string) => {
       }),
     );
   }
-  const done = status !== undefined && wait.succeeded.includes(status);
+  const done = wait.succeeded.includes(status);
   return Effect.succeed<PollOutcome>({ done, response });
 };
 

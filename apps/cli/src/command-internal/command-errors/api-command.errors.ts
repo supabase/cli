@@ -44,6 +44,18 @@ export class ApiCommandOperationFailedError extends Data.TaggedError(
   }
 }
 
+/** `--wait` read a 2xx response without the status it polls. */
+export class ApiCommandUnexpectedResponseError extends Data.TaggedError(
+  "ApiCommandUnexpectedResponseError",
+)<{
+  readonly message: string;
+  readonly hint: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 /** `--wait` reached its timeout before the operation settled. */
 export class ApiCommandWaitTimeoutError extends Data.TaggedError("ApiCommandWaitTimeoutError")<{
   readonly message: string;

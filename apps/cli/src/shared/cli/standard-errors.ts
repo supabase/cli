@@ -16,6 +16,7 @@ import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandUsageError,
+  ApiCommandUnexpectedResponseError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import { LinkBranchListStatusError } from "../../command-internal/target/branch-resolution.errors.ts";
@@ -181,6 +182,9 @@ const failureForError = (
     return failure(EXIT_FAILURE, "operation_failed", error.message, error.hint, {
       context: { status: error.status },
     });
+  }
+  if (error instanceof ApiCommandUnexpectedResponseError) {
+    return failure(EXIT_FAILURE, "api_error", error.message, error.hint);
   }
   if (error instanceof ApiCommandWaitTimeoutError) {
     return failure(EXIT_FAILURE, "wait_timeout", error.message, error.hint, {

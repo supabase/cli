@@ -50,6 +50,7 @@ import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandUsageError,
+  ApiCommandUnexpectedResponseError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
@@ -57,7 +58,7 @@ import { assembleInput, decodeInput, previewRequest } from "./api-command-reques
 import { apiCommands } from "./generated.ts";
 import { readPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withApiCommands } from "./runtime.ts";
-import { isMachineFailureMode, standardFailureFor } from "../../shared/cli/standard-errors.ts";
+import { standardFailureFor } from "../../shared/cli/standard-errors.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
 import { resolveApiCommandFeatures } from "./api-command-features.ts";
 
@@ -2031,6 +2032,21 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("fails the wait when a poll response has no readable status", () => {
+      const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route: enableThenPoll([{ status: 200, body: "<html>captive portal</html>" }]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+        expect(failure).toMatchObject({ hint: expect.stringContaining("Check it with") });
+        expect(sent.filter((request) => request.method === "GET")).toHaveLength(1);
+      });
+    });
+
     it.effect("treats a 409 on the read as terminal and does not poll again", () => {
       const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
@@ -2220,24 +2236,15 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("keeps JSON for success and failure when --output-format text is piped", () => {
-      const piped = ["--output-format", "text"];
-      const succeeded = setup(["warehouse", "enable", "--schema", "public", "--wait", ...piped], {
-        yes: true,
-        route: enableThenPoll([{ status: 200, body: RICH_STATUS }]),
-      });
-      const failed = setup(["warehouse", "status", ...piped], {
-        route: () => ({ status: 401, body: { message: "bad token" } }),
-      });
+    it.effect("keeps the API bytes when --output-format text is piped", () => {
+      const { out, run } = setup(
+        ["warehouse", "enable", "--schema", "public", "--wait", "--output-format", "text"],
+        { yes: true, route: enableThenPoll([{ status: 200, body: RICH_STATUS }]) },
+      );
       return Effect.gen(function* () {
-        yield* succeeded.run;
-        expect(succeeded.out.stdoutText).toBe(encodeJson(RICH_STATUS));
-        expect(succeeded.out.progressEvents).toEqual([]);
-
-        const exit = yield* Effect.exit(failed.run);
-        expect(failureOf(exit)).toBeInstanceOf(ApiCommandStatusError);
-        expect(failed.out.stdoutText).toBe("");
-        expect(isMachineFailureMode(failed.args, false)).toBe(true);
+        yield* run;
+        expect(out.stdoutText).toBe(encodeJson(RICH_STATUS));
+        expect(out.progressEvents).toEqual([]);
       });
     });
 

@@ -332,15 +332,14 @@ export function sanitizeOpenApiSchema(
     delete sanitized.pattern;
   }
 
-  const union = Array.isArray(sanitized.anyOf)
-    ? "anyOf"
-    : Array.isArray(sanitized.oneOf)
-      ? "oneOf"
-      : undefined;
-  if (sanitized.nullable === true && sanitized.type === undefined && union !== undefined) {
+  if (
+    sanitized.nullable === true &&
+    sanitized.type === undefined &&
+    Array.isArray(sanitized.anyOf)
+  ) {
     const normalized = {
       ...sanitized,
-      [union]: [...(sanitized[union] ?? []), { type: "null" }],
+      anyOf: [...sanitized.anyOf, { type: "null" }],
     };
     delete normalized.nullable;
     return normalized;

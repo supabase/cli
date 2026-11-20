@@ -26,9 +26,6 @@ const route = (operation: Pick<ApiCommandEntry, "definition">): string => {
 
 const cell = (text: string): string => text.replaceAll("|", "\\|");
 
-/** Spec prose can carry `<placeholder>` text, which Markdown would read as an HTML tag. */
-const prose = (text: string): string => text.replaceAll("<", "\\<");
-
 const commandLine = (entry: Pick<ApiCommandEntry, "command">): string =>
   ["supabase", ...entry.command].join(" ");
 
@@ -153,9 +150,9 @@ const commandSection = (
   return [
     `## ${code(commandLine(entry))}`,
     "",
-    prose(entry.summary),
+    entry.summary,
     "",
-    ...(entry.description === undefined ? [] : [prose(entry.description), ""]),
+    ...(entry.description === undefined ? [] : [entry.description, ""]),
     `- Access: ${entry.readOnly ? "read-only, no consent" : "mutation, consent defaults to No (`--yes` when it cannot prompt)"}.`,
     ...experimentalLine(entry, input),
     ...(entry.confirmDescription

@@ -109,7 +109,7 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
         ),
       }),
   dryRun: Flag.Boolean("dry-run").pipe(
-    Flag.withDescription("Print the request that would be sent and send nothing."),
+    Flag.withDescription("Print the request instead of sending it."),
     Flag.withDefault(false),
   ),
   ...(!waitable

@@ -148,9 +148,9 @@ it.live.each([
     }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live("warehouse status reports a 409 as a conflict failure document on stderr", () =>
+it.live("warehouse status reports a 409 as a JSON failure document when text output is piped", () =>
   Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status", "--output-format", "json"], () =>
+    const { result } = yield* runWarehouse(["status", "--output-format", "text"], () =>
       json(409, {
         error: {
           code: "selection_conflict",
@@ -202,7 +202,7 @@ it.live(
   () =>
     Effect.gen(function* () {
       const final = statusBody("succeeded");
-      const { result } = yield* runWarehouse(
+      const { result, requests } = yield* runWarehouse(
         ["enable", "--schema", "public", "--wait", "--yes", "--output-format", "text"],
         (request) =>
           request.method === "POST"
@@ -212,6 +212,7 @@ it.live(
 
       requireCliSuccess(result, "warehouse enable --wait --output-format text");
       expect(result.stdout, result.stderr).toBe(final.body);
+      expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${SETUP_PATH}`]);
     }).pipe(Effect.provide(BunServices.layer)),
 );
 
@@ -231,32 +232,6 @@ it.live("warehouse enable without --yes refuses to run when stdin is piped", () 
       hint: "Re-run with --yes to confirm.",
     });
     expect(requests).toEqual([]);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse enable --wait prints the final status read", () =>
-  Effect.gen(function* () {
-    const { result, requests } = yield* runWarehouse(
-      [
-        "enable",
-        "--schema",
-        "public",
-        "--yes",
-        "--wait",
-        "--timeout",
-        "30s",
-        "--output-format",
-        "json",
-      ],
-      ({ method }) => {
-        if (method === "POST") return json(202, { data: { attributes: { selection_id: SEL } } });
-        return statusBody("succeeded");
-      },
-    );
-
-    requireCliSuccess(result, "warehouse enable --wait");
-    expect(result.stdout, result.stderr).toBe(statusBody("succeeded").body);
-    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${SETUP_PATH}`]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

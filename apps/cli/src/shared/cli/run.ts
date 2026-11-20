@@ -45,7 +45,7 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
-import { Tty } from "../runtime/tty.service.ts";
+import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";

@@ -17,6 +17,7 @@ import {
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandUsageError,
+  ApiCommandUnexpectedResponseError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import {
@@ -110,6 +111,11 @@ describe("standardFailureFor", () => {
         new ApiCommandOperationFailedError({ message: "m", status: "FAILED", hint: "Check it" }),
       ),
       expected: { exitCode: 1, code: "operation_failed", status: null, hint: "Check it" },
+    },
+    {
+      name: "wait without a readable status",
+      cause: Cause.fail(new ApiCommandUnexpectedResponseError({ message: "m", hint: "Check it" })),
+      expected: { exitCode: 1, code: "api_error", status: null, hint: "Check it" },
     },
     {
       name: "wait timeout",
