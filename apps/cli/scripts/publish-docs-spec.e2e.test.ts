@@ -111,6 +111,70 @@ describe("local reference preview", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("writes both outputs to custom paths without the default docs directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const checkout = yield* fs.makeTempDirectoryScoped({ prefix: "docs-custom-" });
+      yield* fs.makeDirectory(path.join(checkout, "reference"));
+      const spec = validSpec("1.0.0");
+      const { exitCode, stderr } = yield* Effect.sync(() =>
+        runScript(
+          [
+            "--version",
+            "1.0.0",
+            "--local",
+            checkout,
+            "--spec-path",
+            "reference/commands.yaml",
+            "--sidebar-path",
+            "reference/sidebar.json",
+          ],
+          spec,
+        ),
+      );
+      expect(exitCode, stderr).toBe(0);
+      expect(
+        parse(yield* fs.readFileString(path.join(checkout, "reference/commands.yaml"))),
+      ).toEqual(parse(spec));
+      expect(yield* fs.readFileString(path.join(checkout, "reference/sidebar.json"))).toContain(
+        '"supabase-init"',
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("rejects a symlink from the sidebar to the spec without changing either", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { checkout, target, sidebar } = yield* localCheckout;
+      yield* fs.remove(sidebar);
+      yield* fs.symlink(target, sidebar);
+      const { exitCode, stderr } = yield* Effect.sync(() =>
+        runScript(["--version", "1.0.0", "--local", checkout], validSpec("1.0.0")),
+      );
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Refusing to write through a symlink");
+      expect(yield* fs.readFileString(target)).toBe("original spec\n");
+      expect(yield* fs.readLink(sidebar)).toBe(target);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("leaves the local spec unchanged when the sidebar destination is a directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { checkout, target, sidebar } = yield* localCheckout;
+      yield* fs.remove(sidebar);
+      yield* fs.makeDirectory(sidebar);
+      const { exitCode, stderr } = yield* Effect.sync(() =>
+        runScript(["--version", "1.0.0", "--local", checkout], validSpec("1.0.0")),
+      );
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Expected a regular file at");
+      expect(yield* fs.readFileString(target)).toBe("original spec\n");
+      expect((yield* fs.stat(sidebar)).type).toBe("Directory");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("leaves both local files unchanged during a dry run", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

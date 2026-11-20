@@ -58,9 +58,14 @@ For CLI contributors, preview reference changes in the real website before publi
 
 `--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` and
 `apps/docs/spec/common-cli-sections.json` in the supplied checkout. Save any edits to those files
-first. If YAML formatting fails, fix the error and rerun the pipe. The target directories must
-already exist. Local mode does not clone, commit, push, or open a PR, and needs no GitHub
-credentials. Add `--dry-run` to validate the input and print both destinations without writing.
+first. The publisher prepares both outputs before replacing either file, so a YAML formatting
+failure leaves both files unchanged. If replacing the sidebar fails, the publisher attempts to
+restore the previous spec. Local mode does not clone, commit, push, or open a PR, and needs no
+GitHub credentials. Add `--dry-run` to validate the input and print both destinations without writing.
+
+For a custom layout, pass `--spec-path` and, if needed, `--sidebar-path`. Both are relative to the
+checkout root and their parent directories must already exist. By default, the sidebar is named
+`common-cli-sections.json` and goes next to the spec.
 
 ## Release Publishing
 
@@ -73,10 +78,11 @@ The `docs` job in `.github/workflows/release.yml` publishes the reference on eve
 release: it pipes the spec into `scripts/publish-docs-spec.ts`, which formats the spec and
 generates the sidebar from the same command tree. It pushes both files to the `cli/ref-doc` branch
 in [supabase/supabase](https://github.com/supabase/supabase) and opens a PR when needed.
-Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
-fixes committed onto the branch survive.
+Later releases add commits to an open `cli/ref-doc` PR and replace both generated files. Make
+lasting fixes in the CLI command definitions or in `apps/cli/docs/`, not in the generated files.
 
-To publish by hand, run the same pipe the job runs:
+To publish by hand, run the same pipe the job runs. The same path overrides apply if you
+publish to a custom layout:
 
 ```bash
 bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--dry-run]
