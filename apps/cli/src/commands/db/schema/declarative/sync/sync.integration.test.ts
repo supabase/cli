@@ -84,7 +84,10 @@ import {
 } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
-import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
+import {
+  DeclarativeDestructiveChangesError,
+  DeclarativeNotEnabledError,
+} from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { selection } from "../../../../../../tests/helpers/pins.ts";
@@ -464,6 +467,7 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  failOnDestructive: over.failOnDestructive ?? false,
 });
 
 const seedDeclarative = (workdir: string) =>
@@ -968,6 +972,51 @@ describe("db schema declarative sync integration", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect.each([
+    { mode: "--no-apply", noApply: Option.some(true), stdinIsTty: false },
+    { mode: "interactive", noApply: Option.none<boolean>(), stdinIsTty: true },
+  ])(
+    "--fail-on-destructive ($mode): refuses drops before any prompt and writes nothing",
+    ({ noApply, stdinIsTty }) => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        stdinIsTty,
+        diffSql: "ALTER TABLE a ADD COLUMN b int;\nDROP TABLE c;\n",
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
+        const error = yield* dbSchemaDeclarativeSync(
+          flags({ noApply, failOnDestructive: true }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DeclarativeDestructiveChangesError);
+        expect(error).toMatchObject({ detail: expect.stringContaining("DROP TABLE c") });
+        expect(s.out.promptTextCalls).toEqual([]);
+        expect(s.out.promptConfirmCalls).toEqual([]);
+        expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
+        expect(s.dbExec).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("--fail-on-destructive still writes a migration without drops", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(
+        flags({ noApply: Option.some(true), failOnDestructive: true }),
+      );
+      const migrations = yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("--apply: batches the migration and history through the native session", () => {
     const s = setup(tmp.current, {
