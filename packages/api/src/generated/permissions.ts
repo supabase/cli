@@ -337,6 +337,8 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-get-warehouse-capacity": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-query-stats": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-disable-warehouse": {
     fga: [["project_admin_write", "database_write"]],
     oauthScope: "database:write",
@@ -351,6 +353,15 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "database:write",
   },
   "v2-get-warehouse-setup": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-connection": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-list-warehouse-tables": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table-layout": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-update-warehouse-table-layout": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
   "v2-list-log-drains": { fga: [["analytics_config_read"]], oauthScope: "analytics_config:read" },
   "v2-create-log-drain": {
     fga: [["analytics_config_write"]],
