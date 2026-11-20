@@ -170,7 +170,11 @@ const fakeSpark = (
         case "/_spark/v1/parse":
           return respond(reply({ statements: parse(String(Reflect.get(Object(body), "sql"))) }));
         case "/_spark/v1/query":
-          return respond(reply([{ id: 1, done: true, tags: ["a", "b"] }]));
+          return respond(
+            String(Reflect.get(Object(body), "query")).includes("pg_enum")
+              ? reply({ code: "42P01", message: "no such table: pg_enum" }, 400)
+              : reply([{ id: 1, done: true, tags: ["a", "b"] }]),
+          );
         default:
           return respond(reply({ message: "not found" }, 404));
       }
@@ -229,6 +233,20 @@ const withHandler = (spark: ReturnType<typeof fakeSpark>) =>
       );
     return { send, migrationsDir, fs };
   });
+
+it.live("keeps Spark's refusal message exact and puts the catalog note in the hint", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark());
+
+    const { status, body } = yield* send("POST", "/pg/query", {
+      query: "select enumlabel from pg_catalog.pg_enum",
+    });
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ code: "42P01", message: "no such table: pg_enum" });
+    expect(Reflect.get(Object(body), "hint")).toContain("Not supported on Spark");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.live("answers Studio's pg-meta table listing from Spark's schema description", () =>
   Effect.gen(function* () {

@@ -314,7 +314,14 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
           return yield* catalog
             ? new SparkQueryError({
                 ...error,
-                message: `${error.message}\nNot supported on Spark (catalog query not adapted): ${oneLine(query, 80)}`,
+                message: error.message,
+                // Spark's message stays exact: Studio's pg-meta fallbacks match on it (D25).
+                hint: [
+                  error.hint,
+                  `Not supported on Spark (catalog query not adapted): ${oneLine(query, 80)}`,
+                ]
+                  .filter((part) => part !== undefined)
+                  .join("\n"),
               })
             : error;
         }),
