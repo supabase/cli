@@ -19,6 +19,10 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 import { configConvert } from "./convert.handler.ts";
 import {
   CONFIG_JSONC_MIN_CLI_VERSION,
@@ -47,6 +51,7 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
+  const recorded: Array<CommandTelemetryAttributeValues> = [];
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -61,9 +66,12 @@ function setup(opts: SetupOpts = {}) {
     mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
     mockTty(),
     mockTelemetryRuntime(),
+    Layer.succeed(CommandTelemetryAttributes, {
+      record: (values) => Effect.sync(() => void recorded.push(values)),
+    }),
     BunServices.layer,
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, recorded };
 }
 
 const projectPath = (...segments: ReadonlyArray<string>) =>
@@ -173,7 +181,7 @@ describe("config convert integration", () => {
   it.effect(
     "converts the init template, keeping every prose comment once and the same config",
     () => {
-      const { layer, out, telemetry } = setup();
+      const { layer, out, telemetry, recorded } = setup();
       const template = renderCliConfigTemplate("demo", false);
       const tomlExample = /^#\s?(\[[^\]]+\]|[\w."'-]+ = .+)$/;
       const templateComments = template
@@ -223,6 +231,7 @@ describe("config convert integration", () => {
           "",
         ]);
         expect(out.stderrText).toBe("");
+        expect(recorded).toContainEqual({ config_format: "toml" });
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(BunServices.layer));
     },

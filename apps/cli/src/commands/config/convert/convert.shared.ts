@@ -11,6 +11,10 @@ import {
   green,
   yellow,
 } from "../../../command-internal/colors.ts";
+import {
+  failedConfigFilePath,
+  recordConfigFormat,
+} from "../../../config/cli-config-format-telemetry.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
   describeConfigParseError,
@@ -84,6 +88,7 @@ const rollbackCreated = Effect.fnUntraced(function* (
 export const readConfigDocument = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
   const parsed = yield* parseCliConfigDocumentFile(cliSettings.workdir, { search: false }).pipe(
+    Effect.tapError((error) => recordConfigFormat(failedConfigFilePath(error))),
     Effect.mapError(
       (cause) =>
         new ConfigConvertLoadConfigError({
@@ -95,6 +100,7 @@ export const readConfigDocument = Effect.fnUntraced(function* () {
     ),
     Effect.withSpan("config.convert.read"),
   );
+  yield* recordConfigFormat(parsed?.path);
   if (parsed === null) {
     return yield* new ConfigConvertLoadConfigError({
       message: yield* missingProjectConfigMessageEffect(cliSettings),
@@ -151,26 +157,34 @@ export const writeConversion = Effect.fnUntraced(function* (input: {
       (cause) => new ConfigConvertWriteError({ message: messages.permissions(cause.message) }),
     ),
   );
-  const created = yield* createCliConfigDocumentText(input.targetPath, input.text, sourceMode).pipe(
-    Effect.catchTag(
-      "CliConfigWriteError",
-      (cause) => new ConfigConvertWriteError({ message: messages.write(cause.message) }),
-    ),
-  );
-  if (!created) {
-    return yield* new ConfigConvertFileChangedError({ message: messages.targetAppeared });
-  }
-  yield* fs
-    .rename(input.sourcePath, input.backupPath)
-    .pipe(
-      Effect.catchTag("PlatformError", (cause) =>
-        Effect.flatMap(rollbackCreated(input.targetPath, input.text, messages.rollback), (note) =>
-          Effect.fail(
-            new ConfigConvertWriteError({ message: messages.backupFailure(cause.message, note) }),
+  yield* Effect.uninterruptible(
+    Effect.gen(function* () {
+      const created = yield* createCliConfigDocumentText(
+        input.targetPath,
+        input.text,
+        sourceMode,
+      ).pipe(
+        Effect.catchTag(
+          "CliConfigWriteError",
+          (cause) => new ConfigConvertWriteError({ message: messages.write(cause.message) }),
+        ),
+      );
+      if (!created) {
+        return yield* new ConfigConvertFileChangedError({ message: messages.targetAppeared });
+      }
+      yield* fs.rename(input.sourcePath, input.backupPath).pipe(
+        Effect.catchTag("PlatformError", (cause) =>
+          Effect.flatMap(rollbackCreated(input.targetPath, input.text, messages.rollback), (note) =>
+            Effect.fail(
+              new ConfigConvertWriteError({
+                message: messages.backupFailure(cause.message, note),
+              }),
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }),
+  );
   const moved = yield* fs
     .readFileString(input.backupPath)
     .pipe(

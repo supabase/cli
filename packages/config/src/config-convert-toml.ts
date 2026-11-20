@@ -265,7 +265,7 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
   ): Array<string> => {
     const leaves = obj.entries.filter((entry) => !isChild(entry));
     const children = obj.entries.filter(isChild);
-    // TOML creates a table that only holds subtables implicitly, so it needs no header unless it carries comments.
+    // TOML creates a table that only holds subtables implicitly, so it needs no header unless it carries comments (leading or inside).
     const implicit =
       !options.array &&
       path.length > 0 &&
@@ -273,6 +273,7 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
       children.some((entry) => entry.kind === "member") &&
       obj.open === undefined &&
       obj.tail.length === 0 &&
+      (options.commented || options.leading.every((item) => item.blank)) &&
       (options.tailExtra ?? []).length === 0;
     const lines: Array<string> = [];
     let inherited: ReadonlyArray<LeadingItem> = [];

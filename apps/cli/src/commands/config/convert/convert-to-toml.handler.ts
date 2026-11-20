@@ -65,7 +65,10 @@ const promptForReason = Effect.fnUntraced(function* () {
   }
   const answer = yield* output
     .promptSelect(REASON_PROMPT, REASON_OPTIONS, { silentCancel: true })
-    .pipe(Effect.catchCause(() => Effect.void));
+    .pipe(
+      Effect.withSpan("config.convert.reason_prompt"),
+      Effect.catchCause(() => Effect.void),
+    );
   return answer === undefined ? undefined : parseReason(answer);
 });
 

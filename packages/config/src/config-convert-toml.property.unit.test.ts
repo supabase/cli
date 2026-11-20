@@ -53,7 +53,20 @@ const CHARS = [
   "\\u0041",
 ];
 
-const NUMBERS = [0, 1, -1, 54321, 2 ** 31, 1.5, -0.25, 0.1, 1e21, 1e-7, 2 ** 60, 123456.789];
+const NUMBERS = [
+  0,
+  1,
+  -1,
+  54321,
+  2 ** 31,
+  1.5,
+  -0.25,
+  0.1,
+  1e21,
+  1e-7,
+  Number.MAX_SAFE_INTEGER,
+  123456.789,
+];
 
 type Pick = <T>(items: ReadonlyArray<T>) => T;
 
@@ -178,7 +191,7 @@ describe("convertCliConfigJsoncToToml: seeded property checks", () => {
       });
     });
 
-    test(`seed ${seed}: a null anywhere is refused as unsupported_value naming the path`, () => {
+    test(`seed ${seed}: a null anywhere in a generated document is refused as unsupported_value`, () => {
       const rand = mulberry32(seed);
       const { object } = generator(rand);
       for (let i = 0; i < CASES_PER_SEED; i++) {

@@ -138,6 +138,7 @@ describe("config convert --to toml integration", () => {
       );
       expect(recorded).toContainEqual({ convert_target: "toml" });
       expect(recorded).toContainEqual({ convert_moved_comment_count: 0 });
+      expect(recorded).toContainEqual({ config_format: "jsonc" });
     }).pipe(Effect.provide(BunServices.layer));
   });
 
@@ -241,7 +242,7 @@ describe("config convert --to toml integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("offers Skip first and keeps a cancelled prompt silent", () => {
+  it.effect("offers Skip as the first reason and requests a silent cancel", () => {
     const { layer, out } = setup({ interactive: true });
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.jsonc"], SIMPLE_JSONC);

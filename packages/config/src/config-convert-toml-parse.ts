@@ -72,9 +72,7 @@ type Slot =
 
 interface Token {
   readonly kind: number;
-  readonly start: number;
   readonly line: number;
-  readonly endLine: number;
   readonly text: string;
   readonly value: string;
 }
@@ -119,9 +117,7 @@ const tokenize = (text: string, lineOffset: number): Array<Token> => {
     const line = scanner.getTokenStartLine() + 1 + lineOffset;
     tokens.push({
       kind,
-      start,
       line,
-      endLine: line + (raw.match(/\r\n|\n|\r/g)?.length ?? 0),
       text: raw,
       value: scanner.getTokenValue(),
     });
@@ -255,7 +251,15 @@ class Parser {
       return { kind: "literal", value: token.kind === TRUE };
     }
     if (token.kind === NUMBER) {
-      return { kind: "literal", value: Number(token.value) };
+      const number = Number(token.value);
+      if (!/[.eE]/.test(token.value) && !Number.isSafeInteger(number)) {
+        return refuse(
+          "unsupported_value",
+          `\`${displayPath(path)}\` is ${token.value}, which is too large to convert exactly; use a smaller value or a string, then rerun`,
+          token.line,
+        );
+      }
+      return { kind: "literal", value: number };
     }
     if (token.kind === STRING) {
       return { kind: "literal", value: token.value };
@@ -348,7 +352,11 @@ class Parser {
       } else if (token.kind === STRING) {
         this.index++;
         if (keys.has(token.value)) {
-          return refuse("parse_error", `\`${token.value}\` is defined twice`, token.line);
+          return refuse(
+            "parse_error",
+            `\`${displayPath([...path, token.value])}\` is defined twice`,
+            token.line,
+          );
         }
         keys.add(token.value);
         const keyTrivia: Array<JsoncComment> = [];

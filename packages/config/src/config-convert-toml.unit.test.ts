@@ -109,6 +109,14 @@ describe("convertCliConfigJsoncToToml", () => {
     });
   });
 
+  test("refuses an integer that loses precision as a double", () => {
+    expect(refusalOf('{\n  "a": {\n    "b": 9007199254740993\n  }\n}')).toMatchObject({
+      reason: "unsupported_value",
+      sourceLine: 3,
+      detail: expect.stringContaining("`a.b` is 9007199254740993, which is too large"),
+    });
+  });
+
   test("quotes keys that are not bare and indexes array items in the null path", () => {
     expect(refusalOf('{ "a.b": [ { "c": null } ] }')).toMatchObject({
       reason: "unsupported_value",
@@ -123,6 +131,22 @@ describe("convertCliConfigJsoncToToml", () => {
       detail: "`a` is defined twice",
     });
     expect(refusalOf("[1]")).toMatchObject({ reason: "parse_error" });
+  });
+
+  test("escapes control characters in a duplicate key refusal", () => {
+    const detail = refusalOf('{ "a": { "\\u001b": 1, "\\u001b": 2 } }').detail;
+
+    expect(detail).not.toContain("\u001b");
+    expect(detail).toBe('`a."\\u001b"` is defined twice');
+  });
+
+  test("keeps a comment above a table that only holds subtables on that table", () => {
+    const source = '{\n  // about db\n  "db": { "pooler": { "enabled": true } }\n}';
+    const out = convertCliConfigJsoncToToml(source);
+
+    expect(out.text).toContain("# about db\n[db]\n[db.pooler]\nenabled = true\n");
+    expect(out.movedComments).toEqual([]);
+    expect(SmolToml.parse(out.text)).toEqual(parseJsonc(source));
   });
 
   test("renders arrays of objects as arrays of tables", () => {
