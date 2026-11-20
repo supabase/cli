@@ -179,11 +179,20 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
     return { blank: false, comment };
   };
 
-  const leadingLines = (leading: ReadonlyArray<LeadingItem>): Array<string> =>
-    leading.flatMap((item) => (item.blank ? [""] : commentLines(item.comment)));
+  const leadingLines = (
+    leading: ReadonlyArray<LeadingItem>,
+    anchor: ReadonlyArray<string>,
+  ): Array<string> =>
+    leading.flatMap((item) =>
+      item.blank
+        ? [""]
+        : item.moved === true
+          ? hoist([item.comment], anchor)
+          : commentLines(item.comment),
+    );
 
   const leaf = (entry: Entry, path: ReadonlyArray<string>, commented: boolean): Array<string> => {
-    const lead = leadingLines(entry.leading);
+    const lead = leadingLines(entry.leading, [...path, entry.key]);
     entry.consumed.forEach(carry);
     const key = tomlKey(entry.key);
     const value = entry.value;
@@ -265,7 +274,7 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
   ): Array<string> => {
     const leaves = obj.entries.filter((entry) => !isChild(entry));
     const children = obj.entries.filter(isChild);
-    // TOML creates a table that only holds subtables implicitly, so it needs no header unless it carries comments (leading or inside).
+    // TOML creates a table that only holds subtables implicitly, so it needs no header unless comments sit above or inside it.
     const implicit =
       !options.array &&
       path.length > 0 &&
@@ -284,7 +293,10 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
       const closing = options.array ? "]]" : "]";
       const open = obj.open === undefined ? "" : ` ${inlineText(obj.open)}`;
       const header = `${opening}${path.map(tomlKey).join(".")}${closing}${open}`;
-      lines.push(...leadingLines(options.leading), options.commented ? `# ${header}` : header);
+      lines.push(
+        ...leadingLines(options.leading, path),
+        options.commented ? `# ${header}` : header,
+      );
     }
     for (const entry of leaves) {
       lines.push(...leaf(entry, path, options.commented));
@@ -295,7 +307,7 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
       lines.push(
         ...(item.blank
           ? [""]
-          : tailMoves
+          : tailMoves || item.moved === true
             ? hoist([item.comment], path)
             : commentLines(item.comment)),
       );
@@ -334,7 +346,7 @@ const renderDocument = (doc: JsoncDocument, schemaRef: string, schemaEntry?: Ent
   const lead = [
     ...doc.lead.flatMap(commentLines),
     ...(doc.root.open === undefined ? [] : commentLines(doc.root.open)),
-    ...(schemaEntry === undefined ? [] : leadingLines(schemaEntry.leading)),
+    ...(schemaEntry === undefined ? [] : leadingLines(schemaEntry.leading, [])),
     ...(schemaEntry?.inline === undefined ? [] : [inlineText(schemaEntry.inline)]),
   ];
   const body = section(doc.root, [], { array: false, leading: [], commented: false });

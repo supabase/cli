@@ -99,9 +99,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* Effect.gen(function* () {
-    if (flags.to === "toml") {
-      yield* recordCommandTelemetry({ [PropConvertTarget]: "toml" });
-    }
+    yield* recordCommandTelemetry({ [PropConvertTarget]: flags.to === "toml" ? "toml" : "jsonc" });
     if (Option.isSome(outputFlag)) {
       return yield* new ConfigConvertOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config convert"),
@@ -124,7 +122,6 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
     yield* Effect.annotateCurrentSpan("config.dry_run", flags.dryRun);
     yield* Effect.annotateCurrentSpan("config.convert.target", "jsonc");
     const parsed = yield* readConfigDocument();
-    yield* recordCommandTelemetry({ [PropConvertTarget]: "jsonc" });
     const configDir = path.dirname(parsed.path);
     if (parsed.format === "json") {
       const jsonFile = path.basename(parsed.path);

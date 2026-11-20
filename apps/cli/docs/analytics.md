@@ -71,9 +71,8 @@ It is emitted once per handled command invocation and includes:
 - `config_format` (`toml`, `json` or `jsonc`) once the command reads the project's config file,
   set on success and on failure, including when the file fails to parse. Commands that never read
   the project config, and projects without one, omit it
-- `convert_target` (`toml` or `jsonc`) on `config convert`, the format being written, on success
-  and on failure; `toml` is set as soon as `--to toml` is given, `jsonc` once the source config
-  file is read
+- `convert_target` (`toml` or `jsonc`) on `config convert`, the format being written, from `--to`
+  as soon as the command starts, on success and on failure
 - `convert_reason` (`editor`, `third-party-tool`, `older-cli`, `ci-or-deploy`, `ai-agent`,
   `preference` or `other`) on `config convert --to toml`, from `--reason` or the interactive
   prompt, which is not shown when telemetry is opted out; omitted when the user skips

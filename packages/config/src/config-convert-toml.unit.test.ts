@@ -286,6 +286,50 @@ describe("convertCliConfigJsoncToToml", () => {
     ]);
   });
 
+  test("strips JSDoc decoration from a block comment", () => {
+    const out = convertCliConfigJsoncToToml(
+      '{\n  /**\n   * Port for the API.\n   */\n  "port": 54321\n}',
+    );
+
+    expect(out.text).toContain("\n# Port for the API.\nport = 54321\n");
+    expect(out.text).not.toContain("# *");
+    expect(convertCliConfigJsoncToToml('{\n  /** note */\n  "a": 1\n}').text).toContain(
+      "\n# note\na = 1\n",
+    );
+  });
+
+  test("keeps asterisks that belong to a block comment's text", () => {
+    const out = convertCliConfigJsoncToToml(
+      '{\n  /*\n   **important**: keep in sync\n   */\n  "a": 1\n}',
+    );
+
+    expect(out.text).toContain("# **important**: keep in sync\na = 1");
+  });
+
+  test("records a comment between a key and its value as moved", () => {
+    const out = convertCliConfigJsoncToToml('{\n  "port": /* default API port */ 54321\n}');
+
+    expect(out.text).toContain("# default API port\nport = 54321");
+    expect(out.movedComments).toEqual([
+      { line: 2, text: "/* default API port */", anchor: ["port"] },
+    ]);
+  });
+
+  test("records a second comment on a member's line as moved", () => {
+    const out = convertCliConfigJsoncToToml('{\n  "a": 1, /* x */ // y\n  "b": 2\n}');
+
+    expect(out.text).toContain("a = 1 # x\n# y\nb = 2");
+    expect(out.movedComments).toEqual([{ line: 2, text: "// y", anchor: ["b"] }]);
+  });
+
+  test("writes a whole number beyond the safe range in exponent form", () => {
+    const source = '{"a": 1e18}';
+    const out = convertCliConfigJsoncToToml(source);
+
+    expect(out.text).toContain("a = 1e+18");
+    expect(SmolToml.parse(out.text)).toEqual(parseJsonc(source));
+  });
+
   test.each([
     ['{"$schema": "./my schema.json", "a": 1}'],
     ['{"$schema": "", "a": 1}'],

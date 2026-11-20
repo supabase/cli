@@ -14,7 +14,7 @@ export interface JsoncComment {
 
 export type LeadingItem =
   | { readonly blank: true }
-  | { readonly blank: false; readonly comment: JsoncComment };
+  | { readonly blank: false; readonly comment: JsoncComment; readonly moved?: true };
 
 interface LiteralNode {
   readonly kind: "literal";
@@ -66,7 +66,13 @@ export interface JsoncDocument {
 
 type Slot =
   | { readonly kind: "blank" }
-  | { readonly kind: "comment"; readonly comment: JsoncComment; readonly block: boolean }
+  | {
+      readonly kind: "comment";
+      readonly comment: JsoncComment;
+      readonly block: boolean;
+      /** Shares a source line with a member or key, so TOML renders it on a line of its own. */
+      readonly moved?: true;
+    }
   | { readonly kind: "member"; readonly entry: Entry }
   | { readonly kind: "example"; readonly entry: Entry };
 
@@ -129,9 +135,11 @@ const blockLines = (raw: string): Array<string> => {
   const lines = raw
     .slice(2, -2)
     .split(/\r\n|\n|\r/)
-    .map((line, index) => {
-      const trimmed = line.trim();
-      const text = index > 0 ? trimmed.replace(/^\*+/, "").trim() : trimmed;
+    .map((line) => {
+      const text = line
+        .trim()
+        .replace(/^\*+(?=\s|$)/, "")
+        .trim();
       return text === "" ? "" : ` ${text}`;
     });
   while (lines.length > 1 && lines[0] === "") {
@@ -336,7 +344,12 @@ class Parser {
         } else if (lineHasContent && typeof anchor === "object" && anchor.inline === undefined) {
           anchor.inline = comment;
         } else {
-          slots.push({ kind: "comment", comment, block: token.kind === BLOCK_COMMENT });
+          slots.push({
+            kind: "comment",
+            comment,
+            block: token.kind === BLOCK_COMMENT,
+            ...(lineHasContent ? { moved: true as const } : {}),
+          });
         }
         anchor = undefined;
         lineHasContent = true;
@@ -364,7 +377,12 @@ class Parser {
         this.index++;
         this.skipTrivia(keyTrivia);
         for (const comment of keyTrivia) {
-          slots.push({ kind: "comment", comment, block: comment.raw.startsWith("/*") });
+          slots.push({
+            kind: "comment",
+            comment,
+            block: comment.raw.startsWith("/*"),
+            moved: true,
+          });
         }
         const entry: Entry = {
           kind: "member",
@@ -396,7 +414,11 @@ const group = (
     if (slot.kind === "blank") {
       leading.push({ blank: true });
     } else if (slot.kind === "comment") {
-      leading.push({ blank: false, comment: slot.comment });
+      leading.push(
+        slot.moved === true
+          ? { blank: false, comment: slot.comment, moved: true }
+          : { blank: false, comment: slot.comment },
+      );
     } else {
       slot.entry.leading.push(...leading);
       entries.push(slot.entry);
@@ -415,7 +437,7 @@ const exampleAt = (
   comments: Array<JsoncComment>,
 ): { readonly end: number; readonly entry: Entry } | undefined => {
   const first = slots[start];
-  if (first?.kind !== "comment" || first.block) {
+  if (first?.kind !== "comment" || first.block || first.moved === true) {
     return undefined;
   }
   const match = EXAMPLE_START.exec(first.comment.lines[0] ?? "");
@@ -428,7 +450,7 @@ const exampleAt = (
   let end = start;
   while (depth > 0) {
     const next = slots[++end];
-    if (next?.kind !== "comment" || next.block) {
+    if (next?.kind !== "comment" || next.block || next.moved === true) {
       return undefined;
     }
     const text = next.comment.lines[0] ?? "";

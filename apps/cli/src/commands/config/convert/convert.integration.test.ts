@@ -322,13 +322,15 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("reports a TOML parse failure against config.toml", () => {
-    const { layer } = setup();
+  it.effect("reports a TOML parse failure against config.toml and still records the target", () => {
+    const { layer, recorded } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], "[api\nport = 1\n");
       const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(error.message).toContain("failed to parse supabase/config.toml");
+      expect(recorded).toContainEqual({ convert_target: "jsonc" });
+      expect(recorded).toContainEqual({ config_format: "toml" });
     }).pipe(Effect.provide(BunServices.layer));
   });
 
