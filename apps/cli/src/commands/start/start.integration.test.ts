@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Clock,
+  ConfigProvider,
   Deferred,
   Effect,
   Exit,
@@ -658,7 +659,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
       opts.configContents ?? `project_id = "${opts.configuredProjectId ?? "demo"}"\n`,
     );
   }
-  const out = mockOutput({ format: opts.format ?? "text", interactive: opts.interactive });
+  const out = mockOutput({ format: opts.format ?? "text", interactive: opts.interactive ?? false });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
   const cliSettings = mockCommandSettings({ workdir });
@@ -1965,9 +1966,10 @@ describe("start integration", () => {
 
     describe("stack nudge", () => {
       const NUDGE = "Try the new local stack";
+      const noShellEnv = ConfigProvider.layer(ConfigProvider.fromEnvRecord({}));
       const nudgeShown = Effect.fnUntraced(function* () {
         const { layer, out } = yield* setup({ interactive: true });
-        yield* start(flags()).pipe(Effect.provide(layer));
+        yield* start(flags()).pipe(Effect.provide(Layer.mergeAll(layer, noShellEnv)));
         return out.stderrText.includes(NUDGE);
       });
 
@@ -1980,6 +1982,21 @@ describe("start integration", () => {
 
           yield* TestClock.adjust("1 millis");
           expect(yield* nudgeShown()).toBe(true);
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+
+      it.effect("names the config.json setting when the project uses config.json", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const supabaseDir = path.join(tempRoot.current, "supabase");
+          yield* fs.makeDirectory(supabaseDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supabaseDir, "config.json"), '{"project_id":"demo"}');
+          const { layer, out } = yield* setup({ skipConfig: true, interactive: true });
+          yield* start(flags()).pipe(Effect.provide(Layer.mergeAll(layer, noShellEnv)));
+          expect(out.stderrText).toContain(
+            "remove the fixed ports from supabase/config.json, then set `experimental.stack` to `true`",
+          );
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
 
@@ -1997,7 +2014,9 @@ describe("start integration", () => {
           Effect.gen(function* () {
             const { layer, out } = yield* setup({ format: "json", interactive: false });
             yield* start(flags()).pipe(
-              Effect.provide(Layer.mergeAll(layer, Layer.succeed(AgentFlag, "yes" as const))),
+              Effect.provide(
+                Layer.mergeAll(layer, noShellEnv, Layer.succeed(AgentFlag, "yes" as const)),
+              ),
             );
             const info = out.messages
               .filter((m) => m.type === "info")
