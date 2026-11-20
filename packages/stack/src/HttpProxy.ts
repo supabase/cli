@@ -345,7 +345,7 @@ const localRequest = (request: IncomingMessage): boolean => {
   if (origin !== undefined && !(URL.canParse(origin) && loopbackHost(new URL(origin).hostname)))
     return false;
   const fetchSite = request.headers["sec-fetch-site"];
-  if (fetchSite === "cross-site") return false;
+  if (origin === undefined && fetchSite === "cross-site") return false;
   if (origin === undefined && fetchSite === undefined) return true;
   const host = request.headers.host ?? "";
   if (!URL.canParse(`http://${host}`)) return false;

@@ -818,6 +818,15 @@ it.live(
             ),
           );
           expect(crossSite.status).toBe(403);
+          const loopbackPage = yield* client.execute(
+            HttpClientRequest.post(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders({
+                origin: "http://localhost:3000",
+                "sec-fetch-site": "cross-site",
+              }),
+            ),
+          );
+          expect(loopbackPage.status).toBe(200);
           const localBrowser = yield* client.execute(
             HttpClientRequest.get(`http://127.0.0.1:${proxy.port}${path}`).pipe(
               HttpClientRequest.setHeaders({ "sec-fetch-site": "same-origin" }),

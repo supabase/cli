@@ -758,6 +758,11 @@ describe("functions serve runtime template (offline)", () => {
             (yield* admin("GET", route, undefined, { "sec-fetch-site": "cross-site" })).status,
           ).toBe(403);
           expect([502, 503]).toContain(
+            (yield* admin("POST", route, "http://localhost:3000", {
+              "sec-fetch-site": "cross-site",
+            })).status,
+          );
+          expect([502, 503]).toContain(
             (yield* admin("GET", route, undefined, { "sec-fetch-site": "same-origin" })).status,
           );
         }

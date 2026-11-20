@@ -14,7 +14,7 @@ const LOCAL_ORIGIN_GUARD = `      - name: pre-function
                 refused = not loopback(value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)"))
               end
               local fetch_site = kong.request.get_header("sec-fetch-site")
-              if fetch_site == "cross-site" then
+              if not origin and fetch_site == "cross-site" then
                 refused = true
               end
               if not refused and (origin or fetch_site) then
