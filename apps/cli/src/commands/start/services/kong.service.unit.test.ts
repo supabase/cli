@@ -191,7 +191,7 @@ describe("buildKongContainerSpec", () => {
         "> for _, el in ipairs(nginx_main_directives) do\n$(el.name) $(el.value);\n> end",
       );
       expect(script).toContain(
-        "> for _, el in ipairs(nginx_events_directives) do\n    $(el.name) $(el.value);\n> end",
+        "events {\n    # injected nginx_events_* directives\n> for _, el in ipairs(nginx_events_directives) do\n    $(el.name) $(el.value);\n> end\n}",
       );
       expect(script).not.toMatch(
         /^\s*(?:daemon|worker_processes|worker_rlimit_nofile|worker_connections|multi_accept)\b/m,
