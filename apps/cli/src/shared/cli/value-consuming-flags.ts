@@ -1,3 +1,4 @@
+import { apiCommands } from "../../commands/api/generated.ts";
 import { GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES } from "../../commands/gen/types/types.languages.ts";
 
 /**
@@ -110,6 +111,12 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "stack",
   "stack-id",
   "preparation",
+  // Runtime flags of the generated API commands, plus each generated flag that is not a boolean.
+  "body",
+  "timeout",
+  ...apiCommands.flatMap((entry) =>
+    entry.flags.filter((flag) => flag.type !== "boolean").map((flag) => flag.name),
+  ),
 ]);
 
 /** Single-character short flags (no `-` prefix) that consume the next token. */

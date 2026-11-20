@@ -1,4 +1,9 @@
 AccessTokenRequiredError
+ApiCommandOperationFailedError
+ApiCommandStatusError
+ApiCommandUnexpectedResponseError
+ApiCommandUsageError
+ApiCommandWaitTimeoutError
 ApiMaxRetriesError
 BackupListNetworkError
 BackupListUnexpectedStatusError

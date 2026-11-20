@@ -645,6 +645,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       realtime: { enabled: false, ip_version: "IPv6", max_header_length: 1 },
       experimental: {
         compute: true,
+        warehouse: true,
         stack: true,
         orioledb_version: "",
         s3_host: "host",

@@ -26,6 +26,9 @@
     "fmt:fix": {
       "cache": false
     },
+    "api-commands:check": {
+      "cache": false
+    },
     "knip:check": {
       "cache": false
     },
@@ -81,6 +84,18 @@
         "$TURBO_ROOT$/packages/stack/src/**"
       ],
       "outputs": ["schemas/**"]
+    },
+    "supabase#api-commands:generate": {
+      "cache": true,
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!src/commands/api/generated*",
+        "$TURBO_ROOT$/mise.lock",
+        "$TURBO_ROOT$/.oxfmtrc.json",
+        "$TURBO_ROOT$/packages/api/src/generated/openapi.json",
+        "$TURBO_ROOT$/packages/api/src/generated/contracts.ts"
+      ],
+      "outputs": ["src/commands/api/generated.ts", "src/commands/api/generated.md"]
     },
     "supabase#test:live": {
       "cache": false,

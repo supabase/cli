@@ -27,7 +27,7 @@ import {
 /**
  * Runtime layer for `supabase pull`: composes `db pull`'s db-specific pieces with the eager
  * Management API stack and `MachineErrorContext` for single-envelope machine failures. Excludes
- * `dbSchemaPullRuntimeLayer`'s `linkedDbResolverRuntimeLayer` piece, which independently binds
+ * `dbSchemaPullRuntimeLayer`'s `lazyManagementApiRuntimeLayer` piece, which independently binds
  * the same services via a different (lazy) factory — merging both would race over which
  * factory wins, since concurrent layer builds settle a shared singleton in build order.
  */

@@ -52,6 +52,7 @@ export const DOCUMENT_ONLY_LOCAL_PATHS = [
   ["realtime", "max_header_length"],
   ["experimental", "stack"],
   ["experimental", "compute"],
+  ["experimental", "warehouse"],
   ["experimental", "orioledb_version"],
   ["experimental", "s3_host"],
   ["experimental", "s3_region"],

@@ -457,4 +457,27 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-organizations-slug-webhooks-endpoints-id-test-post": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-get": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-retry-post": { fga: [] },
+  "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-connection": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-list-warehouse-tables": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table-layout": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-update-warehouse-table-layout": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-get-warehouse-query-stats": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-capacity": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-add-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-remove-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-resync-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
 };
