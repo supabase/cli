@@ -1577,6 +1577,24 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
+  it.effect("continues a launch whose start timed out once the container is running", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeStalledStartSpawner("", "running");
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      }).pipe(Effect.provide(engine.layer));
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "r".repeat(64), instanceId: "slow-start", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+      yield* Deferred.await(engine.stderrRead);
+      yield* TestClock.adjust("30 seconds");
+
+      expect(Exit.isSuccess(yield* Fiber.join(launch))).toBe(true);
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
   it.effect("removes the container a hung docker create may still create when interrupted", () =>
     Effect.gen(function* () {
       const engine = yield* makeHangingCreateSpawner();
@@ -2236,9 +2254,10 @@ const successfulHandle = (stdout = "") =>
     unref: Effect.succeed(Effect.void),
   });
 
-/** Answers every engine command except `start`, which writes `stderr` and never exits, leaving the container created. */
+/** Answers every engine command except `start`, which writes `stderr` and never exits, leaving the container in `status`. */
 const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(function* (
   stderr: string,
+  status = "created",
 ) {
   const stderrRead = yield* Deferred.make<void>();
   const spawner = ChildProcessSpawner.make((command) => {
@@ -2246,7 +2265,11 @@ const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(f
     if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
     if (command.args[0] === "inspect")
       return Effect.succeed(
-        successfulHandle("status=created started=0001-01-01T00:00:00Z pid=0 error="),
+        successfulHandle(
+          command.args.map(String)[2]?.startsWith("status=")
+            ? `status=${status} started=0001-01-01T00:00:00Z pid=0 error=`
+            : `{"Ports":{},"Status":"${status}","ExitCode":0}`,
+        ),
       );
     if (command.args[0] !== "start") return Effect.succeed(successfulHandle());
     // The second pull only happens once the reader has consumed the stderr line.
