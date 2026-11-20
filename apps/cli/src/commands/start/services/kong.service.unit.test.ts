@@ -175,6 +175,7 @@ describe("buildKongContainerSpec", () => {
         KONG_PORT_MAPS: "54321:8000",
         KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",
         KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k",
+        KONG_NGINX_USER: "nobody",
         KONG_NGINX_WORKER_PROCESSES: "1",
         KONG_SSL_CERT: "/home/kong/localhost.crt",
         KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
