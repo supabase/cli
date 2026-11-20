@@ -3140,6 +3140,54 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    getWarehouseCapacity: (
+      input: typeof operationDefinitions.v2GetWarehouseCapacity.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseCapacity.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseCapacity">(
+          operationDefinitions.v2GetWarehouseCapacity,
+          input,
+          options,
+        );
+      }),
+    getWarehouseConnection: (
+      input: typeof operationDefinitions.v2GetWarehouseConnection.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseConnection.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseConnection">(
+          operationDefinitions.v2GetWarehouseConnection,
+          input,
+          options,
+        );
+      }),
+    getWarehouseQueryStats: (
+      input: typeof operationDefinitions.v2GetWarehouseQueryStats.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseQueryStats.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseQueryStats">(
+          operationDefinitions.v2GetWarehouseQueryStats,
+          input,
+          options,
+        );
+      }),
     getWarehouseSetup: (
       input: typeof operationDefinitions.v2GetWarehouseSetup.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3152,6 +3200,54 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2GetWarehouseSetup">(
           operationDefinitions.v2GetWarehouseSetup,
+          input,
+          options,
+        );
+      }),
+    getWarehouseStatus: (
+      input: typeof operationDefinitions.v2GetWarehouseStatus.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseStatus.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseStatus">(
+          operationDefinitions.v2GetWarehouseStatus,
+          input,
+          options,
+        );
+      }),
+    getWarehouseTable: (
+      input: typeof operationDefinitions.v2GetWarehouseTable.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseTable.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseTable">(
+          operationDefinitions.v2GetWarehouseTable,
+          input,
+          options,
+        );
+      }),
+    getWarehouseTableLayout: (
+      input: typeof operationDefinitions.v2GetWarehouseTableLayout.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetWarehouseTableLayout.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetWarehouseTableLayout">(
+          operationDefinitions.v2GetWarehouseTableLayout,
           input,
           options,
         );
@@ -3312,6 +3408,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2ListPrivateLinkAssociations">(
           operationDefinitions.v2ListPrivateLinkAssociations,
+          input,
+          options,
+        );
+      }),
+    listWarehouseTables: (
+      input: typeof operationDefinitions.v2ListWarehouseTables.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListWarehouseTables.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListWarehouseTables">(
+          operationDefinitions.v2ListWarehouseTables,
           input,
           options,
         );
@@ -3728,6 +3840,22 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2UpdateNotebook">(
           operationDefinitions.v2UpdateNotebook,
+          input,
+          options,
+        );
+      }),
+    updateWarehouseTableLayout: (
+      input: typeof operationDefinitions.v2UpdateWarehouseTableLayout.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2UpdateWarehouseTableLayout.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2UpdateWarehouseTableLayout">(
+          operationDefinitions.v2UpdateWarehouseTableLayout,
           input,
           options,
         );

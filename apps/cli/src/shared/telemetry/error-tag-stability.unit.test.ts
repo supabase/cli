@@ -29,6 +29,10 @@ const fixturePath = fileURLToPath(new URL("./__fixtures__/error-tags.txt", impor
 const TAGGED_ERROR_PATTERN =
   /class\s+(\w+)\s+extends\s+(?:Data\.TaggedError|Schema\.TaggedError<\w+>\(\))\(\s*["']([^"']+)["']/g;
 
+// Matches a plain `Error` subclass whose first member is `readonly _tag = "…"` (optionally `as const`).
+const PLAIN_TAGGED_ERROR_PATTERN =
+  /class\s+(\w+)\s+extends\s+Error\s*\{\s*(?:(?:override|public)\s+)?readonly\s+_tag\s*=\s*["']([^"']+)["']/g;
+
 // Every test tier this repo's vitest config defines (`apps/cli/vitest.config.ts`).
 // Shared by name so a fifth tier can't quietly slip past `isProductionSourceFile`
 // the way `.live.test.ts` originally did.
@@ -76,12 +80,14 @@ const collectDeclarations = (filePaths: ReadonlyArray<string>) =>
     const declarations: Array<TaggedErrorDeclaration> = [];
     for (const filePath of filePaths) {
       const source = yield* fs.readFileString(filePath);
-      for (const match of source.matchAll(TAGGED_ERROR_PATTERN)) {
-        declarations.push({
-          className: match[1]!,
-          tag: match[2]!,
-          file: path.relative(repoRoot, filePath),
-        });
+      for (const pattern of [TAGGED_ERROR_PATTERN, PLAIN_TAGGED_ERROR_PATTERN]) {
+        for (const match of source.matchAll(pattern)) {
+          declarations.push({
+            className: match[1]!,
+            tag: match[2]!,
+            file: path.relative(repoRoot, filePath),
+          });
+        }
       }
     }
     return declarations;

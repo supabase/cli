@@ -1069,7 +1069,8 @@ export const makeContainerRuntime = (options: {
                 : undefined;
               if (!interactive)
                 yield* run(["start", name]).pipe(
-                  // Whether the engine stalled before or after starting the process decides the fix.
+                  // A loaded engine can start the process yet keep the CLI waiting past its
+                  // timeout, so the container's own state decides whether the start failed.
                   Effect.catchTag("ContainerError", (failure) =>
                     failure.kind !== "engine-timeout"
                       ? Effect.fail(failure)
@@ -1084,14 +1085,25 @@ export const makeContainerRuntime = (options: {
                         ).pipe(
                           Effect.orElseSucceed(() => "unavailable"),
                           Effect.flatMap((state) =>
-                            Effect.fail(
-                              new ContainerError({
-                                operation: failure.operation,
-                                message: `${failure.message}; container state: ${state}`,
-                                cause: failure.cause,
-                                kind: failure.kind,
-                              }),
-                            ),
+                            state.startsWith("status=running ")
+                              ? Effect.logWarning(
+                                  `Container ${name} is running although '${failure.message}'; container state: ${state}`,
+                                ).pipe(
+                                  Effect.andThen(
+                                    Effect.annotateCurrentSpan(
+                                      "container.start_timeout_running",
+                                      true,
+                                    ),
+                                  ),
+                                )
+                              : Effect.fail(
+                                  new ContainerError({
+                                    operation: failure.operation,
+                                    message: `${failure.message}; container state: ${state}`,
+                                    cause: failure.cause,
+                                    kind: failure.kind,
+                                  }),
+                                ),
                           ),
                         ),
                   ),

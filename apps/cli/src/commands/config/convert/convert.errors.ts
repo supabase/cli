@@ -67,3 +67,21 @@ export class ConfigConvertOutputFlagUnsupportedError extends Data.TaggedError(
     return actionability.invalidInput;
   }
 }
+
+/** `--reason` was passed without `--to toml`. */
+export class ConfigConvertReasonWithoutTomlTargetError extends Data.TaggedError(
+  "ConfigConvertReasonWithoutTomlTargetError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/** `config.toml` coexists with `config.json`/`config.jsonc`, so converting back would overwrite it. */
+export class ConfigConvertTomlExistsError extends Data.TaggedError("ConfigConvertTomlExistsError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
