@@ -561,29 +561,37 @@ it.live("rejects a migration version that is not digits before it can reach a fi
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("reads dry_run case-insensitively and refuses an unknown value instead of applying", () =>
-  Effect.gen(function* () {
-    const spark = fakeSpark();
-    const { send, migrationsDir, fs } = yield* withHandler(spark);
-    const migration = { query: "create table public.notes (id bigint primary key)" };
+it.live(
+  "reads dry_run case-insensitively and refuses an unknown or repeated value instead of applying",
+  () =>
+    Effect.gen(function* () {
+      const spark = fakeSpark();
+      const { send, migrationsDir, fs } = yield* withHandler(spark);
+      const migration = { query: "create table public.notes (id bigint primary key)" };
 
-    const dry = yield* send(
-      "POST",
-      "/v1/projects/default/database/migrations?dry_run=True",
-      migration,
-    );
-    const unknown = yield* send(
-      "POST",
-      "/v1/projects/default/database/migrations?dry_run=maybe",
-      migration,
-    );
+      const dry = yield* send(
+        "POST",
+        "/v1/projects/default/database/migrations?dry_run=True",
+        migration,
+      );
+      const unknown = yield* send(
+        "POST",
+        "/v1/projects/default/database/migrations?dry_run=maybe",
+        migration,
+      );
+      const repeated = yield* send(
+        "POST",
+        "/v1/projects/default/database/migrations?dry_run=false&dry_run=true",
+        migration,
+      );
 
-    expect(dry.status).toBe(200);
-    expect(dry.body).toMatchObject({ statuses: [{ status: "ok" }] });
-    expect(unknown.status).toBe(400);
-    expect(unknown.body).toMatchObject({ code: "22023" });
-    expect(yield* fs.exists(migrationsDir)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      expect(dry.status).toBe(200);
+      expect(dry.body).toMatchObject({ statuses: [{ status: "ok" }] });
+      expect(unknown.status).toBe(400);
+      expect(unknown.body).toMatchObject({ code: "22023" });
+      expect(repeated.status).toBe(400);
+      expect(yield* fs.exists(migrationsDir)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live("passes read_only from /pg/query to the DDL guard", () =>
@@ -600,32 +608,33 @@ it.live("passes read_only from /pg/query to the DDL guard", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live(
-  "serves the API keys only for the configured project, to a bearer token, on that exact path",
-  () =>
-    Effect.gen(function* () {
-      const { send } = yield* withHandler(fakeSpark());
-      const auth = { authorization: "Bearer local" };
+it.live("serves the API keys to a bearer token, for any linked ref, on that exact path", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark());
+    const auth = { authorization: "Bearer local" };
 
-      const ok = yield* send("GET", "/v1/projects/default/api-keys?reveal=false", undefined, auth);
-      const slash = yield* send("GET", "/v1/projects/default/api-keys/", undefined, auth);
-      const anonymous = yield* send("GET", "/v1/projects/default/api-keys");
-      const otherProject = yield* send("GET", "/v1/projects/other/api-keys", undefined, auth);
-      const suffix = yield* send("GET", "/v1/projects/default/api-keys/other", undefined, auth);
-      const legacy = yield* send("GET", "/v1/projects/default/api-keys/legacy", undefined, auth);
-      const legacyAnonymous = yield* send("GET", "/v1/projects/default/api-keys/legacy");
-      const legacyOther = yield* send("GET", "/v1/projects/other/api-keys/legacy", undefined, auth);
+    const ok = yield* send("GET", "/v1/projects/default/api-keys?reveal=false", undefined, auth);
+    const slash = yield* send("GET", "/v1/projects/default/api-keys/", undefined, auth);
+    const anonymous = yield* send("GET", "/v1/projects/default/api-keys");
+    const linkedRef = yield* send(
+      "GET",
+      "/v1/projects/sparkpocprojectlocal/api-keys",
+      undefined,
+      auth,
+    );
+    const suffix = yield* send("GET", "/v1/projects/default/api-keys/other", undefined, auth);
+    const legacy = yield* send("GET", "/v1/projects/default/api-keys/legacy", undefined, auth);
+    const legacyAnonymous = yield* send("GET", "/v1/projects/default/api-keys/legacy");
 
-      expect(ok.status).toBe(200);
-      expect(ok.body).toMatchObject([{ name: "anon" }, { name: "service_role" }]);
-      expect(slash.status).toBe(200);
-      expect(anonymous.status).toBe(401);
-      expect(anonymous.text).not.toContain("service-key");
-      expect(otherProject.status).toBe(404);
-      expect(suffix.status).toBe(501);
-      expect(legacy.status).toBe(200);
-      expect(legacy.body).toEqual({ enabled: true });
-      expect(legacyAnonymous.status).toBe(401);
-      expect(legacyOther.status).toBe(404);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject([{ name: "anon" }, { name: "service_role" }]);
+    expect(slash.status).toBe(200);
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.text).not.toContain("service-key");
+    expect(linkedRef.status).toBe(200);
+    expect(suffix.status).toBe(501);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body).toEqual({ enabled: true });
+    expect(legacyAnonymous.status).toBe(401);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

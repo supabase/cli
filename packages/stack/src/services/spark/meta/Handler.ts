@@ -43,8 +43,10 @@ const MigrationBody = Schema.Struct({
   version: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
-const parseDryRun = (value: string | null): boolean | undefined => {
-  if (value === null) return false;
+const parseDryRun = (values: ReadonlyArray<string>): boolean | undefined => {
+  if (values.length === 0) return false;
+  const [value] = values;
+  if (values.length > 1 || value === undefined) return undefined;
   switch (value.toLowerCase()) {
     case "true":
     case "1":
@@ -456,9 +458,9 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         Effect.mapError(() => rejected("22P02", "invalid request body")),
       );
       const name = body.name ?? "mcp";
-      const dryRun = parseDryRun(search.get("dry_run"));
+      const dryRun = parseDryRun(search.getAll("dry_run"));
       if (dryRun === undefined)
-        return yield* rejected("22023", "dry_run must be true, false, 1 or 0");
+        return yield* rejected("22023", "dry_run must be given once, as true, false, 1 or 0");
       if (dryRun)
         return json({
           statuses: yield* dryRunSchemaChange(body.query, name, body.version ?? undefined),
@@ -475,7 +477,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     }
     const keysRoute = rest.replace(/\/$/u, "");
     if ((keysRoute === "/api-keys" || keysRoute === "/api-keys/legacy") && method === "GET") {
-      if (ref !== settings.projectRef) return json({ message: "project not found" }, 404);
       if (bearerToken(request) === undefined)
         return json({ message: "Access token not provided" }, 401);
       if (keysRoute === "/api-keys/legacy") return json({ enabled: true });
