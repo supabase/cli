@@ -39,11 +39,7 @@ on:
         type: string
         default: supabase
     secrets:
-      SENTRY_DSN:
-        required: false
       POSTHOG_API_KEY:
-        required: false
-      POSTHOG_ENDPOINT:
         required: false
       GH_APP_PRIVATE_KEY:
         required: false
@@ -64,9 +60,7 @@ jobs:
     with:
       version: ${{ inputs.version }}
     secrets:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   build-github:
@@ -79,9 +73,7 @@ jobs:
       timeout_minutes: 45
       build_timeout_minutes: 20
     secrets:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   smoke-test:
