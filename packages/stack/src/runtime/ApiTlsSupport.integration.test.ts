@@ -243,7 +243,7 @@ describe.skipIf(bash === undefined && !ci)("start check probe over this host's b
           reach({ port, stop: Effect.fail(new StopError({ message: "engine gone" })) }),
         );
         expect(stuck.message).toBe(
-          `api.tls: the api port ${port} on test runtime isn't answering this stack's start check (replied HTTP/1.1 404 Not Found); its services did not stop (engine gone), run \`supabase stack stop --stack-id stack\` to stop them`,
+          `api.tls: the api port ${port} on test runtime isn't answering this stack's start check (replied HTTP/1.1 404 Not Found); its services did not stop (engine gone), run \`supabase stack stop --stack stack\` to stop them`,
         );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

@@ -168,7 +168,7 @@ const runStatusEnv = (input: {
     const resolver = Layer.succeed(StackTargetResolver, {
       resolve: (resolveInput) =>
         Effect.sync(() => {
-          const target = targets.get(targetKey(resolveInput.projectRoot, resolveInput.name));
+          const target = targets.get(targetKey(resolveInput.projectRoot, resolveInput.stack));
           return {
             projectRoot: resolveInput.projectRoot,
             ...(target === undefined ? {} : { id: target.id, definition: target.definition }),
@@ -307,5 +307,26 @@ describe("stack start export pointer", () => {
           `supabase status --env --workdir '${projectRoot}' --stack 'feature one'"'"'s box'`,
         );
       }),
+  );
+
+  it.effect("joins a stack name that starts with - to --stack, and that pointer resolves it", () =>
+    Effect.gen(function* () {
+      const projectRoot = "/pointer-test/project-dash";
+      const pointer = statusEnvPointer(
+        { explicitWorkdir: true, projectRoot, stack: "-feature" },
+        "posix",
+      );
+      expect(pointer).toBe(`supabase status --env --workdir ${projectRoot} --stack=-feature`);
+
+      const values = yield* runStatusEnv({
+        argv: pointer.split(" ").slice(1),
+        ambientCwd: "/pointer-test/elsewhere",
+        specs: [
+          { projectRoot, sqlPort: 40006, tag: "default" },
+          { projectRoot, name: "-feature", sqlPort: 40007, tag: "named" },
+        ],
+      });
+      expect(values.DB_URL).toContain(":40007/");
+    }),
   );
 });

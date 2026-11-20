@@ -100,7 +100,6 @@ const StatusEndpointsReport = Schema.Struct({
 });
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
   stack: Option.none(),
-  stackId: Option.none(),
   env: false,
   overrideName: [],
   ...input,

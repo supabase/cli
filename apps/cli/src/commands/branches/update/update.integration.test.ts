@@ -332,7 +332,7 @@ describe("branches update integration", () => {
           requests: api.requests,
           exact: true,
         });
-        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(out.stderrText).not.toContain("Plans and add-ons:");
         expect(analytics.captured).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
@@ -365,7 +365,7 @@ describe("branches update integration", () => {
         expect(classifyCliCauseActionability(exit.cause).error_category).not.toBe("plan_limit");
       }
       expect(sequence(api.requests)).toEqual([`PATCH ${API}/v1/branches/${BRANCH_REF}`]);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

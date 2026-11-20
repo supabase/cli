@@ -32,8 +32,3 @@ If a backup from an earlier conversion already exists, the command uses the next
 - Commit the conversion on its own. The history of the old file stays available with `git log -- supabase/config.toml`.
 - Search the repository, CI workflows and Dockerfiles for `config.toml` and update any references.
 - Bump pinned Supabase CLI versions (for example `supabase/setup-cli`) to 3.1.0 or later.
-
-```sh
-supabase config convert --dry-run
-supabase config convert
-```

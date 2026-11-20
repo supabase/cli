@@ -59,6 +59,11 @@ export type WholeStack = Readonly<{
   readonly logTails: Ref.Ref<ReadonlyArray<readonly [string, string]>>;
 }>;
 
+// Large enough to keep what led up to a service shutdown, not only the shutdown itself.
+const serviceLogTailChars = 65_536;
+const ownerLogTailBytes = 65_536;
+const ownerLogTailLines = 400;
+
 const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
   (
     services: ReadonlyArray<AnyService>,
@@ -73,7 +78,7 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
               Ref.update(logTails, (tails) => {
                 const text = record.text === undefined ? "" : `${record.text}\n`;
                 const existing = tails.find(([name]) => name === instance.service)?.[1] ?? "";
-                const updated = `${existing}${text}`.slice(-8192);
+                const updated = `${existing}${text}`.slice(-serviceLogTailChars);
                 const without = tails.filter(([name]) => name !== instance.service);
                 return [...without, [instance.service, updated] as const];
               }),
@@ -104,14 +109,15 @@ const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
       Effect.gen(function* () {
         const file = yield* fs.open(path.join(stateRoot, stackId, "owner.log"));
         const size = ByteSize.toBigInt((yield* file.stat).size);
-        const length = size < 4096n ? size : 4096n;
+        const limit = BigInt(ownerLogTailBytes);
+        const length = size < limit ? size : limit;
         yield* file.seek(size - length, "start");
         const bytes = yield* file.readAlloc(Number(length));
         const content = Option.match(bytes, {
           onNone: () => "",
           onSome: (buffer) => new TextDecoder().decode(buffer),
         });
-        return tailLines(content, 40);
+        return tailLines(content, ownerLogTailLines);
       }),
     ).pipe(Effect.orElseSucceed(() => "")),
 );

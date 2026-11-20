@@ -841,6 +841,41 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const missingContainer = (message: string) => /no such (?:container|object)/iu.test(message);
+      // The engine refused the exec, so the script never ran.
+      const helperUnavailable = (message: string) =>
+        missingContainer(message) || /is not running/iu.test(message);
+      // The helper died under the exec, so the script may have partly run.
+      const lostDuringExec = (message: string) => /^Helper \S+ stopped during exec:/u.test(message);
+      /* Every helper script reports its own failures on stderr, so a silent non-zero exit from a
+         helper that has stopped means the engine lost the exec. */
+      const execInHelper = Effect.fn("DockerDatabaseStorage.execInHelper")(
+        (id: string, command: string) =>
+          engineCommand(["exec", id, "/bin/sh", "-c", command]).pipe(
+            Effect.catchTag("DockerDatabaseStorageError", (cause) =>
+              /^Container engine exited with \d+$/u.test(cause.message)
+                ? engineCommand(["inspect", "--format", "{{.State.Running}}", id]).pipe(
+                    Effect.map((running) => running === "true"),
+                    Effect.catchTag("DockerDatabaseStorageError", (inspectCause) =>
+                      missingContainer(inspectCause.message)
+                        ? Effect.succeed(false)
+                        : Effect.fail(cause),
+                    ),
+                    Effect.tap((running) => Effect.annotateCurrentSpan("helper.lost", !running)),
+                    Effect.flatMap((running) =>
+                      Effect.fail(
+                        running
+                          ? cause
+                          : errorFor(
+                              "engine",
+                              `Helper ${id} stopped during exec: ${cause.message}`,
+                            ),
+                      ),
+                    ),
+                  )
+                : Effect.fail(cause),
+            ),
+          ),
+      );
       const volumeHelperKey = (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         image: string,
@@ -887,11 +922,15 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
         );
       });
+      /** Runs one helper script; `replayLostExec` is only safe for scripts that can run twice. */
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
         command: string,
         mounts: ReadonlyArray<DatabaseStorageMount>,
         pin: ArtifactPin,
+        { replayLostExec = true }: { readonly replayLostExec?: boolean } = {},
       ): Effect.Effect<string, DockerDatabaseStorageError> => {
+        const replayable = (message: string) =>
+          helperUnavailable(message) || (replayLostExec && lostDuringExec(message));
         const cleanupAfterFailure = Effect.gen(function* () {
           if ((yield* Ref.get(helperId)) === undefined) return;
           yield* Ref.set(helperCleanupPending, true);
@@ -902,14 +941,20 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const sharedKey = volumeHelperKey(mounts, image);
             if (sharedKey !== undefined && options.helpers !== undefined) {
               const helpers = options.helpers;
-              const exec = (id: string) => engineCommand(["exec", id, "/bin/sh", "-c", command]);
+              const exec = (id: string) => execInHelper(id, command);
               const open = openSharedHelper(mounts, sharedKey, image, helpers.ownerId);
               return helpers.use(sharedKey, open, closeSharedHelper, exec).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-                  /no such container|is not running/iu.test(cause.message)
+                  helperUnavailable(cause.message) || lostDuringExec(cause.message)
                     ? helpers
                         .drop(sharedKey)
-                        .pipe(Effect.andThen(helpers.use(sharedKey, open, closeSharedHelper, exec)))
+                        .pipe(
+                          Effect.andThen(
+                            replayable(cause.message)
+                              ? helpers.use(sharedKey, open, closeSharedHelper, exec)
+                              : Effect.fail(cause),
+                          ),
+                        )
                     : Effect.fail(cause),
                 ),
                 Effect.mapError((cause) => errorFor("helper", cause)),
@@ -918,7 +963,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             const operation = Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
                 const id = yield* restore(acquireHelper(mounts, image));
-                return yield* restore(engineCommand(["exec", id, "/bin/sh", "-c", command]));
+                return yield* restore(execInHelper(id, command));
               }).pipe(
                 Effect.onExit((exit) =>
                   Exit.isFailure(exit) ? Effect.uninterruptible(cleanupAfterFailure) : Effect.void,
@@ -926,9 +971,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 Effect.mapError((cause) => errorFor("mount", cause)),
               ),
             );
-            return operationLock
-              .withPermit(operation)
-              .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+            return operationLock.withPermit(operation).pipe(
+              Effect.retry({ times: 1, while: (cause) => replayable(cause.message) }),
+              Effect.mapError((cause) => errorFor("helper", cause)),
+            );
           }),
         );
       });
@@ -1211,7 +1257,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         const instanceSnapshotRoot = host
           ? `/instance/${instanceSnapshotsDirectory}`
           : `/store/${store.namespace}/snapshots`;
-        const exec = (script: string) => runHelper(script, paths.mounts, pin);
+        // A replayed snapshot program would find its own partial output and fail misleadingly.
+        const exec = (script: string) =>
+          runHelper(script, paths.mounts, pin, { replayLostExec: false });
         return makeSnapshotStore({
           backends: {
             cache: makeDockerSnapshotBackend({
