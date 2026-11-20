@@ -812,6 +812,12 @@ it.live(
             ),
           );
           expect(rebound.status).toBe(403);
+          const crossSite = yield* client.execute(
+            HttpClientRequest.get(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders({ "sec-fetch-site": "cross-site" }),
+            ),
+          );
+          expect(crossSite.status).toBe(403);
           const localBrowser = yield* client.execute(
             HttpClientRequest.get(`http://127.0.0.1:${proxy.port}${path}`).pipe(
               HttpClientRequest.setHeaders({ "sec-fetch-site": "same-origin" }),

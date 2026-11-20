@@ -13,7 +13,11 @@ const LOCAL_ORIGIN_GUARD = `      - name: pre-function
                 local value = origin:lower()
                 refused = not loopback(value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)"))
               end
-              if not refused and (origin or kong.request.get_header("sec-fetch-site")) then
+              local fetch_site = kong.request.get_header("sec-fetch-site")
+              if fetch_site == "cross-site" then
+                refused = true
+              end
+              if not refused and (origin or fetch_site) then
                 local host = kong.request.get_host()
                 refused = not (loopback(host) or host:match("^%d+%.%d+%.%d+%.%d+$") or host:find(":", 1, true))
               end

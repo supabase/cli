@@ -754,6 +754,9 @@ describe("functions serve runtime template (offline)", () => {
             "sec-fetch-site": "same-origin",
           });
           expect(rebound.status).toBe(403);
+          expect(
+            (yield* admin("GET", route, undefined, { "sec-fetch-site": "cross-site" })).status,
+          ).toBe(403);
           expect([502, 503]).toContain(
             (yield* admin("GET", route, undefined, { "sec-fetch-site": "same-origin" })).status,
           );
