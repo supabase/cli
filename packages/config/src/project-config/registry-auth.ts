@@ -1,5 +1,5 @@
-import { isObject } from "../config-document.ts";
-import { setOwnProperty } from "../sparse.ts";
+import { isObject } from "../lib/document-value.ts";
+import { setOwnProperty } from "../lib/own-property.ts";
 import {
   clampToUint,
   expectBoolean,
