@@ -31,8 +31,8 @@ export interface PublishPullRequestOptions<E, R> {
   readonly repo: string;
   readonly base: string;
   readonly branch: string;
-  /** Repo-relative file or directory that `write` changes; it is staged and diffed against base. */
-  readonly stagedPath: string;
+  /** Repo-relative paths staged and diffed against base. */
+  readonly stagedPaths: readonly [string, ...string[]];
   readonly write: (checkoutDir: string) => Effect.Effect<void, E, R>;
   readonly commitMessage: string;
   readonly pullRequestTitle: string;
@@ -45,7 +45,7 @@ export const publishPullRequest = <E, R>({
   repo,
   base,
   branch,
-  stagedPath,
+  stagedPaths,
   write,
   commitMessage,
   pullRequestTitle,
@@ -75,15 +75,15 @@ export const publishPullRequest = <E, R>({
 
         yield* write(tmpDir);
 
-        yield* shell(() => $`git -C ${tmpDir} add ${stagedPath}`);
+        yield* shell(() => $`git -C ${tmpDir} add -- ${stagedPaths}`);
         const unchanged = yield* shell(() =>
-          $`git -C ${tmpDir} diff --quiet --cached -- ${stagedPath}`.nothrow().quiet(),
+          $`git -C ${tmpDir} diff --quiet --cached -- ${stagedPaths}`.nothrow().quiet(),
         );
         if (unchanged.exitCode === 0) {
           yield* Console.log(
             remoteBranch.exitCode === 0
-              ? `${stagedPath} is already up to date on ${branch}`
-              : `${stagedPath} is already up to date in ${repo}`,
+              ? `No changes to ${stagedPaths.join(", ")} on ${branch}`
+              : `No changes to ${stagedPaths.join(", ")} in ${repo}`,
           );
         } else {
           yield* shell(
@@ -95,7 +95,7 @@ export const publishPullRequest = <E, R>({
         }
 
         const unpublished = yield* shell(() =>
-          $`git -C ${tmpDir} diff --quiet origin/${base} HEAD -- ${stagedPath}`.nothrow().quiet(),
+          $`git -C ${tmpDir} diff --quiet origin/${base} HEAD -- ${stagedPaths}`.nothrow().quiet(),
         );
         if (unpublished.exitCode === 1) {
           const existing = yield* shell(() =>

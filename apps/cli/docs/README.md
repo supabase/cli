@@ -56,17 +56,11 @@ For CLI contributors, preview reference changes in the real website before publi
    `/docs/reference/cli/supabase-init` on the local server to inspect a rendered command page.
    Rerun the pipe after changing CLI documentation.
 
-`--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` in the supplied checkout using the
-same formatting as release publishing. Save any edits to that file first. If formatting fails,
-the file contains the unformatted generated spec; fix the error and rerun the pipe. The target
-directory must already exist. Local mode does not clone, commit, push, or open a PR, and needs no GitHub
-credentials. Add `--dry-run` to validate the input and print the destination without writing.
-
-This preview writes only the command-reference spec, not sidebar entries or JSON Schemas.
-From `apps/cli`, `pnpm docs:spec <version>` generates the command-reference spec and
-`pnpm docs:sidebar` generates the content for the website's
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json).
-Copy the generated sidebar into that file so new commands appear in the reference.
+`--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` and
+`apps/docs/spec/common-cli-sections.json` in the supplied checkout. Save any edits to those files
+first. If YAML formatting fails, fix the error and rerun the pipe. The target directories must
+already exist. Local mode does not clone, commit, push, or open a PR, and needs no GitHub
+credentials. Add `--dry-run` to validate the input and print both destinations without writing.
 
 ## Release Publishing
 
@@ -76,10 +70,9 @@ command tree in the current checkout, excluding unlisted and explicitly excluded
 Generate and publish from the same checkout; duplicate, missing, or unexpected commands fail validation.
 
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
-release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
-pushes the `cli/ref-doc` branch in [supabase/supabase](https://github.com/supabase/supabase),
-and opens a PR when none is open. When the spec is already published and a PR is open
-or not needed, the run is a no-op.
+release: it pipes the spec into `scripts/publish-docs-spec.ts`, which formats the spec and
+generates the sidebar from the same command tree. It pushes both files to the `cli/ref-doc` branch
+in [supabase/supabase](https://github.com/supabase/supabase) and opens a PR when needed.
 Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
 fixes committed onto the branch survive.
 
