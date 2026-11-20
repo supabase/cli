@@ -249,6 +249,8 @@ export function buildKongContainerSpec(
       // Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",
       KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k",
+      /* "nobody" drops Kong's default `user` directive, which nginx ignores with a warning here */
+      KONG_NGINX_USER: "nobody",
       KONG_NGINX_WORKER_PROCESSES: input.nginxWorkerProcesses,
       KONG_SSL_CERT: "/home/kong/localhost.crt",
       KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
