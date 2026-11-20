@@ -1,17 +1,25 @@
-/** Refuses browser requests from a non-loopback `Origin` on unauthenticated admin services. */
+/** Refuses cross-site and DNS-rebound browser requests on unauthenticated admin services. */
 const LOCAL_ORIGIN_GUARD = `      - name: pre-function
         config:
           access:
             - |
+              local function loopback(host)
+                host = host and host:lower():gsub("%.$", "")
+                return host == "localhost" or host == "[::1]" or (host ~= nil and (host:sub(-10) == ".localhost" or host:match("^127%.%d+%.%d+%.%d+$") ~= nil))
+              end
               local origin = kong.request.get_header("origin")
+              local refused = false
               if origin then
                 local value = origin:lower()
-                local host = value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)")
-                host = host and host:gsub("%.$", "")
-                if not (host == "localhost" or host == "[::1]" or (host and (host:sub(-10) == ".localhost" or host:match("^127%.%d+%.%d+%.%d+$")))) then
-                  kong.ctx.shared.local_origin_refused = true
-                  return kong.response.exit(403, { message = "Forbidden" })
-                end
+                refused = not loopback(value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)"))
+              end
+              if not refused and (origin or kong.request.get_header("sec-fetch-site")) then
+                local host = kong.request.get_host()
+                refused = not (loopback(host) or host:match("^%d+%.%d+%.%d+%.%d+$") or host:find(":", 1, true))
+              end
+              if refused then
+                kong.ctx.shared.local_origin_refused = true
+                return kong.response.exit(403, { message = "Forbidden" })
               end
       - name: post-function
         config:

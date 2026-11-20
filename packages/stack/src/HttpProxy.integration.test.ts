@@ -772,7 +772,10 @@ it.live(
         const send = (method: "OPTIONS" | "POST", path: string, origin?: string) =>
           client.execute(
             HttpClientRequest.make(method)(`http://127.0.0.1:${proxy.port}${path}`).pipe(
-              HttpClientRequest.setHeaders(origin === undefined ? {} : { origin }),
+              HttpClientRequest.setHeaders({
+                "access-control-request-method": "POST",
+                ...(origin === undefined ? {} : { origin }),
+              }),
             ),
           );
 
@@ -800,6 +803,21 @@ it.live(
             "http://[::1]:3000",
           ])
             expect((yield* send("POST", path, origin)).status).toBe(200);
+          const rebound = yield* client.execute(
+            HttpClientRequest.get(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders({
+                host: `rebind.evil.example:${proxy.port}`,
+                "sec-fetch-site": "same-origin",
+              }),
+            ),
+          );
+          expect(rebound.status).toBe(403);
+          const localBrowser = yield* client.execute(
+            HttpClientRequest.get(`http://127.0.0.1:${proxy.port}${path}`).pipe(
+              HttpClientRequest.setHeaders({ "sec-fetch-site": "same-origin" }),
+            ),
+          );
+          expect(localBrowser.status).toBe(200);
           const socket = yield* rawClient(
             proxy.port,
             `GET ${path} HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,

@@ -44,11 +44,11 @@ import { ProxyError } from "./Proxy.ts";
 import {
   backendAddress,
   credentialsFor,
+  dedicatedRoutes,
   emailTemplateFile,
   endpointNames,
   endpointPort,
   freshWrites,
-  localOriginOnly,
   joinRoutes,
   outputsFor,
   publicUrl,
@@ -600,13 +600,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       endpointNames(initial).map((name) => {
         const shared = sharedRoutes(initial, name, routeKeys, backendFor, emailTemplate);
         const join = joinRoutes(initial, name);
+        const dedicated = dedicatedRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
           backend: backendFor(name),
           enabled,
           ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
-          ...(localOriginOnly(initial, name) ? { localOriginOnly: true } : {}),
+          ...(dedicated === undefined ? {} : { dedicated }),
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
         };

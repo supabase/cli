@@ -713,12 +713,18 @@ describe("functions serve runtime template (offline)", () => {
         expect(reusedCustomResponse.headers["x-function-slug"]).toBe("custom");
 
         // `/pg` and `/mcp` upstreams render as an unresolvable host, so an admitted request fails at the proxy.
-        const admin = (method: "OPTIONS" | "POST", route: string, origin?: string) =>
+        const admin = (
+          method: "GET" | "OPTIONS" | "POST",
+          route: string,
+          origin?: string,
+          extra: Record<string, string> = {},
+        ) =>
           HttpClient.execute(
             HttpClientRequest.make(method)(`http://127.0.0.1:${port}${route}`, {
               headers: {
                 "access-control-request-method": "POST",
                 ...(origin === undefined ? {} : { origin }),
+                ...extra,
               },
             }),
           ).pipe(Effect.timeout(Duration.seconds(5)));
@@ -743,6 +749,14 @@ describe("functions serve runtime template (offline)", () => {
           ]) {
             expect([502, 503]).toContain((yield* admin("POST", route, origin)).status);
           }
+          const rebound = yield* admin("GET", route, undefined, {
+            host: "rebind.evil.example",
+            "sec-fetch-site": "same-origin",
+          });
+          expect(rebound.status).toBe(403);
+          expect([502, 503]).toContain(
+            (yield* admin("GET", route, undefined, { "sec-fetch-site": "same-origin" })).status,
+          );
         }
       }).pipe(Effect.provide(testLayer)),
     SERVE_OFFLINE_TEST_TIMEOUT_MS,

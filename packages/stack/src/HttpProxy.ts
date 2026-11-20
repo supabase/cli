@@ -332,11 +332,23 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>)
 
 const LOOPBACK_HOST = /^(?:(?:[^.]+\.)*localhost|127(?:\.\d{1,3}){3}|\[::1\])$/u;
 
-/** Whether a request carries no `Origin`, like a non-browser client, or a loopback one. */
-const loopbackOrigin = (origin: string | undefined): boolean => {
-  if (origin === undefined) return true;
-  if (!URL.canParse(origin)) return false;
-  return LOOPBACK_HOST.test(new URL(origin).hostname.toLowerCase().replace(/\.$/u, ""));
+const loopbackHost = (hostname: string) =>
+  LOOPBACK_HOST.test(hostname.toLowerCase().replace(/\.$/u, ""));
+
+/**
+ * Whether a request may reach a local-origin-only route: no browser signal, as from a server or
+ * CLI client, or a browser on a loopback origin whose `Host` is loopback or an IP literal, so a
+ * DNS-rebound name never passes.
+ */
+const localRequest = (request: IncomingMessage): boolean => {
+  const origin = request.headers.origin;
+  if (origin !== undefined && !(URL.canParse(origin) && loopbackHost(new URL(origin).hostname)))
+    return false;
+  if (origin === undefined && request.headers["sec-fetch-site"] === undefined) return true;
+  const host = request.headers.host ?? "";
+  if (!URL.canParse(`http://${host}`)) return false;
+  const hostname = new URL(`http://${host}`).hostname;
+  return loopbackHost(hostname) || IP_LITERAL.test(hostname);
 };
 
 const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
@@ -992,7 +1004,7 @@ export const makeHttpProxy = (options: {
                 else yield* serveFile(request, response, sent, route);
                 return;
               }
-              if (route?.localOriginOnly === true && !loopbackOrigin(request.headers.origin)) {
+              if (route?.localOriginOnly === true && !localRequest(request)) {
                 respond(response, sent, 403, "Forbidden");
               } else if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
                 setPreflightCors(response, request);
@@ -1079,7 +1091,7 @@ export const makeHttpProxy = (options: {
                   socket.destroy();
                   return 404;
                 })
-              : route.localOriginOnly === true && !loopbackOrigin(request.headers.origin)
+              : route.localOriginOnly === true && !localRequest(request)
                 ? yield* Effect.sync(() => {
                     socket.end(
                       "HTTP/1.1 403 Forbidden\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",

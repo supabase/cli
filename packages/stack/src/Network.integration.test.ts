@@ -25,7 +25,13 @@ import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
+import {
+  emailTemplateFile,
+  freshWrites,
+  joinRoutes,
+  sharedRoutes,
+  dedicatedRoutes,
+} from "./host/Endpoints.ts";
 import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
 import type { ServiceCreation } from "./services/Catalog.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -747,63 +753,65 @@ it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's 
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("leaves CORS on a dedicated listener to its service", () =>
+it.live("guards Studio's and postgres-meta's dedicated admin routes while others keep CORS", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-cors-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-admin-" });
       const state = yield* makeTestState(root);
       yield* state.save(stack("stack"));
       const target = yield* backendWith((incoming, response) => response.end(incoming.method));
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
-      const studio = yield* network.register({
-        id: "studio",
-        endpoints: { http: endpoint(target, Effect.succeed(true)) },
-      });
-      yield* studio.bind;
-      const address = yield* studio.address("http", "host");
       const client = yield* HttpClient.HttpClient;
-      for (const method of ["OPTIONS", "POST"] as const) {
-        const response = yield* client.execute(
-          HttpClientRequest.make(method)(`http://${address.host}:${address.port}/api/mcp`).pipe(
-            HttpClientRequest.setHeaders({ origin: "https://evil.example" }),
-          ),
-        );
-        expect(yield* response.text).toBe(method);
-        expect(response.headers["access-control-allow-origin"]).toBeUndefined();
-      }
-    }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-);
-
-it.live("refuses cross-site browser requests on a local-origin-only dedicated listener", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-local-" });
-      const state = yield* makeTestState(root);
-      yield* state.save(stack("stack"));
-      const target = yield* backendWith((incoming, response) => response.end(incoming.method));
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
-      const pgmeta = yield* network.register({
-        id: "pgmeta",
-        endpoints: { http: { ...endpoint(target, Effect.succeed(true)), localOriginOnly: true } },
-      });
-      yield* pgmeta.bind;
-      const address = yield* pgmeta.address("http", "host");
-      const client = yield* HttpClient.HttpClient;
-      const send = (method: "OPTIONS" | "POST", origin: string) =>
+      const bound = (service: "pgmeta" | "studio" | "mail") =>
+        Effect.gen(function* () {
+          const dedicated = dedicatedRoutes({ service }, "http");
+          const namespace = yield* network.register({
+            id: service,
+            endpoints: {
+              http: {
+                ...endpoint(target, Effect.succeed(true)),
+                ...(dedicated === undefined ? {} : { dedicated }),
+              },
+            },
+          });
+          yield* namespace.bind;
+          return yield* namespace.address("http", "host");
+        });
+      const send = (
+        address: { readonly host: string; readonly port: number },
+        method: "OPTIONS" | "POST",
+        path: string,
+        origin = "https://evil.example",
+      ) =>
         client.execute(
-          HttpClientRequest.make(method)(`http://${address.host}:${address.port}/query`).pipe(
-            HttpClientRequest.setHeaders({ origin }),
+          HttpClientRequest.make(method)(`http://${address.host}:${address.port}${path}`).pipe(
+            HttpClientRequest.setHeaders({ origin, "access-control-request-method": "POST" }),
           ),
         );
+
+      const pgmeta = yield* bound("pgmeta");
+      const studio = yield* bound("studio");
+      const mailpit = yield* bound("mail");
       for (const method of ["OPTIONS", "POST"] as const) {
-        const refused = yield* send(method, "https://evil.example");
-        expect(refused.status).toBe(403);
-        expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+        for (const [address, path] of [
+          [pgmeta, "/query"],
+          [studio, "/api/mcp"],
+        ] as const) {
+          const refused = yield* send(address, method, path);
+          expect(refused.status).toBe(403);
+          expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+        }
+        const studioPage = yield* send(studio, method, "/project/default");
+        expect(yield* studioPage.text).toBe(method);
+        expect(studioPage.headers["access-control-allow-origin"]).toBeUndefined();
       }
-      expect(yield* (yield* send("POST", "http://localhost:54323")).text).toBe("POST");
+      expect(yield* (yield* send(pgmeta, "POST", "/query", "http://localhost:54323")).text).toBe(
+        "POST",
+      );
+      const preflight = yield* send(mailpit, "OPTIONS", "/api/v1/messages");
+      expect(preflight.status).toBe(200);
+      expect(preflight.headers["access-control-allow-origin"]).toBe("*");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

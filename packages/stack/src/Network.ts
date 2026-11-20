@@ -43,8 +43,8 @@ export interface NetworkEndpoint {
   readonly join?: ReadonlyArray<RouteContribution>;
   /** Sends each write to this endpoint, on every route, over a fresh upstream connection. */
   readonly freshWrites?: boolean;
-  /** Refuses non-loopback browser origins on this endpoint's dedicated listener. */
-  readonly localOriginOnly?: boolean;
+  /** A dedicated HTTP listener's routes; defaults to one catch-all with the gateway's CORS. */
+  readonly dedicated?: ReadonlyArray<RouteContribution>;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -326,18 +326,9 @@ const makeNetwork = (options: {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
                                   yield* proxy.setRoutes(
-                                    /* Like a container port map, a dedicated port leaves CORS to its service. */
                                     toHttpRoutes(
                                       id,
-                                      [
-                                        {
-                                          prefix: "/",
-                                          upstreamCors: true,
-                                          ...(endpoint.localOriginOnly === true
-                                            ? { localOriginOnly: true }
-                                            : {}),
-                                        },
-                                      ],
+                                      endpoint.dedicated ?? [{ prefix: "/" }],
                                       endpoint,
                                       false,
                                     ),
