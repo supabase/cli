@@ -28,7 +28,7 @@ import { serviceContainerName } from "../docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `docker restart <id>` (the db container itself) failed — used only by PG14's reset path. */
+/** `docker restart <id>` failed for {@link restartContainer}. */
 export class ContainerRestartError extends Data.TaggedError("ContainerRestartError")<{
   readonly message: string;
 }> {
@@ -38,9 +38,9 @@ export class ContainerRestartError extends Data.TaggedError("ContainerRestartErr
 }
 
 /**
- * Restarts the `db` container itself, used only by PG14's reset path after
- * `pg_terminate_backend` (pg_cron must restart). Unlike the satellite restarts below, this does
- * not tolerate "not found" — any failure is a hard error.
+ * Restarts one container (PG14's `db` after `pg_terminate_backend`, since pg_cron must restart;
+ * PostgREST after a local reset). Unlike the satellite restarts below, this does not tolerate
+ * "not found" — any failure is a hard error.
  */
 export function restartContainer(
   spawner: Spawner,
@@ -101,8 +101,8 @@ export class RestartServicesError extends Data.TaggedError("RestartServicesError
 }
 
 /**
- * Stops or restarts storage/auth/realtime/pooler concurrently — not PostgREST, which reconnects and
- * listens for schema changes on its own — and never waits for them to become healthy, since
+ * Stops or restarts storage/auth/realtime/pooler concurrently — not PostgREST, which
+ * `resetLocalDatabase` restarts after migrations and seeds — and never waits for them to become healthy, since
  * some may be excluded from the stack. Every per-service failure (excluding a
  * tolerated not-found) is joined into one newline-separated message.
  */
@@ -195,20 +195,23 @@ function execCaptureCombined(
  * other inspect failure or a non-zero reload exit fails hard with the recovery suggestion; not
  * running means there's no stale cache to flush. The `--nginx-conf` flag is required — a bare
  * `kong reload` regenerates nginx.conf from Kong's default template and drops the custom
- * `email_templates` server.
+ * `email_templates` server. Resolves whether Kong was reloaded.
  */
-function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, KongReloadError> {
+export function reloadKong(
+  spawner: Spawner,
+  projectId: string,
+): Effect.Effect<boolean, KongReloadError> {
   const kongId = serviceContainerName("kong", projectId);
   return Effect.gen(function* () {
     const inspected = yield* inspectContainerState(spawner, kongId).pipe(Effect.result);
     if (Result.isFailure(inspected)) {
-      if (isContainerNotFoundMessage(inspected.failure.message)) return;
+      if (isContainerNotFoundMessage(inspected.failure.message)) return false;
       return yield* new KongReloadError({
         message: `failed to inspect kong: ${inspected.failure.message}`,
         suggestion: kongRecoverySuggestion(kongId),
       });
     }
-    if (!inspected.success.running) return;
+    if (!inspected.success.running) return false;
     const result = yield* execCaptureCombined(spawner, kongId, [
       "kong",
       "reload",
@@ -227,6 +230,7 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
         suggestion: kongRecoverySuggestion(kongId),
       });
     }
+    return true;
   }).pipe(Effect.withSpan("RestartServices.reloadKong"));
 }
 

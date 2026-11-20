@@ -175,10 +175,28 @@ describe("buildKongContainerSpec", () => {
         KONG_PORT_MAPS: "54321:8000",
         KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",
         KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k",
+        KONG_NGINX_USER: "nobody",
         KONG_NGINX_WORKER_PROCESSES: "1",
         KONG_SSL_CERT: "/home/kong/localhost.crt",
         KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
       });
+    }).pipe(Effect.provide(BunPath.layer));
+  });
+
+  it.effect("lets Kong inject its nginx main and events directives", () => {
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const script = String(buildKongContainerSpec(base, { path, posixPath }).cmd?.[1]);
+      expect(script).toContain(
+        "> for _, el in ipairs(nginx_main_directives) do\n$(el.name) $(el.value);\n> end",
+      );
+      expect(script).toContain(
+        "events {\n    # injected nginx_events_* directives\n> for _, el in ipairs(nginx_events_directives) do\n    $(el.name) $(el.value);\n> end\n}",
+      );
+      expect(script).not.toMatch(
+        /^\s*(?:daemon|worker_processes|worker_rlimit_nofile|worker_connections|multi_accept)\b/m,
+      );
     }).pipe(Effect.provide(BunPath.layer));
   });
 

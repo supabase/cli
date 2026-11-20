@@ -189,7 +189,7 @@ describe("suggestUpgrade", () => {
         statusCode: 402,
       });
       expect(analytics.captured).toHaveLength(1);
-      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("Plans and add-ons:");
     }).pipe(Effect.provide(Layer.mergeAll(layer, credentials)));
   });
 
@@ -233,7 +233,7 @@ describe("suggestUpgrade", () => {
           properties: { feature_key: "branching_limit", org_slug: ORG_SLUG },
         },
       ]);
-      expect(out.stderrText).toContain("Upgrade your plan:");
+      expect(out.stderrText).toContain("Plans and add-ons:");
       expect(out.stderrText).toContain("/org/test-org/billing");
       expect(api.requests.map((request) => `${request.method} ${request.url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}`,

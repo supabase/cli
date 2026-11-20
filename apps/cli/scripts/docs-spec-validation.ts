@@ -47,7 +47,6 @@ const Spec = Schema.Struct({
             id: Schema.NonEmptyString,
             name: Schema.String,
             code: Schema.String,
-            response: Schema.optionalKey(Schema.String),
           }),
         ),
       ),

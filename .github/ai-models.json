@@ -6,6 +6,6 @@
     "haiku": "claude-haiku-5-5"
   },
   "codex": {
-    "sol": "gpt-6.1-sol"
+    "sol": "gpt-6.2-sol"
   }
 }

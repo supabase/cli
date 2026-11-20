@@ -5,11 +5,12 @@ import {
   Cause,
   ConfigProvider,
   Effect,
+  Exit,
   Layer,
   Option,
-  Stream,
-  Schema,
   Queue,
+  Schema,
+  Stream,
   Terminal,
 } from "effect";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../../command-internal/global-flags.ts";
@@ -33,6 +34,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { LogsApiError, LogsInputError } from "./logs.errors.ts";
+import { projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
 
@@ -44,7 +46,6 @@ const baseFlags = (overrides: Partial<LogsFlags> = {}): LogsFlags => ({
   local: false,
   linked: false,
   stack: Option.none(),
-  stackId: Option.none(),
   service: [],
   resource: Option.none(),
   kind: Option.none(),
@@ -456,6 +457,90 @@ describe("unified logs", () => {
         expect(sql).toContain("positionCaseInsensitiveUTF8(event_message, 'can''t_%\\\\') > 0");
         expect(sql).toContain("parsed.error_severity");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      stack: "feature",
+      message:
+        'No managed stack named "feature" exists for this project. Run supabase stack start --stack feature first.',
+    },
+    {
+      stack: "deadbeef",
+      message:
+        'No managed stack is named "deadbeef" in this project or has that ID. Run `supabase stack list` to see managed stacks and their IDs.',
+    },
+  ])(
+    "names a --stack $stack that local sources cannot find instead of listing nothing",
+    ({ stack, message }) =>
+      Effect.gen(function* () {
+        const repo = yield* makeComputeProject();
+        const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
+        const error = yield* logsSources({
+          ...tailFlags(),
+          remote: Option.none(),
+          stack: Option.some(stack),
+          service: Option.none(),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              setup.layer,
+              projectStateModeLayer(Exit.succeed("stack")),
+              Layer.succeed(StackTargetResolver, {
+                resolve: () =>
+                  Effect.succeed({ projectRoot: repo.dir, name: stack, hostRunning: false }),
+              }),
+            ),
+          ),
+          Effect.flip,
+        );
+        expect(error.message).toBe(message);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps the hidden --stack-id as a deprecated alias of --stack", () =>
+    Effect.gen(function* () {
+      const repo = yield* makeComputeProject();
+      const setup = yield* prepare({ workdir: repo.dir, format: "json", routes: {} });
+      const resolved: Array<string | undefined> = [];
+      const sources = (flags: { stack?: Option.Option<string>; stackId: Option.Option<string> }) =>
+        logsSources({
+          ...tailFlags(),
+          remote: Option.none(),
+          service: Option.none(),
+          ...flags,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              setup.layer,
+              projectStateModeLayer(Exit.succeed("stack")),
+              Layer.succeed(StackTargetResolver, {
+                resolve: (input) =>
+                  Effect.sync(() => {
+                    resolved.push(input.stack);
+                    return { projectRoot: repo.dir, name: "feature", hostRunning: false };
+                  }),
+              }),
+            ),
+          ),
+          Effect.flip,
+        );
+
+      const aliased = yield* sources({ stackId: Option.some("feature") });
+      const both = yield* sources({
+        stack: Option.some("feature"),
+        stackId: Option.some("feature"),
+      });
+
+      expect(aliased.message).toBe(
+        'No managed stack named "feature" exists for this project. Run supabase stack start --stack feature first.',
+      );
+      expect(setup.out.stderrText).toContain(
+        "Flag --stack-id has been deprecated, use --stack instead.\n",
+      );
+      expect(both.message).toBe("--stack-id is a deprecated alias of --stack; pass only --stack.");
+      expect(resolved).toEqual(["feature"]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.effect("discovers truthful hosted capabilities without querying logs", () =>

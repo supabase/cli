@@ -1,4 +1,3 @@
-import { Data, Effect } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   type CommentedNode,
@@ -46,11 +45,27 @@ export interface CliConfigConverted {
 }
 
 /** The converter refused the document; `sourceLine` is the 1-based `config.toml` line when known. */
-export class CliConfigConvertError extends Data.TaggedError("CliConfigConvertError")<{
+// oxlint-disable-next-line effecttsgo/extends-native-error -- the effect-free `./convert` entry throws it; `_tag` keeps Effect `catchTag` working.
+export class CliConfigConvertError extends Error {
+  readonly _tag = "CliConfigConvertError";
+  override readonly name = "CliConfigConvertError";
   readonly reason: "parse_error" | "unsupported_value" | "verification_mismatch";
   readonly detail: string;
-  readonly sourceLine?: number;
-}> {}
+  declare readonly sourceLine?: number;
+
+  constructor(args: {
+    readonly reason: "parse_error" | "unsupported_value" | "verification_mismatch";
+    readonly detail: string;
+    readonly sourceLine?: number;
+  }) {
+    super(args.detail);
+    this.reason = args.reason;
+    this.detail = args.detail;
+    if (args.sourceLine !== undefined) {
+      this.sourceLine = args.sourceLine;
+    }
+  }
+}
 
 interface Decor {
   readonly lead: Array<string>;
@@ -196,12 +211,12 @@ function isMember(token: TomlToken | undefined): token is TomlHeaderToken | Toml
   return token?.kind === "header" || token?.kind === "kv";
 }
 
-const descend = Effect.fnUntraced(function* (
+function descend(
   parent: TableNode,
   segment: string,
   line: number,
   created: Array<TableNode>,
-) {
+): TableNode {
   const existing = parent.entries.get(segment);
   if (existing === undefined) {
     const table = newTable();
@@ -215,23 +230,23 @@ const descend = Effect.fnUntraced(function* (
   const last =
     existing.kind === "aot" ? existing.elements[existing.elements.length - 1] : undefined;
   if (last === undefined) {
-    return yield* refusal("parse_error", `"${segment}" is defined twice`, line);
+    throw refusal("parse_error", `"${segment}" is defined twice`, line);
   }
   return last;
-});
+}
 
-const walk = Effect.fnUntraced(function* (
+function walk(
   root: TableNode,
   path: ReadonlyArray<string>,
   line: number,
   created: Array<TableNode>,
-) {
+): TableNode {
   let table = root;
   for (const segment of path) {
-    table = yield* descend(table, segment, line, created);
+    table = descend(table, segment, line, created);
   }
   return table;
-});
+}
 
 function arrayDecor(
   layout: TomlArrayLayout,
@@ -271,24 +286,26 @@ function schemaDirectiveRef(text: string, token: TomlToken | undefined): string 
     : SCHEMA_DIRECTIVE_LINE.exec(text.slice(token.start, token.end))?.[1];
 }
 
-const convertDocument = Effect.fnUntraced(function* (text: string) {
-  const parsed = yield* Effect.try({
-    try: () => SmolToml.parse(text),
-    catch: (error) =>
-      refusal(
-        "parse_error",
-        error instanceof Error ? error.message : String(error),
-        error instanceof SmolToml.TomlError ? error.line : undefined,
-      ),
-  });
+function convertDocument(text: string): CliConfigConverted {
+  let parsed: SmolToml.TomlTable;
+  try {
+    parsed = SmolToml.parse(text);
+  } catch (error) {
+    throw refusal(
+      "parse_error",
+      error instanceof Error ? error.message : String(error),
+      error instanceof SmolToml.TomlError ? error.line : undefined,
+    );
+  }
   const lineOf = (offset: number) => text.slice(0, offset).split("\n").length;
-  const scan = yield* Effect.try({
-    try: () => scanTomlDocument(text),
-    catch: (error) =>
-      refusal("parse_error", error instanceof Error ? error.message : String(error)),
-  });
+  let scan: ReturnType<typeof scanTomlDocument>;
+  try {
+    scan = scanTomlDocument(text);
+  } catch (error) {
+    throw refusal("parse_error", error instanceof Error ? error.message : String(error));
+  }
   if ("error" in scan) {
-    return yield* refusal("parse_error", scan.error, lineOf(scan.offset));
+    throw refusal("parse_error", scan.error, lineOf(scan.offset));
   }
   const { tokens, headers } = scan;
   let commentCount = 0;
@@ -323,7 +340,7 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
       const line = lineOf(token.start);
       let table: TableNode;
       if (token.isArrayOfTables) {
-        const parent = yield* walk(root, token.path.slice(0, -1), line, created);
+        const parent = walk(root, token.path.slice(0, -1), line, created);
         const name = token.path[token.path.length - 1] ?? "";
         const existing = parent.entries.get(name);
         table = newTable();
@@ -332,10 +349,10 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
         } else if (existing.kind === "aot") {
           existing.elements.push(table);
         } else {
-          return yield* refusal("parse_error", `"${name}" is defined twice`, line);
+          throw refusal("parse_error", `"${name}" is defined twice`, line);
         }
       } else {
-        table = yield* walk(root, token.path, line, created);
+        table = walk(root, token.path, line, created);
       }
       const implicit = created[0];
       if (implicit !== undefined && implicit !== table) {
@@ -354,23 +371,24 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
       const line = lineOf(token.start);
       const base = token.tableIndex >= 0 ? (headers[token.tableIndex]?.path.length ?? 0) : 0;
       const relative = token.path.slice(base);
-      const parent = yield* walk(current, relative.slice(0, -1), line, created);
+      const parent = walk(current, relative.slice(0, -1), line, created);
       const name = relative[relative.length - 1] ?? "";
       if (parent.entries.has(name)) {
-        return yield* refusal("parse_error", `"${name}" is defined twice`, line);
+        throw refusal("parse_error", `"${name}" is defined twice`, line);
       }
       if (created[0] !== undefined) {
         implicitParents.set(index, created[0]);
       }
       const valueText = text.slice(token.valueStart, token.valueEnd);
-      const value = yield* Effect.try({
-        try: () => SmolToml.parse(`v = ${valueText}`)["v"],
-        catch: (error) =>
-          refusal("parse_error", error instanceof Error ? error.message : String(error), line),
-      });
+      let value: unknown;
+      try {
+        value = SmolToml.parse(`v = ${valueText}`)["v"];
+      } catch (error) {
+        throw refusal("parse_error", error instanceof Error ? error.message : String(error), line);
+      }
       const unsupported = unsupportedReason(value);
       if (unsupported !== undefined) {
-        return yield* refusal("unsupported_value", `${token.path.join(".")}: ${unsupported}`, line);
+        throw refusal("unsupported_value", `${token.path.join(".")}: ${unsupported}`, line);
       }
       const leaf: LeafNode = {
         kind: "leaf",
@@ -513,7 +531,7 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
   });
 
   if (commentCount !== scannedComments) {
-    return yield* refusal(
+    throw refusal(
       "verification_mismatch",
       `converted document carries ${commentCount} of ${scannedComments} comments`,
     );
@@ -537,10 +555,10 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
   let schemaSource: "directive" | "key" | "default";
   if (keyed !== undefined) {
     if (keyed.kind !== "leaf" || typeof keyed.value !== "string") {
-      return yield* refusal("unsupported_value", "`$schema` must be a string");
+      throw refusal("unsupported_value", "`$schema` must be a string");
     }
     if (directive !== undefined && directive !== keyed.value) {
-      return yield* refusal(
+      throw refusal(
         "unsupported_value",
         `the schema is declared twice, as \`#:schema ${directive}\` and as \`$schema = "${keyed.value}"\`; keep one and rerun`,
       );
@@ -575,26 +593,23 @@ const convertDocument = Effect.fnUntraced(function* (text: string) {
   ].join(newline);
   const output = `${rendered}${newline}`;
 
-  const actual = yield* Effect.try({
-    try: () => parseJsonc(output),
-    catch: (error) =>
-      refusal(
-        "verification_mismatch",
-        `converted document does not parse: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-  });
-  if (!deepEqualValue(actual, { $schema: schemaRef, ...parsed })) {
-    return yield* refusal(
+  let actual: unknown;
+  try {
+    actual = parseJsonc(output);
+  } catch (error) {
+    throw refusal(
       "verification_mismatch",
-      "converted document does not match the original values",
+      `converted document does not parse: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+  if (!deepEqualValue(actual, { $schema: schemaRef, ...parsed })) {
+    throw refusal("verification_mismatch", "converted document does not match the original values");
   }
 
   return { text: output, schemaRef, schemaSource, commentCount, movedComments };
-});
+}
 
-/** Converts a `config.toml` document to `config.jsonc` text with comments carried over; verified by re-parse. */
-export const convertCliConfigTomlToJsonc = (
-  source: string,
-): Effect.Effect<CliConfigConverted, CliConfigConvertError> =>
-  convertDocument(source.startsWith("﻿") ? source.slice(1) : source);
+/** Converts a `config.toml` document to `config.jsonc` text with comments carried over; verified by re-parse. Throws `CliConfigConvertError` on refusal. */
+export function convertCliConfigTomlToJsonc(source: string): CliConfigConverted {
+  return convertDocument(source.startsWith("﻿") ? source.slice(1) : source);
+}

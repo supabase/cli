@@ -129,7 +129,7 @@ describe("stack command telemetry", () => {
         return Effect.gen(function* () {
           yield* Command.runWith(command, { version: "0.0.0-test" })([
             "destroy",
-            "--stack-id",
+            "--stack",
             "invalid",
           ]).pipe(Effect.flip);
           const event = fixture.analytics.captured.find(
@@ -168,7 +168,7 @@ describe("stack command telemetry", () => {
         return Effect.gen(function* () {
           yield* Command.runWith(command, { version: "0.0.0-test" })([
             "restart",
-            "--stack-id",
+            "--stack",
             "invalid",
           ]).pipe(Effect.flip);
           const event = fixture.analytics.captured.find(

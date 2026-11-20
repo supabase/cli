@@ -9,7 +9,7 @@ import { projectTargetFlags } from "../../../command-internal/target/target-flag
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import {
@@ -49,12 +49,13 @@ export const vanitySubdomainsDeleteCommand = Command.make("delete", config).pipe
       // inline after the experimental gate rather than via `Command.provide` on the
       // whole command — `Command.provide` would build the layer, and fail on a missing
       // token, before the gate ever runs.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       return yield* vanitySubdomainsDelete(flags).pipe(
         withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["vanity-subdomains", "delete"])),
       );
     }).pipe(withJsonErrorHandling),
   ),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

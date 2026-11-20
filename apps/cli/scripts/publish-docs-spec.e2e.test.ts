@@ -39,7 +39,6 @@ function validSpec(version: string): string {
       root: rootCommand,
       version,
       overlays: new Map(),
-      examples: {},
     }),
   );
 }

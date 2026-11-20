@@ -18,30 +18,4 @@ If the database is already in sync with the local migrations, that step reports 
 
 Storage bucket definitions are not pulled by this command: the Management API doesn't currently return enough detail (file size limits, allowed MIME types, the storage backend path) to populate `storage.buckets` config faithfully.
 
-## Example
-
-```sh
-supabase pull
-```
-
-Pulls config, database schema, and functions from the linked project, fetching migration history first if `supabase/migrations` is empty.
-
-```sh
-supabase pull --remote=staging
-```
-
-Pulls from the `staging` branch of the linked project.
-
-```sh
-supabase pull --dry-run
-```
-
-Prints the full confirmation body — the target header, the real config diff (or "No config differences found."), the migration-history/database/functions lines (including the Docker mention and, if applicable, the uncommitted-changes warning) — without writing or changing anything.
-
-```sh
-supabase pull --remote-label staging
-```
-
-Pulls into the `[remotes.staging]` block instead of whatever block the target would otherwise reuse or create.
-
 Machine-readable output is available through `--output-format json|stream-json` — a single object (`schema_version`, `target`, `dry_run`, `confirmed`, `wrote`, `step_order`, `steps`, `counts`) with one entry per step under `steps`, keyed `config`, `migration_history`, `db`, and `functions`, each carrying its own `status` (`changed`, `unchanged`, `skipped`, `planned`, or `failed`), the paths it wrote, and a step-specific `detail` object. `target` carries `kind: "linked"`, `project_ref`, `environment` (`production`, `branch`, or `unverified`), `project_name` and `parent_project_ref` when known, and `branch` when `--remote` named one. The legacy global `-o`/`--output` flag is not supported by this command; use `--output-format json|stream-json` instead.
