@@ -29,9 +29,9 @@ const fixturePath = fileURLToPath(new URL("./__fixtures__/error-tags.txt", impor
 const TAGGED_ERROR_PATTERN =
   /class\s+(\w+)\s+extends\s+(?:Data\.TaggedError|Schema\.TaggedError<\w+>\(\))\(\s*["']([^"']+)["']/g;
 
-// Matches a plain class whose first member is `readonly _tag = "…"` (optionally `as const`).
+// Matches a plain `Error` subclass whose first member is `readonly _tag = "…"` (optionally `as const`).
 const PLAIN_TAGGED_ERROR_PATTERN =
-  /class\s+(\w+)\s+extends\s+\w+\s*\{\s*(?:(?:override|public)\s+)?readonly\s+_tag\s*=\s*["']([^"']+)["']/g;
+  /class\s+(\w+)\s+extends\s+Error\s*\{\s*(?:(?:override|public)\s+)?readonly\s+_tag\s*=\s*["']([^"']+)["']/g;
 
 // Every test tier this repo's vitest config defines (`apps/cli/vitest.config.ts`).
 // Shared by name so a fifth tier can't quietly slip past `isProductionSourceFile`

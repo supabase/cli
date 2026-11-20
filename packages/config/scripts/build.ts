@@ -395,6 +395,23 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
       "consumer-convert",
       CONVERT_SMOKE_TEST_RUNTIME_DEPS,
     );
+    const packedManifest = yield* decodePackageJson(
+      yield* fs.readFileString(
+        path.join(convertConsumerDir, "node_modules", "@supabase", "config", "package.json"),
+      ),
+    ).pipe(buildInputError("packed package.json"));
+    const declared = isRecord(packedManifest) ? packedManifest.dependencies : undefined;
+    const undeclared = CONVERT_SMOKE_TEST_RUNTIME_DEPS.filter(
+      (dep) => !isRecord(declared) || typeof declared[dep] !== "string",
+    );
+    if (undeclared.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          `the packed package.json does not list ${undeclared.join(", ")} under dependencies, ` +
+            "but ./convert imports them at runtime",
+        ),
+      );
+    }
     yield* runCommand(
       [nodePath, "--input-type=module", "-e", buildConvertSmokeTestScript()],
       convertConsumerDir,

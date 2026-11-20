@@ -51,7 +51,7 @@ export class CliConfigConvertError extends Error {
   override readonly name = "CliConfigConvertError";
   readonly reason: "parse_error" | "unsupported_value" | "verification_mismatch";
   readonly detail: string;
-  readonly sourceLine?: number;
+  declare readonly sourceLine?: number;
 
   constructor(args: {
     readonly reason: "parse_error" | "unsupported_value" | "verification_mismatch";

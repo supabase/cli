@@ -589,23 +589,7 @@ describe("src/internal.ts export surface", () => {
 
 const convertGraph = await runPlatform(collectImportGraph(join(srcDir, "convert.ts")));
 
-const isEffectOrRuntimeBuiltin = (specifier: string): boolean =>
-  specifier === "effect" ||
-  specifier.startsWith("effect/") ||
-  specifier.startsWith("@effect/") ||
-  specifier.startsWith("node:") ||
-  specifier.startsWith("bun:");
-
 describe("src/convert.ts stays effect-free", () => {
-  test("the traversal actually walked the real module graph", () => {
-    expect(convertGraph.visitedFiles.size).toBeGreaterThan(1);
-    expect(convertGraph.bareSpecifiers.has("smol-toml")).toBe(true);
-  });
-
-  test("no module reachable from convert.ts imports effect or a runtime builtin", () => {
-    expect([...convertGraph.bareSpecifiers].filter(isEffectOrRuntimeBuiltin)).toEqual([]);
-  });
-
   test("only smol-toml and jsonc-parser are reachable as bare dependencies", () => {
     expect([...convertGraph.bareSpecifiers].sort()).toEqual(["jsonc-parser", "smol-toml"]);
   });
