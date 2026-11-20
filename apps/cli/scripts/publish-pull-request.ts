@@ -80,11 +80,9 @@ export const publishPullRequest = <E, R>({
           $`git -C ${tmpDir} diff --quiet --cached -- ${stagedPaths}`.nothrow().quiet(),
         );
         if (unchanged.exitCode === 0) {
-          yield* Console.log(
-            remoteBranch.exitCode === 0
-              ? `No changes to ${stagedPaths.join(", ")} on ${branch}`
-              : `No changes to ${stagedPaths.join(", ")} in ${repo}`,
-          );
+          const verb = stagedPaths.length === 1 ? "is" : "are";
+          const location = remoteBranch.exitCode === 0 ? `on ${branch}` : `in ${repo}`;
+          yield* Console.log(`${stagedPaths.join(", ")} ${verb} already up to date ${location}`);
         } else {
           yield* shell(
             () =>
