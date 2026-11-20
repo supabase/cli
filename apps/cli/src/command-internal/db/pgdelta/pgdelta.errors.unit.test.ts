@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
+import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 
 describe("pg-delta error actionability", () => {

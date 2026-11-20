@@ -2,8 +2,8 @@ import { Effect, Exit, Layer } from "effect";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import type { PgDeltaNextDiagnostic } from "./pgdelta-next-adapter.service.ts";
 import {
   PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE,

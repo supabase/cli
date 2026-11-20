@@ -2,16 +2,16 @@ import { Clock, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import { Digest } from "effect/crypto";
 import type { Pool } from "pg";
 
-import { CommandSettings } from "../../config/command-settings.service.ts";
-import { Output } from "../../shared/output/output.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { Output } from "../../../shared/output/output.service.ts";
 import {
   layeredParseEnv,
   parseConnectionString,
   redactConnectionString,
-} from "../db-config.parse.ts";
-import { DbConnectError } from "../db-connection.errors.ts";
-import { acquirePgPool } from "../db-connection.sql-pg.layer.ts";
-import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
+} from "../../../command-internal/db-config.parse.ts";
+import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
+import { acquirePgPool } from "../../../command-internal/db-connection.sql-pg.layer.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import {
   filesForDeclarativeShadowLoad,
   prepareDeclarativeShadow,
@@ -33,7 +33,7 @@ import {
   savePgDeltaNextDebugArtifacts,
   type PgDeltaNextDebugArtifacts,
 } from "./pgdelta-next-artifacts.ts";
-import { pgdeltaScratchDir } from "../scratch-paths.ts";
+import { pgdeltaScratchDir } from "../../../command-internal/scratch-paths.ts";
 import {
   pgDeltaNextDiagnosticReport,
   reportPgDeltaNextDiagnostics,

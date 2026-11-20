@@ -6,8 +6,8 @@
 
 import { Chunk, Deferred, Effect, Ref } from "effect";
 
-import { Output } from "../../shared/output/output.service.ts";
-import type { ShadowBaselinePeek } from "../db-bootstrap/shadow-cache.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import type { ShadowBaselinePeek } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 
 export type PlanShadowStrategy = "parallel" | "baseline-handoff" | "sequential";
 

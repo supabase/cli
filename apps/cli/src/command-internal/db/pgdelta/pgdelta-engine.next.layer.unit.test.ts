@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer } from "effect";
 
-import { withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 
 import type { PgDeltaDatabaseEndpoint } from "./pgdelta-engine.service.ts";
 import { parsePgDeltaNextEndpoint } from "./pgdelta-engine.next.layer.ts";

@@ -8,7 +8,7 @@ import {
   acquirePgPool,
   dbConnectionLayer,
 } from "../../../command-internal/db-connection.sql-pg.layer.ts";
-import { pgDeltaNextAdapterLayer } from "../../../command-internal/pgdelta/pgdelta-next-adapter.layer.ts";
+import { pgDeltaNextAdapterLayer } from "../../../command-internal/db/pgdelta/pgdelta-next-adapter.layer.ts";
 import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
 import {
@@ -17,7 +17,7 @@ import {
   shadowConnConfig,
   shadowRunInputFromLocalContainerInputs,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
-import { allocateFreeHostPort } from "../../../command-internal/pgdelta/pgdelta-next-shadow.layer.ts";
+import { allocateFreeHostPort } from "../../../command-internal/db/pgdelta/pgdelta-next-shadow.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { SparkShadowError } from "./spark-project.ts";

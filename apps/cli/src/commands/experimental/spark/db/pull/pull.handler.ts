@@ -1,9 +1,9 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { Output } from "../../../../../shared/output/output.service.ts";
-import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/pgdelta/pgdelta-next-diagnostics.ts";
-import { PgDeltaNextAdapter } from "../../../../../command-internal/pgdelta/pgdelta-next-adapter.service.ts";
-import { writeDeclarativeSchemas } from "../../../../../command-internal/pgdelta/pgdelta.write.ts";
+import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
+import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
+import { writeDeclarativeSchemas } from "../../../../../command-internal/db/pgdelta/pgdelta.write.ts";
 import { dumpSparkSchema } from "../../spark-api.ts";
 import { withoutBaselineFiles } from "../../spark-schema-files.ts";
 import { acquireSparkShadows, loadSparkDump } from "../../spark-shadow.ts";

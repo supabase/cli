@@ -12,18 +12,26 @@ import {
   shadowCacheDisabledLayer,
   useTempWorkdir,
   withEmptyConfigEnv,
-} from "../../../tests/helpers/command-mocks.ts";
-import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
-import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
-import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { DebugFlag, ExperimentalFlag, NetworkIdFlag } from "../global-flags.ts";
-import { DbConnection, type DbSession, type PgConnInput } from "../db-connection.service.ts";
-import { DockerRun } from "../docker-run.service.ts";
-import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
-import { LocalDockerEngine } from "../db-bootstrap/local-db-running.ts";
-import { SUGGEST_DOCKER_INSTALL } from "../docker-suggest.ts";
-import { stackBackendLayer } from "../stack-backend.ts";
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import {
+  DebugFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+} from "../../../command-internal/global-flags.ts";
+import {
+  DbConnection,
+  type DbSession,
+  type PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
+import { DockerRun } from "../../../command-internal/docker-run.service.ts";
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { SUGGEST_DOCKER_INSTALL } from "../../../command-internal/docker-suggest.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
@@ -38,7 +46,7 @@ const pgTag = vi.hoisted(() => {
   const fs: typeof import("node:fs") = require("node:fs");
   const url: typeof import("node:url") = require("node:url");
   const dockerfilePath = url.fileURLToPath(
-    new URL("../../shared/services/Dockerfile", import.meta.url),
+    new URL("../../../shared/services/Dockerfile", import.meta.url),
   );
   const match = /^FROM\s+supabase\/postgres:(\S+)\s+AS\s+pg$/m.exec(
     fs.readFileSync(dockerfilePath, "utf8"),

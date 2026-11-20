@@ -103,7 +103,7 @@ import { pull } from "./pull.handler.ts";
 import {
   PgDeltaEngine,
   PgDeltaEngineError,
-} from "../../command-internal/pgdelta/pgdelta-engine.service.ts";
+} from "../../command-internal/db/pgdelta/pgdelta-engine.service.ts";
 import type { PullFlags } from "./pull.command.ts";
 import { pullHandler } from "./pull.command.ts";
 import { warningsOf } from "../../../tests/helpers/remote-selection.ts";

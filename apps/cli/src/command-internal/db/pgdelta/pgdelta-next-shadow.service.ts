@@ -1,8 +1,8 @@
 import { Context, type Effect, type Scope } from "effect";
 
 import type { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
-import type { DbConfigValues } from "../db-config.read.ts";
-import type { PgDeltaContext } from "../pgdelta.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
+import type { PgDeltaContext } from "../../../command-internal/pgdelta.ts";
 
 /** The live migrated database needed by pg-delta next database diffs. */
 export interface PgDeltaNextMigrationsShadow {

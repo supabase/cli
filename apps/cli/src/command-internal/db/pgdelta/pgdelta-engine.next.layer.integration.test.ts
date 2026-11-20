@@ -3,15 +3,15 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
-import { mockCommandSettings } from "../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { pgDeltaNextEngineLayer } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngine } from "./pgdelta-engine.service.ts";
 import { PgDeltaNextAdapter } from "./pgdelta-next-adapter.service.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbConfigValues } from "../db-config.read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const common = {
   context: {

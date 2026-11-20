@@ -4,10 +4,13 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
-import { makeDir } from "../make-dir.ts";
-import { formatMigrationTimestamp, getMigrationPath } from "../migration-file.ts";
-import type { MigrationTransactionMode } from "../migration-file.ts";
+} from "../../../shared/telemetry/error-actionability.ts";
+import { makeDir } from "../../../command-internal/make-dir.ts";
+import {
+  formatMigrationTimestamp,
+  getMigrationPath,
+} from "../../../command-internal/migration-file.ts";
+import type { MigrationTransactionMode } from "../../../command-internal/migration-file.ts";
 
 /** A migration file written by a diff/pull, paired with its history version. */
 export interface WrittenMigration {

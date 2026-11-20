@@ -6,9 +6,9 @@ import {
 import { Effect, type FileSystem, Option, type Path, Schema } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
-import { Output } from "../../shared/output/output.service.ts";
-import { bold, yellow } from "../colors.ts";
-import { walkSqlFiles } from "../glob.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { bold, yellow } from "../../../command-internal/colors.ts";
+import { walkSqlFiles } from "../../../command-internal/glob.ts";
 import { DeclarativeWriteError } from "./pgdelta.errors.ts";
 import { ReadPgDeltaExportManifest } from "./pgdelta-files.ts";
 import type {

@@ -3,22 +3,26 @@ import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { mockCommandSettings, withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
-import { containerEngineSpawner } from "../../../tests/helpers/child-process-spawner.ts";
-import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
-import { DebugFlag, ExperimentalFlag, NetworkIdFlag } from "../global-flags.ts";
-import { DbConnection } from "../db-connection.service.ts";
-import { DockerRun } from "../docker-run.service.ts";
-import { dbConnectionLayer } from "../db-connection.sql-pg.layer.ts";
-import { parseConnectionString } from "../db-config.parse.ts";
-import { StackApi, stackApiLayer } from "../stack-api.ts";
-import { stackBackendLayer } from "../stack-backend.ts";
+import { mockCommandSettings, withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
+import { containerEngineSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
+import {
+  DebugFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+} from "../../../command-internal/global-flags.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { DockerRun } from "../../../command-internal/docker-run.service.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
+import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { pgDeltaNextShadowLayer } from "./pgdelta-next-shadow.layer.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
-import type { DbConfigValues } from "../db-config.read.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 
 const toml = {
   projectEnv: {},

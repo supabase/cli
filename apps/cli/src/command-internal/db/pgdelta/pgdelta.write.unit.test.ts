@@ -2,8 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { DateTime, Effect, FileSystem, Option, Path, Schema } from "effect";
 
-import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { DeclarativeWriteError } from "./pgdelta.errors.ts";
 import type { PgDeltaDeclarativeExportResult } from "./pgdelta-engine.service.ts";
 import {

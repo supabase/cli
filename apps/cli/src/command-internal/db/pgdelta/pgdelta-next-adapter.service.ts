@@ -5,8 +5,8 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
-import type { MigrationTransactionMode } from "../migration-file.ts";
+} from "../../../shared/telemetry/error-actionability.ts";
+import type { MigrationTransactionMode } from "../../../command-internal/migration-file.ts";
 import type {
   PgDeltaErrorDiagnostic,
   PgDeltaExportManifest,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DbConnectError } from "../db-connection.errors.ts";
+import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { pgDeltaNextEngineError } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngineError } from "./pgdelta-engine.service.ts";
 import { PgDeltaNextError } from "./pgdelta-next-adapter.service.ts";

@@ -30,7 +30,7 @@ stubbed, and never fall back to Postgres.
 ## Boundaries
 
 - Shared code comes from concern slices (`src/command-internal/`, `src/config/`, `src/output/`, `src/shared/`,
-  `src/telemetry/`); the pgdelta helpers are in `src/command-internal/pgdelta/`. Never import from another command;
+  `src/telemetry/`); the pgdelta helpers are in `src/command-internal/db/pgdelta/`. Never import from another command;
   `code-structure.unit.test.ts` fails the build if you do.
 - A new config key (`packages/config`), a new stack capability, a proxy policy, or a change to the stack start or
   status commands is a global change: it lands in the global file, reviewed by `@supabase/cli`, and this folder only

@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
-import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { updateDeclarativeSchemaPathsConfig } from "./pgdelta.write.ts";
 
 describe("updateDeclarativeSchemaPathsConfig", () => {

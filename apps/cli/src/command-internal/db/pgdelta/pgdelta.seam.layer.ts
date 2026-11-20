@@ -2,27 +2,27 @@ import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect"
 import type { SecureRandom } from "effect/crypto";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
-import { CommandSettings } from "../../config/command-settings.service.ts";
-import { CliConfigKeys } from "../../config/cli-config-keys.ts";
-import { CliConfigValues } from "../../config/cli-config-values.service.ts";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { ExperimentalFlag } from "../global-flags.ts";
-import { spawnContainerCli } from "../container-cli.ts";
-import { resolveDbImage } from "../db-image.ts";
-import { readDbConfig } from "../db-config.read.ts";
-import { getRegistryImageUrl } from "../docker-registry.ts";
-import { isDockerDaemonUnreachable } from "../docker-suggest.ts";
-import { imageDigest, imageTag, isSlimImageRef } from "../../shared/services/slim-images.ts";
-import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
-import { localDbState } from "../db-bootstrap/local-db-running.ts";
-import { startLocalDatabase } from "../db-bootstrap/start-local-database.ts";
-import { localDbContainerId } from "../docker-ids.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
+import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
+import { resolveDbImage } from "../../../command-internal/db-image.ts";
+import { readDbConfig } from "../../../command-internal/db-config.read.ts";
+import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
+import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
+import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
+import { localDbState } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
+import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
-import { currentStackBackend } from "../stack-backend.ts";
-import { StackApi, stackApiLayer } from "../stack-api.ts";
-import { stackEnsurePostgresOnlyStarted } from "../stack-local-database.ts";
-import { StackCatalogSetup } from "../stack-catalog-setup.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
+import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};

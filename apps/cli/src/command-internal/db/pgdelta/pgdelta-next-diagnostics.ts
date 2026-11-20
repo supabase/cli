@@ -1,8 +1,8 @@
 import { Effect } from "effect";
 import { hasBlockingDiagnostics, STRICT_COVERAGE_CODES } from "@supabase/pg-delta/frontends";
 
-import { Output } from "../../shared/output/output.service.ts";
-import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { PgDeltaEngineError } from "./pgdelta-engine.service.ts";
 import type {
   PgDeltaNextDiagnostic,

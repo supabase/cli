@@ -4,8 +4,8 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
-import { walkSqlFiles } from "../glob.ts";
+} from "../../../shared/telemetry/error-actionability.ts";
+import { walkSqlFiles } from "../../../command-internal/glob.ts";
 import type { PgDeltaExportManifest, PgDeltaSqlFile } from "./pgdelta-engine.service.ts";
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";

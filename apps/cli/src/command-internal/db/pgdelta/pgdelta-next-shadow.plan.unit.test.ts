@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Option } from "effect";
 
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
-import { Output } from "../../shared/output/output.service.ts";
-import type { ShadowBaselinePeek, ShadowCacheKeyInputs } from "../db-bootstrap/shadow-cache.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import type {
+  ShadowBaselinePeek,
+  ShadowCacheKeyInputs,
+} from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 import {
   bufferedShadowOutput,
   resolvePlanShadowStrategy,

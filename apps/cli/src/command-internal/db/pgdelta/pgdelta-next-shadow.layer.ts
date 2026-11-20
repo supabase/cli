@@ -1,32 +1,32 @@
 import { Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
 import { Digest } from "effect/crypto";
 import * as Net from "node:net";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
   NetworkIdFlag,
   resolveDebugWithProjectEnv,
-} from "../global-flags.ts";
-import { Output } from "../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { DbConnection } from "../db-connection.service.ts";
-import { CliConfigValues } from "../../config/cli-config-values.service.ts";
-import { CommandSettings } from "../../config/command-settings.service.ts";
-import { DockerRun } from "../docker-run.service.ts";
-import { toPostgresURL } from "../postgres-url.ts";
+} from "../../../command-internal/global-flags.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { DockerRun } from "../../../command-internal/docker-run.service.ts";
+import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import {
   buildLocalDbContainerInputs,
   type LocalDbContainerInputs,
-} from "../db-bootstrap/local-container-inputs.ts";
-import { waitForPostgresReady } from "../db-bootstrap/health-check.ts";
+} from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
+import { waitForPostgresReady } from "../../../command-internal/db-bootstrap/health-check.ts";
 import {
   acquireShadowDatabase,
   peekShadowBaseline,
   type ShadowAcquiredHandle,
   type ShadowBaselinePeek,
   type ShadowCacheOpts,
-} from "../db-bootstrap/shadow-cache.ts";
+} from "../../../command-internal/db-bootstrap/shadow-cache.ts";
 import {
   bufferedShadowOutput,
   resolvePlanShadowStrategy,
@@ -39,7 +39,7 @@ import {
   shadowConnConfig,
   shadowRunInputFromLocalContainerInputs,
   setupShadowDatabase,
-} from "../db-bootstrap/shadow-database.ts";
+} from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { ChildProcessSpawner } from "effect/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
 import * as HttpClient from "effect/http/HttpClient";
@@ -51,14 +51,14 @@ import {
   type PgDeltaNextShadowInput,
 } from "./pgdelta-next-shadow.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
-import { currentStackBackend } from "../stack-backend.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
   stackAcquireShadowDatabase,
   stackShadowRuntime,
   stackMigrateShadow,
-} from "../stack-shadow.ts";
-import { StackApi } from "../stack-api.ts";
-import { stackCatalogSetupLayer } from "../stack-catalog-setup.ts";
+} from "../../../command-internal/stack-shadow.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 
 /** A free loopback port for a shadow container, or none when the OS refuses one. */
 export const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {

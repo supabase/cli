@@ -4,13 +4,13 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import {
   filesForDeclarativeShadowLoad,
   prepareDeclarativeShadow,
-} from "../../../../../command-internal/pgdelta/pgdelta-declarative-shadow-prep.ts";
+} from "../../../../../command-internal/db/pgdelta/pgdelta-declarative-shadow-prep.ts";
 import {
   LoadPgDeltaSqlFiles,
   ReadPgDeltaExportManifest,
-} from "../../../../../command-internal/pgdelta/pgdelta-files.ts";
-import { PgDeltaNextAdapter } from "../../../../../command-internal/pgdelta/pgdelta-next-adapter.service.ts";
-import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/pgdelta/pgdelta-next-diagnostics.ts";
+} from "../../../../../command-internal/db/pgdelta/pgdelta-files.ts";
+import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
+import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
 import { dryRunSparkMigration, dumpSparkSchema, isRefused } from "../../spark-api.ts";
 import { SparkBackendError, SparkMigrationRefusedError } from "../../spark-project.ts";
 import { locateInSchemaFiles } from "../../spark-schema-files.ts";

@@ -4,7 +4,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
+} from "../../../shared/telemetry/error-actionability.ts";
 
 /** Setting up, connecting to, or migrating the throwaway shadow database failed. */
 export class DeclarativeShadowDbError extends Data.TaggedError("DeclarativeShadowDbError")<{

@@ -1,14 +1,17 @@
 import { Context, Data, type Effect } from "effect";
 
-import type { DbConnectOptions, PgConnInput } from "../db-connection.service.ts";
-import type { PgDeltaContext } from "../pgdelta.ts";
-import type { MigrationTransactionMode } from "../migration-file.ts";
-import type { DbConfigValues } from "../db-config.read.ts";
+import type {
+  DbConnectOptions,
+  PgConnInput,
+} from "../../../command-internal/db-connection.service.ts";
+import type { PgDeltaContext } from "../../../command-internal/pgdelta.ts";
+import type { MigrationTransactionMode } from "../../../command-internal/migration-file.ts";
+import type { DbConfigValues } from "../../../command-internal/db-config.read.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
+} from "../../../shared/telemetry/error-actionability.ts";
 
 export interface PgDeltaDatabaseEndpoint {
   readonly kind: "database";
