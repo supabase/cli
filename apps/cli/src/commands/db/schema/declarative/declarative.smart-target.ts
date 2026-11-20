@@ -9,9 +9,9 @@ import { hostedMutationPreapproval } from "../../../../command-internal/hosted-c
 import { toPostgresURL } from "../../../../command-internal/postgres-url.ts";
 import type { ResolvedTarget } from "../../../../command-internal/target/resolve-target.ts";
 import { rejectTargetPassword } from "../../../../command-internal/target/target-password.ts";
-import type { PgDeltaDatabaseEndpoint } from "../../shared/pgdelta-engine.service.ts";
+import type { PgDeltaDatabaseEndpoint } from "../../../../command-internal/pgdelta/pgdelta-engine.service.ts";
 import { DeclarativeApplyError, readErrorSuggestion } from "./declarative.errors.ts";
-import { DeclarativeSeam } from "../../shared/pgdelta.seam.service.ts";
+import { DeclarativeSeam } from "../../../../command-internal/pgdelta/pgdelta.seam.service.ts";
 
 /** Resolves a target's connection, announcing it, while keeping TLS and connection options. */
 export const resolveTargetEndpoint = Effect.fnUntraced(function* (

@@ -100,7 +100,10 @@ import { PgDeltaSslProbe } from "../../command-internal/pgdelta-ssl-probe.servic
 import { Output } from "../../shared/output/output.service.ts";
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import { pull } from "./pull.handler.ts";
-import { PgDeltaEngine, PgDeltaEngineError } from "../db/shared/pgdelta-engine.service.ts";
+import {
+  PgDeltaEngine,
+  PgDeltaEngineError,
+} from "../../command-internal/pgdelta/pgdelta-engine.service.ts";
 import type { PullFlags } from "./pull.command.ts";
 import { pullHandler } from "./pull.command.ts";
 import { warningsOf } from "../../../tests/helpers/remote-selection.ts";

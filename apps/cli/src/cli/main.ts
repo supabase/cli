@@ -8,7 +8,7 @@ import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
-import { resolveSparkEnabled } from "../command-internal/spark/spark-project.ts";
+import { resolveSparkEnabled } from "../commands/experimental/spark/spark-project.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { cliEntrypointForFeatures } from "./root.ts";
 

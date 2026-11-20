@@ -6,7 +6,7 @@ import type { DbConfigValues } from "../../../../command-internal/db-config.read
 import {
   PgDeltaEngine,
   type PgDeltaDeclarativePlanInput,
-} from "../../shared/pgdelta-engine.service.ts";
+} from "../../../../command-internal/pgdelta/pgdelta-engine.service.ts";
 import {
   type DeclarativeRunContext,
   diffDeclarativeToMigrations,

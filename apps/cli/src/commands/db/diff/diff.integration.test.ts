@@ -115,7 +115,7 @@ import {
   type PgDeltaDatabaseDiffInput,
   type PgDeltaExplicitDiffInput,
   type PgDeltaHazardReport,
-} from "../shared/pgdelta-engine.service.ts";
+} from "../../../command-internal/pgdelta/pgdelta-engine.service.ts";
 import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";

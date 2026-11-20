@@ -28,7 +28,7 @@ import { TelemetryState } from "../../../../../telemetry/telemetry-state.service
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
 import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
 import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
-import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
+import { writePgDeltaMigrations } from "../../../../../command-internal/pgdelta/pgdelta-migrations.write.ts";
 import { prepareLocalTargetEndpoint } from "../declarative.smart-target.ts";
 import {
   type DebugBundle,
@@ -64,12 +64,12 @@ import {
   diffDeclarativeToMigrations,
   generateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import { DeclarativeSeam } from "../../../../../command-internal/pgdelta/pgdelta.seam.service.ts";
 import {
   declarativeSchemaWrittenLine,
   warnPreservedUnmanagedDeclarativeFiles,
   writeDeclarativeSchemas,
-} from "../../../shared/pgdelta.write.ts";
+} from "../../../../../command-internal/pgdelta/pgdelta.write.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";

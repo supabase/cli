@@ -6,8 +6,8 @@ import {
 import {
   declaredSqlExtensions,
   maskSqlComments,
-} from "../../shared/pgdelta-declarative-shadow-prep.ts";
-import type { PgDeltaRemovalSummary } from "../../shared/pgdelta-engine.service.ts";
+} from "../../../../command-internal/pgdelta/pgdelta-declarative-shadow-prep.ts";
+import type { PgDeltaRemovalSummary } from "../../../../command-internal/pgdelta/pgdelta-engine.service.ts";
 
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
 const IMPLICIT_EXTENSIONS = ["pg_net", "pgcrypto", "uuid-ossp"] as const;

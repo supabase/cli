@@ -100,7 +100,10 @@ import {
   EdgeRuntimeScript,
 } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
-import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
+import {
+  PgDeltaEngine,
+  PgDeltaEngineError,
+} from "../../../command-internal/pgdelta/pgdelta-engine.service.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";

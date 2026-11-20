@@ -21,8 +21,8 @@ import * as Pgmeta from "./Pgmeta.ts";
 import * as Pooler from "./Pooler.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Rest from "./Rest.ts";
-import * as Spark from "./Spark.ts";
-import * as SparkMeta from "./SparkMeta.ts";
+import * as Spark from "./spark/Spark.ts";
+import * as SparkMeta from "./spark/SparkMeta.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
 import {

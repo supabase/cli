@@ -83,10 +83,10 @@ import {
   type PgDeltaDiffResult,
   type PgDeltaEndpoint,
   type PgDeltaRenderedFile,
-} from "../shared/pgdelta-engine.service.ts";
-import { parsePgDeltaNextEndpoint } from "../shared/pgdelta-engine.next.layer.ts";
-import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
-import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
+} from "../../../command-internal/pgdelta/pgdelta-engine.service.ts";
+import { parsePgDeltaNextEndpoint } from "../../../command-internal/pgdelta/pgdelta-engine.next.layer.ts";
+import { LoadPgDeltaSqlFiles } from "../../../command-internal/pgdelta/pgdelta-files.ts";
+import { writePgDeltaMigrations } from "../../../command-internal/pgdelta/pgdelta-migrations.write.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";

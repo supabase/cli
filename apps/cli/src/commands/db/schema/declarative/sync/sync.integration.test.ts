@@ -81,9 +81,9 @@ import {
   PgDeltaEngineError,
   type PgDeltaRemovalSummary,
   type PgDeltaRenderedFile,
-} from "../../../shared/pgdelta-engine.service.ts";
-import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
-import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+} from "../../../../../command-internal/pgdelta/pgdelta-engine.service.ts";
+import { DeclarativeShadowDbError } from "../../../../../command-internal/pgdelta/pgdelta.errors.ts";
+import { DeclarativeSeam } from "../../../../../command-internal/pgdelta/pgdelta.seam.service.ts";
 import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
