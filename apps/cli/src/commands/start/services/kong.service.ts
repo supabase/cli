@@ -131,8 +131,9 @@ export function buildKongEmailTemplateBind(
   return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
 
-/* Kong's `auto` follows the soft limit, 1024 on Docker 29, so nginx is sized from the hard limit up to
-   Kong's 16384 ceiling instead, and `kong reload` reuses the values Kong saved in `.kong_env` */
+/* Kong's `auto` follows the soft limit, as low as 1024 on Docker 29, so nginx is sized from the
+   hard limit up to Kong's 16384 ceiling instead, and `kong reload` reuses the values Kong saved in
+   `.kong_env` */
 const KONG_ENTRYPOINT_HEAD =
   'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
   "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
