@@ -1572,14 +1572,40 @@ describe("container process adapter", { timeout: 120_000 }, () => {
         expect(failure instanceof ContainerLaunchError).toBe(true);
         expect(failureKind(failure)).toBe("engine-timeout");
         expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
-          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox; container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
+          "Engine command 'start' did not finish within 30s; stderr: Error: waiting for network sandbox; daemon: responsive (fake-daemon-id); container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
         );
       }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
+  it.effect("names an unresponsive daemon when its probe also stalls after a start timeout", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeStalledStartSpawner("", { daemonProbeStalls: true });
+      const runtime = yield* makeContainerRuntime({
+        target: containerTarget,
+        root: ".",
+        hostGateway: sharedHostGateway,
+      }).pipe(Effect.provide(engine.layer));
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "u".repeat(64), instanceId: "stalled-daemon", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+      yield* Deferred.await(engine.stderrRead);
+      yield* TestClock.adjust("30 seconds");
+      yield* Deferred.await(engine.daemonProbed);
+      yield* TestClock.adjust("2 seconds");
+      const result = yield* Fiber.join(launch);
+
+      const failure = Exit.isFailure(result)
+        ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+        : undefined;
+      expect(failure instanceof ContainerLaunchError ? failure.failure.message : undefined).toBe(
+        "Engine command 'start' did not finish within 30s; daemon: unresponsive to info within 2 seconds; container state: status=created started=0001-01-01T00:00:00Z pid=0 error=",
+      );
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
+  );
+
   it.effect("continues a launch whose start timed out once the container is running", () =>
     Effect.gen(function* () {
-      const engine = yield* makeStalledStartSpawner("", "running");
+      const engine = yield* makeStalledStartSpawner("", { status: "running" });
       const runtime = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
@@ -2257,11 +2283,17 @@ const successfulHandle = (stdout = "") =>
 /** Answers every engine command except `start`, which writes `stderr` and never exits, leaving the container in `status`. */
 const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(function* (
   stderr: string,
-  status = "created",
+  options: { readonly daemonProbeStalls?: boolean; readonly status?: string } = {},
 ) {
+  const status = options.status ?? "created";
   const stderrRead = yield* Deferred.make<void>();
+  const daemonProbed = yield* Deferred.make<void>();
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    const isDaemonProbe =
+      command.args[0] === "info" && command.args.map(String)[2]?.includes("running=") === true;
+    if (isDaemonProbe && options.daemonProbeStalls === true)
+      return Deferred.succeed(daemonProbed, undefined).pipe(Effect.as(hangingHandle()));
     if (command.args[0] === "info") return Effect.succeed(successfulHandle("fake-daemon-id"));
     if (command.args[0] === "inspect")
       return Effect.succeed(
@@ -2293,8 +2325,27 @@ const makeStalledStartSpawner = Effect.fn("ContainerTest.stalledStartSpawner")(f
       }),
     );
   });
-  return { stderrRead, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+  return {
+    stderrRead,
+    daemonProbed,
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  };
 });
+
+const hangingHandle = () =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(0),
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
 
 const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")(function* () {
   const commands: string[][] = [];
