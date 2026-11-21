@@ -974,11 +974,27 @@ describe("db schema declarative sync integration", () => {
   );
 
   it.effect.each([
-    { mode: "--no-apply", noApply: Option.some(true), stdinIsTty: false },
-    { mode: "interactive", noApply: Option.none<boolean>(), stdinIsTty: true },
+    {
+      mode: "--no-apply",
+      apply: Option.none<boolean>(),
+      noApply: Option.some(true),
+      stdinIsTty: false,
+    },
+    {
+      mode: "--apply",
+      apply: Option.some(true),
+      noApply: Option.none<boolean>(),
+      stdinIsTty: false,
+    },
+    {
+      mode: "interactive",
+      apply: Option.none<boolean>(),
+      noApply: Option.none<boolean>(),
+      stdinIsTty: true,
+    },
   ])(
     "--fail-on-destructive ($mode): refuses drops before any prompt and writes nothing",
-    ({ noApply, stdinIsTty }) => {
+    ({ apply, noApply, stdinIsTty }) => {
       const s = setup(tmp.current, {
         experimental: true,
         stdinIsTty,
@@ -989,7 +1005,7 @@ describe("db schema declarative sync integration", () => {
         const path = yield* Path.Path;
         yield* seedDeclarative(tmp.current);
         const error = yield* dbSchemaDeclarativeSync(
-          flags({ noApply, failOnDestructive: true }),
+          flags({ apply, noApply, failOnDestructive: true }),
         ).pipe(Effect.flip);
         expect(error).toBeInstanceOf(DeclarativeDestructiveChangesError);
         expect(error).toMatchObject({ detail: expect.stringContaining("DROP TABLE c") });

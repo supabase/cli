@@ -67,7 +67,7 @@ export class DeclarativeDiffError extends Data.TaggedError("DeclarativeDiffError
   }
 }
 
-/* `sync --fail-on-destructive` rejects destructive changes before writing migrations. */
+/** `sync --fail-on-destructive` rejects destructive changes before writing migrations. */
 export class DeclarativeDestructiveChangesError extends Data.TaggedError(
   "DeclarativeDestructiveChangesError",
 )<{

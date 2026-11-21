@@ -53,7 +53,7 @@ const config = {
   ),
   failOnDestructive: Flag.Boolean("fail-on-destructive").pipe(
     Flag.withDescription(
-      'Exit non-zero without writing a migration when sync finds destructive changes, the same ones listed in the "Found destructive changes" warning (for example DROP TABLE or DROP COLUMN).',
+      "Exit non-zero without writing a migration when sync warns about destructive changes, like DROP TABLE or DROP COLUMN.",
     ),
     Flag.withDefault(false),
   ),
