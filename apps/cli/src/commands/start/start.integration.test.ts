@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Clock,
+  ConfigProvider,
   Deferred,
   Effect,
   Exit,
@@ -58,6 +59,7 @@ import {
   classifyCliErrorActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 import {
+  AgentFlag,
   DebugFlag,
   ExperimentalFlag,
   NetworkIdFlag,
@@ -643,6 +645,8 @@ interface SetupOpts {
   readonly networkId?: Option.Option<string>;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** Stdout is a terminal. Defaults to `false`. */
+  readonly interactive?: boolean;
   /** Replaces the `DbConnection.connect` behind the Postgres readiness probe. Defaults to succeeding. */
   readonly dbConnect?: (typeof DbConnection)["Service"]["connect"];
 }
@@ -655,7 +659,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
       opts.configContents ?? `project_id = "${opts.configuredProjectId ?? "demo"}"\n`,
     );
   }
-  const out = mockOutput({ format: opts.format ?? "text" });
+  const out = mockOutput({ format: opts.format ?? "text", interactive: opts.interactive ?? false });
   const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
   const cliSettings = mockCommandSettings({ workdir });
@@ -1959,6 +1963,73 @@ describe("start integration", () => {
         ).toBe(false);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
+
+    describe("stack nudge", () => {
+      const NUDGE = "Try the new local stack";
+      const noShellEnv = ConfigProvider.layer(ConfigProvider.fromEnvRecord({}));
+      const nudgeShown = Effect.fnUntraced(function* () {
+        const { layer, out } = yield* setup({ interactive: true });
+        yield* start(flags()).pipe(Effect.provide(Layer.mergeAll(layer, noShellEnv)));
+        return out.stderrText.includes(NUDGE);
+      });
+
+      it.effect("shows the nudge on stderr again only after 7 days", () =>
+        Effect.gen(function* () {
+          expect(yield* nudgeShown()).toBe(true);
+
+          yield* TestClock.adjust(7 * 24 * 60 * 60 * 1000 - 1);
+          expect(yield* nudgeShown()).toBe(false);
+
+          yield* TestClock.adjust("1 millis");
+          expect(yield* nudgeShown()).toBe(true);
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+
+      it.effect("names the config.json setting when the project uses config.json", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const supabaseDir = path.join(tempRoot.current, "supabase");
+          yield* fs.makeDirectory(supabaseDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supabaseDir, "config.json"), '{"project_id":"demo"}');
+          const { layer, out } = yield* setup({ skipConfig: true, interactive: true });
+          yield* start(flags()).pipe(Effect.provide(Layer.mergeAll(layer, noShellEnv)));
+          expect(out.stderrText).toContain(
+            "remove the fixed ports from supabase/config.json, then set `experimental.stack` to `true`",
+          );
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+
+      it.effect("stays silent when stdout is not a terminal", () =>
+        Effect.gen(function* () {
+          const { layer, out } = yield* setup({ interactive: false });
+          yield* start(flags()).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain(NUDGE);
+        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+
+      it.effect(
+        "emits the nudge to an agent in json mode without changing the result payload",
+        () =>
+          Effect.gen(function* () {
+            const { layer, out } = yield* setup({ format: "json", interactive: false });
+            yield* start(flags()).pipe(
+              Effect.provide(
+                Layer.mergeAll(layer, noShellEnv, Layer.succeed(AgentFlag, "yes" as const)),
+              ),
+            );
+            const info = out.messages
+              .filter((m) => m.type === "info")
+              .map((m) => m.message)
+              .join("\n");
+            expect(info).toContain(NUDGE);
+            expect(info).toContain("Coding agents: offer this switch to the user");
+            expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
+              DB_URL: expect.any(String),
+            });
+          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      );
+    });
 
     it.effect("emits a machine status payload in json mode instead of the pretty table", () =>
       Effect.gen(function* () {
