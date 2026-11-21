@@ -20,7 +20,6 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { ssoList } from "./list.handler.ts";
 
@@ -55,11 +54,6 @@ interface SetupOpts {
   body?: unknown;
   network?: "fail";
   projectId?: Option.Option<string>;
-  // Configures the upgrade-gate side-call branches:
-  //   "gated"     → entitlement says auth.saml_2 has_access=false
-  //   "notGated"  → entitlement says auth.saml_2 has_access=true
-  //   undefined   → no extra handlers wired; project lookup 404s
-  upgradeGate?: "gated" | "notGated";
   projectStatus?: string;
   stallProviders?: boolean;
   apiMaxRetries?: Option.Option<number>;
@@ -87,7 +81,6 @@ function setup(opts: SetupOpts = {}) {
 
   const status = opts.status ?? 200;
   const body = opts.body ?? { items: [PROVIDER_ITEM] };
-  const gate = opts.upgradeGate;
   const providersStalled = Latch.makeUnsafe(false);
 
   const api = mockCommandPlatformApi({
@@ -101,7 +94,7 @@ function setup(opts: SetupOpts = {}) {
         return Effect.succeed(jsonResponse(request, status, body));
       }
       if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined && opts.projectStatus === undefined) {
+        if (opts.projectStatus === undefined) {
           return Effect.succeed(jsonResponse(request, 404, {}));
         }
         return Effect.succeed(
@@ -120,20 +113,6 @@ function setup(opts: SetupOpts = {}) {
               postgres_engine: "15",
               release_channel: "ga",
             },
-          }),
-        );
-      }
-      if (url.includes("/v1/organizations/acme/entitlements")) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "auth.saml_2", type: "boolean" },
-                hasAccess: gate === "notGated",
-                type: "boolean",
-                config: { enabled: false },
-              },
-            ],
           }),
         );
       }
@@ -329,38 +308,16 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports SAML-disabled error on 404", () => {
-    const { layer } = setup({ status: 404, body: {} });
+  it.effect("reports the API error on 404 with no further requests", () => {
+    const { layer, api } = setup({ status: 404, body: { message: "Project not found" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const error = yield* Effect.flip(
         ssoList({ remote: Option.none(), projectRef: Option.none() }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = Cause.pretty(exit.cause);
-        expect(dump).toContain("SsoListSamlDisabledError");
-        expect(dump).toContain("Looks like SAML 2.0 support is not enabled");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
-    return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
-    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
-    return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
+      expect(error).toMatchObject({ _tag: "SsoListUnexpectedStatusError", status: 404 });
+      expect(error.message).toContain("Project not found");
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-        "GET https://api.supabase.com/v1/organizations/acme/entitlements",
       ]);
       assertPermissionDrift({ command: "sso list", requests: api.requests });
     }).pipe(Effect.provide(layer));

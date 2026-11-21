@@ -34,7 +34,6 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoAddFlags } from "./add.command.ts";
 import { ssoAdd } from "./add.handler.ts";
@@ -60,7 +59,6 @@ interface SetupOpts {
   status?: number;
   body?: unknown;
   network?: "fail";
-  upgradeGate?: "gated" | "notGated";
   // Metadata-URL fetch responses keyed by URL prefix.
   metadataUrlResponse?: { status: number; body: string };
   /**
@@ -114,7 +112,6 @@ function setup(opts: SetupOpts = {}) {
 
   const status = opts.status ?? 201;
   const body = opts.body ?? RESPONSE_PROVIDER;
-  const gate = opts.upgradeGate;
   const metadataUrlResponse = opts.metadataUrlResponse;
 
   const api = mockCommandPlatformApi({
@@ -127,41 +124,6 @@ function setup(opts: SetupOpts = {}) {
       if (metadataUrlResponse !== undefined && url.startsWith("https://idp.example.com")) {
         return Effect.succeed(
           textResponse(request, metadataUrlResponse.status, metadataUrlResponse.body),
-        );
-      }
-      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            id: VALID_REF,
-            ref: VALID_REF,
-            organization_id: "org-id",
-            organization_slug: "acme",
-            name: "Test",
-            region: "us-east-1",
-            created_at: "2023-01-01T00:00:00Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.example.com",
-              version: "15",
-              postgres_engine: "15",
-              release_channel: "ga",
-            },
-          }),
-        );
-      }
-      if (url.includes("/v1/organizations/acme/entitlements")) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            entitlements: [
-              {
-                feature: { key: "auth.saml_2", type: "boolean" },
-                hasAccess: gate === "notGated",
-                type: "boolean",
-                config: { enabled: false },
-              },
-            ],
-          }),
         );
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
@@ -1002,28 +964,42 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports SAML-disabled error on 404", () => {
-    const { layer } = setup({ status: 404, body: {} });
+  it.effect("reports the API error on 404 with no further requests", () => {
+    const { layer, api } = setup({ status: 404, body: { message: "Project not found" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("SsoAddSamlDisabledError");
-      }
+      const error = yield* Effect.flip(ssoAdd(defaultFlags));
+      expect(error).toMatchObject({ _tag: "SsoAddUnexpectedStatusError", status: 404 });
+      expect(error.message).toContain("Project not found");
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+      ]);
+      assertPermissionDrift({ command: "sso add", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+  it.effect("fails with the plan-gate entitlement on an enveloped 402", () => {
+    const { layer, api } = setup({
+      status: 402,
+      body: {
+        message: "This feature requires the Pro, Team, or Enterprise organization plan.",
+        error: {
+          code: "entitlement_required",
+          feature: "auth.saml_2",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      },
+    });
     return Effect.gen(function* () {
-      yield* Effect.exit(ssoAdd(defaultFlags));
-      expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      const error = yield* Effect.flip(ssoAdd(defaultFlags));
+      expect(error).toMatchObject({
+        entitlement: {
+          feature: "auth.saml_2",
+          upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        },
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
-        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
-        `GET ${DEFAULT_API_URL}/v1/organizations/acme/entitlements`,
       ]);
-      assertPermissionDrift({ command: "sso add", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 

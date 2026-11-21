@@ -76,7 +76,3 @@ export function dashboardUrl(profile: string): string {
 export function poolerHost(profile: string): string {
   return (BUILT_IN[profile] ?? DEFAULT_ENDPOINTS).poolerHost;
 }
-
-export function billingUrl(profile: string, orgSlug: string): string {
-  return `${dashboardUrl(profile)}/org/${orgSlug}/billing`;
-}
