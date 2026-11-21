@@ -1,27 +1,28 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
 import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
 import { writeDeclarativeSchemas } from "../../../../../command-internal/db/pgdelta/pgdelta.write.ts";
-import { dumpSparkSchema } from "../../spark-api.ts";
+import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
 import { withoutBaselineFiles } from "../../spark-schema-files.ts";
 import { acquireSparkShadows, loadSparkDump } from "../../spark-shadow.ts";
-import { projectPaths, withLinkedProject } from "../../spark.shared.ts";
+import { projectPaths } from "../../spark.shared.ts";
+import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
 /** `supabase db pull`: the project's dump, loaded into a shadow Postgres, exported to `supabase/schemas`. */
-export const sparkDbPull = Effect.fn("spark.db.pull")(function* (flags: {
-  readonly projectRef: Option.Option<string>;
-  readonly schema: ReadonlyArray<string>;
-}) {
-  yield* withLinkedProject(flags.projectRef, (ref) =>
+export const sparkDbPull = Effect.fn("spark.db.pull")(function* (
+  flags: TargetFlagValues & { readonly schema: ReadonlyArray<string> },
+) {
+  yield* withSparkTarget(flags, () =>
     Effect.gen(function* () {
+      const spark = yield* SparkTarget;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const output = yield* Output;
       const pgDelta = yield* PgDeltaNextAdapter;
       const paths = yield* projectPaths();
-      const dump = yield* dumpSparkSchema(ref, flags.schema);
+      const dump = yield* spark.dump(flags.schema);
       const exported = yield* Effect.scoped(
         Effect.gen(function* () {
           const [pool, clean] = yield* acquireSparkShadows(2);

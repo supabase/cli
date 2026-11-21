@@ -104,6 +104,14 @@ export const experimental = Schema.Struct({
           tags,
         }),
       ),
+      studio_executable: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
+          examples: ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"],
+          tags,
+        }),
+      ),
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   pgdelta: Schema.optionalKey(

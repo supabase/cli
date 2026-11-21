@@ -122,7 +122,7 @@ export const sharedRoutes = (
       ];
     case "spark":
       /* Spark serves both data plane APIs and its admin routes under their own paths. */
-      return ["/rest/v1", "/auth/v1", "/_spark"].map((prefix) => ({
+      return ["/rest/v1", "/auth/v1", "/database", "/system/v1", "/_spark"].map((prefix) => ({
         prefix,
         upstreamPrefix: prefix,
         forwardedPrefix: prefix,
@@ -161,15 +161,38 @@ export const joinRoutes = (
     case "pooler":
       return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
     case "sparkmeta":
-      return ["/pg", "/v1/projects", "/v1/organizations", "/_dev", "/rest/v1/"].map((prefix) => ({
-        prefix,
-        upstreamPrefix: prefix,
-        forwardedPrefix: prefix,
-      }));
+      return ["/pg", "/v1/projects", "/v1/organizations", "/platform/projects", "/rest/v1/"].map(
+        (prefix) => ({
+          prefix,
+          upstreamPrefix: prefix,
+          forwardedPrefix: prefix,
+        }),
+      );
     default:
       return undefined;
   }
 };
+
+/**
+ * Routes a dedicated HTTP endpoint sends to the shared API listener. Studio's project detail goes to
+ * the platform API's path there, so Studio reads the engine the way it does on the platform.
+ */
+export const toSharedRoutes = (
+  creation: Pick<ServiceCreation, "service" | "config">,
+  name: string,
+): NetworkEndpoint["toShared"] =>
+  name === "http" &&
+  creation.service === "studio" &&
+  "projectFromApi" in creation.config &&
+  creation.config.projectFromApi === true
+    ? [
+        {
+          prefix: "/api/platform/projects/default",
+          upstreamPrefix: "/platform/projects/default",
+          exact: true,
+        },
+      ]
+    : undefined;
 
 /**
  * Whether an endpoint's writes each take a fresh upstream connection instead of the pool: only

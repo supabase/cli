@@ -1,10 +1,7 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
-import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { MIGRATE_FILE_PATTERN } from "../../../command-internal/migration-history.ts";
 import { sortMigrationVersions } from "../../../command-internal/migration-timestamp.format.ts";
 import type { SparkDryRunStatus } from "./spark-api.ts";
@@ -19,22 +16,6 @@ export const projectPaths = Effect.fn("Spark.projectPaths")(function* () {
     schemas: path.join(root, "supabase", "schemas"),
   };
 });
-
-/** Resolves the linked project and caches it for telemetry whether `body` succeeds or fails. */
-export const withLinkedProject = <A, E, R>(
-  projectRef: Option.Option<string>,
-  body: (ref: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const resolver = yield* ProjectRefResolver;
-    const linkedProjectCache = yield* LinkedProjectCache;
-    const telemetryState = yield* TelemetryState;
-    const ref = yield* resolver.resolve(projectRef);
-    return yield* body(ref).pipe(
-      Effect.ensuring(linkedProjectCache.cache(ref)),
-      Effect.ensuring(telemetryState.flush),
-    );
-  });
 
 export const reportRefusals = Effect.fnUntraced(function* (
   label: string,

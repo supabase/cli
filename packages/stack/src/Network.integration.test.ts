@@ -9,7 +9,7 @@ import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
+import { freshWrites, joinRoutes, sharedRoutes, toSharedRoutes } from "./host/Endpoints.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
@@ -715,6 +715,55 @@ it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's 
       );
       for (const name of ["x-forwarded-port", "x-forwarded-path", "x-forwarded-prefix"])
         expect(headers).not.toHaveProperty(name);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("sends only Studio's project detail path from its listener to the API listener", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-to-shared-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const studioBackend = yield* backend;
+      const apiBackend = yield* backendWith((incoming, response) => {
+        response.end(`api:${incoming.url ?? "/"}`);
+      });
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const api = yield* network.register({
+        id: "sparkmeta",
+        endpoints: {
+          api: {
+            ...endpoint(apiBackend, Effect.succeed(true)),
+            shared: [{ prefix: "/platform/projects" }],
+          },
+        },
+      });
+      yield* api.bind;
+      const toShared = toSharedRoutes(
+        { service: "studio", config: { projectFromApi: true } },
+        "http",
+      );
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: {
+          http: {
+            ...endpoint(studioBackend, Effect.succeed(true)),
+            ...(toShared === undefined ? {} : { toShared }),
+          },
+        },
+      });
+      yield* studio.bind;
+      const { host, port } = yield* studio.address("http", "host");
+
+      expect(yield* request(host, port, "/api/platform/projects/default")).toBe(
+        "api:/platform/projects/default",
+      );
+      expect(yield* request(host, port, "/api/platform/projects/default/settings")).toBe(
+        "backend:/api/platform/projects/default/settings",
+      );
+      expect(yield* request(host, port, "/project/default")).toBe("backend:/project/default");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

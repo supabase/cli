@@ -9,6 +9,7 @@
     "./defaults": "./src/Defaults.ts",
     "./testing": "./src/testing.ts",
     "./commands": "./src/Commands.ts",
+    "./spark": "./src/services/spark/SparkClient.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/artifacts": "./src/internal/artifacts.ts",
     "./internal/composition": "./src/internal/composition.ts",

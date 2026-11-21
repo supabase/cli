@@ -1,15 +1,16 @@
 import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
-import { managementApiRuntimeLayer } from "../../../../../command-internal/management-api-runtime.layer.ts";
+import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { sparkGenTypes } from "./types.handler.ts";
 import { SparkApiError } from "../../spark-project.ts";
-import { projectRef, schema } from "../../spark.flags.ts";
+import { schema, sparkRuntimeLayer } from "../../spark.flags.ts";
 
 const genTypesConfig = {
-  projectRef,
+  ...targetFlags({ subject: "database", dbUrl: false }),
   schema,
   lang: Flag.Literals("lang", ["typescript"]).pipe(
     Flag.withDescription("Output language of the generated types."),
@@ -36,5 +37,6 @@ export const sparkGenTypesCommand = Command.make("types", genTypesConfig).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(managementApiRuntimeLayer(["gen", "types"])),
+  Command.provide(sparkRuntimeLayer(["gen", "types"])),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

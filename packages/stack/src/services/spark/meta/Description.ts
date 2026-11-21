@@ -66,14 +66,13 @@ export const Enum = Schema.Struct({
 });
 export interface Enum extends Schema.Schema.Type<typeof Enum> {}
 
-export const View = Schema.Struct({
+const View = Schema.Struct({
   schema: Schema.String,
   name: Schema.String,
   def: Schema.String,
   depends_on: Schema.Array(Schema.Struct({ schema: Schema.String, name: Schema.String })),
   comment: Schema.NullOr(Schema.String),
 });
-export interface View extends Schema.Schema.Type<typeof View> {}
 
 export const Description = Schema.Struct({
   schema_version: Schema.String,
@@ -100,6 +99,8 @@ const StatementStatus = Schema.Struct({
   index: Schema.Finite,
   kind: Schema.String,
   status: Schema.String,
+  /** The SQLSTATE of a refused statement, when Spark gives one. */
+  code: Schema.optionalKey(Schema.NullOr(Schema.String)),
   message: Schema.optionalKey(Schema.NullOr(Schema.String)),
   line: Schema.optionalKey(Schema.Finite),
   statement: Schema.optionalKey(Schema.NullOr(Schema.String)),

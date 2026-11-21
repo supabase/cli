@@ -5,10 +5,12 @@ import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { sparkDbDiff } from "./diff.handler.ts";
-import { projectRef, schema, shadowRuntimeLayer } from "../../spark.flags.ts";
+import { schema, shadowRuntimeLayer } from "../../spark.flags.ts";
+import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const diffConfig = {
-  projectRef,
+  ...targetFlags({ subject: "database", dbUrl: false }),
   schema,
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
@@ -34,4 +36,9 @@ export const sparkDbDiffCommand = Command.make("diff", diffConfig).pipe(
   Command.provide(shadowRuntimeLayer(["db", "diff"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(diffConfig),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local migration files",
+  }),
 );

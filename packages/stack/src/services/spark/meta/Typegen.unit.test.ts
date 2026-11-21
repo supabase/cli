@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { makeModel } from "./Catalog.ts";
+import { makeModel } from "./Model.ts";
 import type { Column, Constraint, Description, Table } from "./Description.ts";
 import { typescript } from "./Typegen.ts";
 

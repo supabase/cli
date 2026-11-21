@@ -1,4 +1,4 @@
-import { typeInfo } from "./Catalog.ts";
+import { typeInfo } from "./Model.ts";
 import type { Description } from "./Description.ts";
 
 const OPENAPI_TYPES: Readonly<Record<string, string>> = {

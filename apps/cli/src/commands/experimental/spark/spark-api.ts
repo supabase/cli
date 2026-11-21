@@ -3,6 +3,10 @@ import { Effect, Option, Redacted, Schema } from "effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
+import {
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { SparkApiError } from "./spark-project.ts";
@@ -23,6 +27,8 @@ const okText = Effect.fnUntraced(function* (
   )(text).pipe(
     Option.map((body) => body.message),
     Option.getOrElse(() => text),
+    // The body is the server's, or a proxy's: no control sequences on the terminal, and capped.
+    sanitizeErrorBody,
   );
   return yield* new SparkApiError({
     message: `${what} failed (HTTP ${response.status}): ${message}`,
@@ -166,6 +172,32 @@ export const dryRunSparkMigration = Effect.fn("SparkApi.dryRunMigration")(functi
     "spark.dry_run.refused": statuses.filter(isRefused).length,
   });
   return statuses;
+});
+
+/** `POST .../database/query`: runs SQL on the project and resolves to the response body text. */
+export const runSparkQuery = Effect.fn("SparkApi.runQuery")(function* (
+  ref: string,
+  query: string,
+  readOnly: boolean,
+) {
+  yield* Effect.annotateCurrentSpan({ "spark.query.read_only": readOnly });
+  const api = yield* CommandPlatformApi;
+  const response = yield* api
+    .executeRaw(
+      operationDefinitions.v1RunAQuery,
+      { ref, query, ...(readOnly ? { read_only: true } : {}) },
+      // A statement runs as long as it needs: a timeout here would leave a write's outcome unknown.
+      { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+    )
+    .pipe(Effect.mapError(apiFailure("run query")));
+  const body = yield* okText("run query", response);
+  // The route answers 201; any other success is not this API (a proxy's page, for one).
+  if (response.status !== 201)
+    return yield* new SparkApiError({
+      message: `run query failed: ${unexpectedStatusMessage(response.status, sanitizeErrorBody(body))}`,
+      status: response.status,
+    });
+  return body;
 });
 
 /** Whether Spark refuses a statement it was asked to run. */

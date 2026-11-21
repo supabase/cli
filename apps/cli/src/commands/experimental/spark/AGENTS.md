@@ -15,15 +15,17 @@ stubbed, and never fall back to Postgres.
   `src/cli/main.ts` calls to choose the tree, it is the only code outside this folder may import.
 - `<group>/<name>/`: one folder per subcommand, `<name>.command.ts` and `<name>.handler.ts`, like
   `experimental/compute/`.
-- Family helpers (`spark-api.ts`, `spark-project.ts`, `spark-shadow.ts`, `spark-stack.ts`, `spark-schema-files.ts`, and
-  helpers shared by several handlers) sit at the folder root.
+- Family helpers (`spark-api.ts`, `spark-project.ts`, `spark-shadow.ts`, `spark-stack.ts`, `spark-schema-files.ts`,
+  `spark-target.ts`, and helpers shared by several handlers) sit at the folder root.
 - `SIDE_EFFECTS.md`: what each command writes, locally and remotely.
 
 ## Adding a command
 
 1. Create `<group>/<name>/` with the command, handler and tests next to them.
 2. Add it to the tree in `spark.command.ts`.
-3. Reach the project only through the Management API (`spark-api.ts`). No direct calls to Spark's admin routes.
+3. Reach the project only through `SparkTarget` (`spark-target.ts`), with `withSparkTarget`: the local target calls
+   the Spark server through the stack's API URL with the stack's service_role key (the `@supabase/stack/spark`
+   client), a linked target the Management API (`spark-api.ts`). No other calls to Spark's admin routes.
 4. Record its writes in `SIDE_EFFECTS.md`.
 5. If it changes the end-to-end flow, extend `apps/cli/scripts/spark/e2e.sh`.
 

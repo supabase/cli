@@ -96,11 +96,8 @@ const KINDS: ReadonlyArray<readonly [RegExp, string, string]> = [
   [/^create\s+table\b/iu, "CreateStmt", "ddl"],
   [/^create\s+function\b/iu, "CreateFunctionStmt", "ddl"],
   [/^alter\b/iu, "AlterTableStmt", "ddl"],
-  [/^grant\b/iu, "GrantStmt", "ddl"],
-  [/^comment\b/iu, "CommentStmt", "ddl"],
   [/^do\b/iu, "DoStmt", "other"],
   [/^insert\b/iu, "InsertStmt", "dml"],
-  [/^explain\b/iu, "ExplainStmt", "query"],
 ];
 
 /** Stands in for Spark's `pg_query` split for the scripts these tests send (`;` only inside `$$` bodies). */
@@ -135,6 +132,9 @@ const fakeSpark = (
           : options.unsupported === true && kind === "CreateFunctionStmt"
             ? "unsupported"
             : "ok",
+      ...(options.unsupported === true && kind === "CreateFunctionStmt"
+        ? { message: "CREATE FUNCTION is not supported" }
+        : {}),
     }));
   const sqlOf = (body: unknown): unknown => {
     const files: unknown = Reflect.get(Object(body), "files");
@@ -157,7 +157,7 @@ const fakeSpark = (
           return respond(reply({ schema_version: description.schema_version }));
         case "/_spark/v1/schema":
           return respond(reply(description));
-        case "/_spark/v1/migrations":
+        case "/system/v1/migrations":
           if (request.method === "GET")
             return respond(reply([{ version: "20260101000000", name: "todos", statements: null }]));
           return respond(
@@ -169,12 +169,24 @@ const fakeSpark = (
           return respond(reply({ statuses: statusesOf(sqlOf(body)) }));
         case "/_spark/v1/parse":
           return respond(reply({ statements: parse(String(Reflect.get(Object(body), "sql"))) }));
-        case "/_spark/v1/query":
-          return respond(
-            String(Reflect.get(Object(body), "query")).includes("pg_enum")
-              ? reply({ code: "42P01", message: "no such table: pg_enum" }, 400)
-              : reply([{ id: 1, done: true, tags: ["a", "b"] }]),
-          );
+        case "/database/query": {
+          const query = String(Reflect.get(Object(body), "query"));
+          if (query.includes("pg_enum"))
+            return respond(
+              reply(
+                {
+                  code: "42P01",
+                  message: "no such table: pg_enum",
+                  details: "spark detail",
+                  hint: "spark hint",
+                },
+                400,
+              ),
+            );
+          if (/^do\b/iu.test(query))
+            return respond(reply({ code: "0A000", message: "DO is not supported" }, 400));
+          return respond(reply([{ id: 1, done: true, tags: ["a", "b"] }]));
+        }
         default:
           return respond(reply({ message: "not found" }, 404));
       }
@@ -234,40 +246,28 @@ const withHandler = (spark: ReturnType<typeof fakeSpark>) =>
     return { send, migrationsDir, fs };
   });
 
-it.live("keeps Spark's refusal message exact and puts the catalog note in the hint", () =>
+it.live("returns Spark's refusal of a query as Spark gave it, with nothing added", () =>
   Effect.gen(function* () {
     const { send } = yield* withHandler(fakeSpark());
 
-    const { status, body } = yield* send("POST", "/pg/query", {
+    const catalog = yield* send("POST", "/pg/query", {
       query: "select enumlabel from pg_catalog.pg_enum",
     });
+    const doBlock = yield* send("POST", "/pg/query", { query: "do $$ begin end $$" });
 
-    expect(status).toBe(400);
-    expect(body).toMatchObject({ code: "42P01", message: "no such table: pg_enum" });
-    expect(Reflect.get(Object(body), "hint")).toContain("Not supported on Spark");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("answers Studio's pg-meta table listing from Spark's schema description", () =>
-  Effect.gen(function* () {
-    const { send } = yield* withHandler(fakeSpark());
-
-    const { status, body } = yield* send("GET", "/pg/tables?included_schemas=public");
-
-    expect(status).toBe(200);
-    expect(body).toMatchObject([
-      {
-        schema: "public",
-        name: "todos",
-        rls_enabled: true,
-        primary_keys: [{ name: "id" }],
-        columns: [
-          { name: "id", is_identity: true, identity_generation: "BY DEFAULT" },
-          { name: "done", format: "bool", default_value: "false" },
-          { name: "tags", data_type: "ARRAY", format: "_text" },
-        ],
-      },
-    ]);
+    expect(catalog.status).toBe(400);
+    expect(catalog.body).toMatchObject({
+      code: "42P01",
+      message: "no such table: pg_enum",
+      details: "spark detail",
+      hint: "spark hint",
+    });
+    expect(doBlock.status).toBe(400);
+    expect(doBlock.body).toMatchObject({
+      code: "0A000",
+      message: "DO is not supported",
+      hint: null,
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -283,7 +283,7 @@ it.live("applies DDL as a dry-run-checked Spark migration and records it as a mi
 
     expect(status).toBe(201);
     const applied = spark.calls.find(
-      (call) => call.path === "/_spark/v1/migrations" && call.body !== undefined,
+      (call) => call.path === "/system/v1/migrations" && call.body !== undefined,
     );
     expect(applied?.body).toMatchObject({
       name: "studio",
@@ -295,86 +295,48 @@ it.live("applies DDL as a dry-run-checked Spark migration and records it as a mi
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("runs a standalone GRANT on Spark as a migration, now that Spark keeps grants", () =>
+it.live("forwards a query and its parameters to Spark unchanged", () =>
   Effect.gen(function* () {
     const spark = fakeSpark();
     const { send } = yield* withHandler(spark);
 
-    const { status } = yield* send("POST", "/pg/query", {
-      query: "grant select on public.todos to anon",
-    });
-
-    expect(status).toBe(201);
-    const applied = spark.calls.find(
-      (call) => call.path === "/_spark/v1/migrations" && call.body !== undefined,
-    );
-    expect(applied?.body).toMatchObject({ sql: "grant select on public.todos to anon;" });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("drops Studio's grant loop and a comment without creating a migration", () =>
-  Effect.gen(function* () {
-    const spark = fakeSpark();
-    const { send, migrationsDir, fs } = yield* withHandler(spark);
-
-    const { status, target } = yield* send("POST", "/pg/query", {
-      query:
-        "do $$ begin execute format('grant select on public.todos to anon'); end $$; comment on table public.todos is 'x'",
-    });
-
-    expect(status).toBe(201);
-    expect(target).toBe("ignored");
-    expect(spark.calls.some((call) => call.path === "/_spark/v1/migrations")).toBe(false);
-    expect(yield* fs.exists(migrationsDir)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("sends session settings around a query to Spark instead of dropping them", () =>
-  Effect.gen(function* () {
-    const spark = fakeSpark();
-    const { send } = yield* withHandler(spark);
-
-    const query = "set statement_timeout = 0; select id from public.todos";
-    yield* send("POST", "/v1/projects/default/database/query", { query });
-
-    expect(spark.calls.find((call) => call.path === "/_spark/v1/query")?.body).toMatchObject({
+    const query =
+      "set statement_timeout = 0; insert into public.todos (done) values ($1) returning *";
+    const { status, body, target } = yield* send("POST", "/v1/projects/default/database/query", {
       query,
+      parameters: [true],
+    });
+
+    expect(status).toBe(201);
+    expect(target).toBe("spark");
+    expect(body).toEqual([{ id: 1, done: true, tags: ["a", "b"] }]);
+    expect(spark.calls.find((call) => call.path === "/database/query")?.body).toEqual({
+      query,
+      parameters: [true],
+      read_only: false,
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("refuses a statement Spark cannot run before anything is applied", () =>
+it.live("refuses DDL Spark cannot run with that statement's own message, before applying", () =>
   Effect.gen(function* () {
     const spark = fakeSpark({ unsupported: true });
-    const { send } = yield* withHandler(spark);
+    const { send, migrationsDir, fs } = yield* withHandler(spark);
 
-    const { status, body } = yield* send("POST", "/v1/projects/default/database/migrations", {
-      name: "add_fn",
-      query: "create function public.f() returns int language sql as $$ select 1 $$",
+    const { status, body } = yield* send("POST", "/pg/query", {
+      query:
+        "create table public.notes (id bigint primary key); create function public.f() returns int language plpgsql as $$ begin return 1; end $$",
     });
 
     expect(status).toBe(400);
-    expect(body).toMatchObject({ code: "0A000" });
-    expect(String(Reflect.get(Object(body), "message"))).toContain("Not supported on Spark");
+    expect(body).toMatchObject({ code: "0A000", message: "CREATE FUNCTION is not supported" });
+    expect(String(Reflect.get(Object(body), "details"))).toBe(
+      "Not supported on Spark (CreateFunctionStmt): create function public.f() returns int language plpgsql as $$ begin return 1; end $$ -- CREATE FUNCTION is not supported",
+    );
+    expect(yield* fs.exists(migrationsDir)).toBe(false);
     expect(
-      spark.calls.some((call) => call.path === "/_spark/v1/migrations" && call.body !== undefined),
+      spark.calls.some((call) => call.path === "/system/v1/migrations" && call.body !== undefined),
     ).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("rewrites the table editor's populate_recordset insert into literal values", () =>
-  Effect.gen(function* () {
-    const spark = fakeSpark();
-    const { send } = yield* withHandler(spark);
-
-    yield* send("POST", "/pg/query", {
-      query: `insert into public.todos (done, tags) select done, tags from json_populate_recordset(null::public.todos, '[{"done":true,"tags":["x"]}]') returning *`,
-    });
-
-    const query = spark.calls.find((call) => call.path === "/_spark/v1/query")?.body;
-    expect(query).toMatchObject({
-      query: `insert into public.todos (done, tags) values (true, '{"x"}')returning *`,
-    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -392,7 +354,7 @@ it.live("reports an unreachable Spark as a server error rather than a SQL error"
     );
     const { send } = yield* withHandler({ client: unreachable, calls: [] });
 
-    const { status, body } = yield* send("GET", "/pg/tables");
+    const { status, body } = yield* send("POST", "/pg/query", { query: "select 1" });
 
     expect(status).toBe(500);
     expect(String(Reflect.get(Object(body), "message"))).toContain("Spark is unreachable");
@@ -423,7 +385,7 @@ it.live("dry-runs a migration through Spark and applies nothing", () =>
         { index: 2, kind: "TransactionStmt", status: "ignored", statement: "commit" },
       ],
     });
-    const migrationCalls = spark.calls.filter((call) => call.path === "/_spark/v1/migrations");
+    const migrationCalls = spark.calls.filter((call) => call.path === "/system/v1/migrations");
     expect(migrationCalls.filter((call) => call.body !== undefined)).toMatchObject([
       { dryRun: true, body: { name: "notes" } },
     ]);
@@ -572,7 +534,7 @@ it.live("rejects a migration version that is not digits before it can reach a fi
       expect(status).toBe(400);
       expect(body).toMatchObject({ code: "22023" });
     }
-    expect(spark.calls.some((call) => call.path === "/_spark/v1/migrations" && call.body)).toBe(
+    expect(spark.calls.some((call) => call.path === "/system/v1/migrations" && call.body)).toBe(
       false,
     );
     expect(yield* fs.exists(migrationsDir)).toBe(false);
@@ -654,5 +616,23 @@ it.live("serves the API keys to a bearer token, for any linked ref, on that exac
     expect(legacy.status).toBe(200);
     expect(legacy.body).toEqual({ enabled: true });
     expect(legacyAnonymous.status).toBe(401);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("answers Studio's project detail at the platform API's path with the Spark engine", () =>
+  Effect.gen(function* () {
+    const { send } = yield* withHandler(fakeSpark());
+
+    const project = yield* send("GET", "/platform/projects/default");
+    const nested = yield* send("GET", "/platform/projects/default/settings");
+
+    expect(project.status).toBe(200);
+    expect(project.body).toMatchObject({
+      ref: "default",
+      status: "ACTIVE_HEALTHY",
+      restUrl: "http://127.0.0.1:54321/rest/v1/",
+      postgres_engine: "spark",
+    });
+    expect(nested.status).not.toBe(200);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

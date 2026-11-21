@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # End-to-end check of the experimental Spark backend: a project opts in through config.toml, and
-# start runs Spark, its meta adapter and Studio on the native stack; then supabase-js with auth and
-# RLS, Studio, the Supabase MCP server, and the Spark command tree (link, gen types, db pull/diff/push
-# through the Management API stand-in, with diff and pull on a shadow Postgres loaded from the
-# project's dump), unsupported SQL, the commands the tree leaves out, reset and stop.
+# start runs Spark, sparkmeta and Studio on the native stack; then supabase-js with auth and
+# RLS, Studio, the Supabase MCP server, and the Spark command tree (gen types, db pull/diff/push/query,
+# migration list) on the local target, which calls Spark through the stack's API URL with no profile,
+# token or link, with diff and pull on a shadow Postgres loaded from the project's dump; unsupported
+# SQL, the commands the tree leaves out, restart and reset; then link and each command once on the
+# linked project, through the Management API stand-in; and stop.
 # Needs: a Spark binary (SUPABASE_SPARK_BIN), the PoC example apps (SPARK_EXAMPLE_DIR, with
-# `bun install` run), a built Supabase MCP server (SUPABASE_MCP_CLI), bun, node, jq, curl, python3.
+# `bun install` run), a built Supabase MCP server (SUPABASE_MCP_CLI), bun, node, jq, curl, python3,
+# and a Studio launcher with the Spark pg-meta fallbacks (SUPABASE_SPARK_STUDIO_BIN): the pinned
+# Studio build has none, so the Studio step needs it.
 # SUPABASE_CLI_BIN runs a compiled CLI instead of the source. Uses ports 54321 and 54323.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -15,7 +19,10 @@ SIBLINGS="$(cd "$HERE/../../../../.." && pwd)"
 SPARK_BIN="${SUPABASE_SPARK_BIN:-$SIBLINGS/spark/target/release/spark}"
 EXAMPLE="${SPARK_EXAMPLE_DIR:-$SIBLINGS/spark/poc/supabase-spark-dev/example}"
 MCP_CLI="${SUPABASE_MCP_CLI:-$SIBLINGS/mcp/packages/mcp-server-supabase/dist/cli.js}"
+STUDIO_BIN="${SUPABASE_SPARK_STUDIO_BIN:-}"
 export SUPABASE_NO_UPDATE_NOTIFIER=1 SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1
+# The local target needs none of these; the remote block at the end sets them.
+unset SUPABASE_PROFILE SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_ID SUPABASE_YES
 WORK="$(mktemp -d)"
 PROJECT="$WORK/spark-todos"
 API=http://127.0.0.1:54321
@@ -58,7 +65,12 @@ for tool in bun node jq curl python3; do command -v "$tool" >/dev/null || fail "
 [ -x "$SPARK_BIN" ] || fail "no spark binary at $SPARK_BIN"
 [ -d "$EXAMPLE/node_modules" ] || fail "run bun install in $EXAMPLE"
 [ -f "$MCP_CLI" ] || fail "no Supabase MCP server at $MCP_CLI"
-ok "setup: spark, bun, node, the MCP server and the example apps are ready"
+[ -n "$STUDIO_BIN" ] || fail "set SUPABASE_SPARK_STUDIO_BIN to a Studio launcher with the Spark pg-meta fallbacks: the pinned Studio build has none, so the Studio step cannot pass"
+[ -x "$STUDIO_BIN" ] || fail "no Studio launcher at SUPABASE_SPARK_STUDIO_BIN=$STUDIO_BIN"
+# The path checked here, absolute, is the one the CLI gets: the variable wins over config.toml.
+STUDIO_BIN="$(cd "$(dirname "$STUDIO_BIN")" && pwd -P)/$(basename "$STUDIO_BIN")"
+export SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE="$STUDIO_BIN"
+ok "setup: spark, bun, node, the MCP server, the Studio launcher and the example apps are ready"
 
 mkdir -p "$PROJECT" && cd "$PROJECT"
 run sb init
@@ -75,7 +87,7 @@ ok "supabase init in a new project, a todos migration, and [experimental.spark] 
 run sb start
 grep -q "Stack is ready" "$LOG" && grep -q "spark" "$LOG" || fail "supabase start reported no Spark stack"
 no_postgres
-ok "supabase start: Spark, its meta adapter and Studio on the native stack (no Postgres)"
+ok "supabase start: Spark, sparkmeta and Studio on the native stack (no Postgres)"
 
 run sb status
 grep -q "$API" "$LOG" && grep -q "spark" "$LOG" || fail "supabase status printed no Spark stack"
@@ -84,38 +96,24 @@ SERVICE_KEY="$(key SERVICE_ROLE_KEY)"
 [ -n "$ANON_KEY" ] && [ -n "$SERVICE_KEY" ] || fail "supabase status --env printed no keys"
 ok "supabase status reports the Spark stack and its keys"
 
-# A profile file is how the CLI points its Management API client at another base URL.
-cat >"$WORK/spark-profile.yaml" <<YAML
-name: spark-local
-api_url: $API
-dashboard_url: http://127.0.0.1:54323
-project_host: localhost
-YAML
-export SUPABASE_PROFILE="$WORK/spark-profile.yaml" SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
-run sb link --project-ref "$PROJECT_REF"
-grep -q "Finished supabase link" "$LOG" || fail "supabase link did not finish"
-[ "$(jq -r .project.ref supabase/.link.json)" = "$PROJECT_REF" ] || fail "supabase link wrote no supabase/.link.json"
-ok "supabase link --project-ref $PROJECT_REF through the Management API ($API, from SUPABASE_PROFILE)"
-
 check app.test.mjs
 ok "app (supabase-js): sign up, CRUD and RLS isolation on todos"
 
+engine="$(curl -sf http://127.0.0.1:54323/api/platform/projects/default | jq -r .postgres_engine)"
+[ "$engine" = spark ] || fail "Studio's project detail reports engine '$engine', not spark"
 check studio.check.mjs
 no_postgres
 ok "Studio: table editor rows, create table and insert row from the UI, policies page, SQL editor"
 
-mkdir -p "$WORK/mcp-check"
-ln -s "$EXAMPLE/node_modules" "$WORK/mcp-check/node_modules"
-sed -e "s#command: 'bun', args: \[new URL('../spark-dev.ts', import.meta.url).pathname, 'mcp'\]#command: 'node', args: [process.env.MCP_CLI, '--access-token', 'local', '--project-ref', 'default', '--api-url', '$API', '--features', 'database,development']#" \
-  "$EXAMPLE/mcp.check.mjs" >"$WORK/mcp-check/mcp.check.mjs"
-grep -q "process.env.MCP_CLI" "$WORK/mcp-check/mcp.check.mjs" || fail "cannot point the MCP check at the MCP server"
-run env ANON_KEY="$ANON_KEY" MCP_CLI="$MCP_CLI" node "$WORK/mcp-check/mcp.check.mjs"
+grep -q "process.env.MCP_CLI" "$EXAMPLE/mcp.check.mjs" || fail "the MCP check does not start the MCP server from MCP_CLI"
+run env ANON_KEY="$ANON_KEY" MCP_CLI="$MCP_CLI" node "$EXAMPLE/mcp.check.mjs"
 ls supabase/migrations/*_add_labels.sql >/dev/null 2>&1 || fail "apply_migration wrote no migration file"
 ok "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url"
 
 run sb gen types typescript
 grep -q '"todos": {' "$LOG" || fail "gen types has no todos table"
-ok "gen types typescript through the Management API"
+[ ! -e supabase/.link.json ] || fail "the local steps found a supabase/.link.json"
+ok "gen types typescript on the local target (no profile, token or link)"
 
 run sb db pull
 [ -f supabase/schemas/public/tables/todos.sql ] || fail "db pull wrote no supabase/schemas/public/tables/todos.sql"
@@ -155,12 +153,12 @@ ok "edit schema files (new column, projects table with FK, RLS policy, index); d
 
 run sb db push
 grep -q "Finished supabase db push" "$LOG" || fail "db push did not finish"
-policies="$(curl -s "$API/pg/policies?included_schemas=public" | jq -r '.[].name')"
+policies="$(sb db query -o json "select policyname from pg_policies where schemaname = 'public'" 2>"$LOG" | jq -r '.[].policyname')" || fail "db query pg_policies"
 for policy in "Owners manage projects" "Users manage their own todos"; do
-  grep -qx "$policy" <<<"$policies" || fail "pg-meta lists no \"$policy\" policy after push: $policies"
+  grep -qx "$policy" <<<"$policies" || fail "pg_policies has no \"$policy\" policy after push: $policies"
 done
 [ "$(rest 'todos?select=id' | jq length)" = "$todos_before" ] || fail "db push lost todos rows"
-ok "db push applies the migration (dry run first), existing rows kept ($todos_before todos); pg-meta lists both policies"
+ok "db push applies the migration (dry run first), existing rows kept ($todos_before todos); pg_policies lists both policies"
 
 code=$(rest 'todos?select=priority' -o /dev/null -w '%{http_code}')
 [ "$code" = 200 ] || fail "GET todos?select=priority: HTTP $code"
@@ -172,6 +170,36 @@ ok "app: the new column and the projects table work over REST (RLS, foreign key 
 out="$(sb db diff -f again 2>"$LOG")" || fail "db diff -f again"
 [ "$out" = "No schema changes found" ] || fail "db diff after push: $out"
 ok "db diff after push: No schema changes found"
+
+# Piped, so the command's stdin wiring runs too.
+out="$(echo "select count(*) as n from public.todos" | sb db query -o json 2>"$LOG")" || fail "db query select count"
+jq -e '.[0] | has("n")' <<<"$out" >/dev/null || fail "db query -o json returned no row with n: $out"
+ok "db query -o json: a JSON array of rows from the local Spark server"
+
+# A write through the query route must outlive a later rolled-back script. The query route has
+# no JWT, so auth.uid() is null: the probe row borrows a user the app checks created.
+uid="$(sb db query -o json "select id from auth.users limit 1" 2>"$LOG" | jq -r '.[0].id')" || fail "db query select auth.users"
+[ -n "$uid" ] && [ "$uid" != null ] || fail "db query found no auth user to own the probe row"
+todos_before="$(rest 'todos?select=id' | jq length)"
+out="$(sb db query -o json "insert into public.todos (user_id, title) values ('$uid', 'db query probe') returning id, title" 2>"$LOG")" || fail "db query insert"
+probe_id="$(jq -r '.[0].id' <<<"$out")"
+[ -n "$probe_id" ] && [ "$probe_id" != null ] || fail "db query insert returned no id: $out"
+if sb db query "insert into public.todos (user_id, title) values ('$uid', 'rolled back'); insert into public.todos (user_id, title) values ('$uid', '')" >"$LOG" 2>&1; then
+  fail "db query ran a script whose second statement violates a check constraint"
+fi
+grep -q 'violates check constraint' "$LOG" || fail "db query failed for another reason than the second statement's check constraint"
+out="$(sb db query -o json "select id, title from public.todos where title in ('db query probe', 'rolled back') order by id" 2>"$LOG")" || fail "db query select probe"
+[ "$(jq -r 'map(.title) | join(",")' <<<"$out")" = "db query probe" ] || fail "after a rolled-back script the probe row is not the only one left: $out"
+run sb db query "delete from public.todos where id = $probe_id"
+[ "$(rest 'todos?select=id' | jq length)" = "$todos_before" ] || fail "db query left the probe row behind"
+ok "db query: a write survives a later rolled-back script; the failing script's first statement is rolled back"
+
+if sb db query --read-only "insert into public.todos (user_id, title) values ('$uid', 'read only')" >"$LOG" 2>&1; then
+  fail "db query --read-only ran an insert"
+fi
+grep -Eq 'read-only|query_only' "$LOG" || fail "db query --read-only failed for another reason than the write"
+[ "$(rest 'todos?select=id' | jq length)" = "$todos_before" ] || fail "db query --read-only wrote a row"
+ok "db query --read-only refuses an insert"
 
 cat > supabase/schemas/public/functions.sql <<'SQL'
 create function public.add(a int, b int) returns int
@@ -227,6 +255,46 @@ code=$(rest 'projects?select=id' -o /dev/null -w '%{http_code}')
 [ "$code" = 200 ] || fail "projects missing after reset (HTTP $code)"
 check app.test.mjs
 ok "db reset: data removed, all migrations replayed, the app works"
+
+# The linked project's path: the Management API, served locally by the stand-in routes.
+cat >"$WORK/spark-profile.yaml" <<YAML
+name: spark-local
+api_url: $API
+dashboard_url: http://127.0.0.1:54323
+project_host: localhost
+YAML
+export SUPABASE_PROFILE="$WORK/spark-profile.yaml" SUPABASE_ACCESS_TOKEN="$ACCESS_TOKEN"
+run sb link --project-ref "$PROJECT_REF"
+grep -q "Finished supabase link" "$LOG" || fail "supabase link did not finish"
+[ "$(jq -r .project.ref supabase/.link.json)" = "$PROJECT_REF" ] || fail "supabase link wrote no supabase/.link.json"
+out="$(sb db query --remote --read-only -o json "select count(*) as n from public.projects" 2>"$LOG")" || fail "db query --remote --read-only"
+[ "$(jq -r '.[0].n' <<<"$out")" = 0 ] || fail "db query --remote --read-only: $out"
+if sb db query --remote "delete from public.projects" >"$LOG" 2>&1; then fail "db query --remote wrote without confirmation"; fi
+grep -q -- "--yes" "$LOG" || fail "db query --remote asked for no confirmation: $(cat "$LOG")"
+run sb migration list --remote
+add_projects="$(basename supabase/migrations/*_add_projects.sql | cut -d_ -f1)"
+grep -Eq "$add_projects.*$add_projects" "$LOG" || fail "migration list --remote shows add_projects on one side only: $(cat "$LOG")"
+run sb gen types typescript --remote
+grep -q '"projects": {' "$LOG" || fail "gen types --remote has no projects table"
+out="$(sb db diff --remote 2>"$LOG")" || fail "db diff --remote"
+[ "$out" = "No schema changes found" ] || fail "db diff --remote: $out"
+run sb db push --remote
+grep -q "Remote database is up to date" "$LOG" || fail "db push --remote: $(cat "$LOG")"
+# A pending migration through the linked path: its dry run and its apply are the Management API's.
+printf 'create table public.remote_probe (id bigint primary key);\n' >supabase/migrations/20990101000002_remote_probe.sql
+if sb db push --remote >"$LOG" 2>&1; then fail "db push --remote applied without confirmation"; fi
+grep -q -- "--yes" "$LOG" || fail "db push --remote asked for no confirmation: $(cat "$LOG")"
+run sb db push --remote --yes
+grep -q "Finished supabase db push" "$LOG" || fail "db push --remote --yes did not finish"
+[ "$(rest 'remote_probe?select=id' -o /dev/null -w '%{http_code}')" = 200 ] || fail "db push --remote applied no remote_probe table"
+# With the profile pointing nowhere the linked path fails and the local one still answers: they do not share a route.
+sed 's#^api_url: .*#api_url: http://127.0.0.1:9#' "$WORK/spark-profile.yaml" >"$WORK/dead-profile.yaml"
+export SUPABASE_PROFILE="$WORK/dead-profile.yaml"
+if sb migration list --remote >"$LOG" 2>&1; then fail "migration list --remote answered with the Management API unreachable"; fi
+run sb migration list
+grep -q "20990101000002" "$LOG" || fail "migration list on the local target does not show the pushed migration"
+export SUPABASE_PROFILE="$WORK/spark-profile.yaml"
+ok "linked project ($PROJECT_REF through $API): link, db query --read-only (a write asks for --yes), migration list, gen types, db diff and a confirmed db push through the Management API; unreachable, only the local target answers"
 
 run sb stop
 # Anchored: an unanchored match also finds any shell whose command line names the binary.

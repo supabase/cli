@@ -1,7 +1,7 @@
 import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
-import { HttpClient } from "effect/http";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeStandaloneService } from "../../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "../Catalog.ts";
 
@@ -20,6 +20,17 @@ const options = (root: string, runtime: "native" | "docker" = "native") => ({
   cacheRoot: `${root}/cache`,
   runtime,
   claimNativePort: () => Effect.succeed(true),
+});
+
+/** A statement's status in a dry run; `code` is the SQLSTATE of a refusal when Spark gives one. */
+const DryRun = Schema.Struct({
+  statuses: Schema.Array(
+    Schema.Struct({
+      status: Schema.String,
+      code: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      message: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
 });
 
 const services = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
@@ -71,7 +82,7 @@ describe("spark recipe", () => {
   );
 
   it.live.runIf(sparkBinary !== undefined)(
-    "serves a project's migrated tables, which the meta adapter describes to Studio",
+    "serves a project's migrated tables, and sparkmeta passes Studio's SQL and Spark's errors through",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -121,10 +132,63 @@ describe("spark recipe", () => {
           yield* meta.start;
           yield* meta.ready;
           const metaEndpoint = yield* metaRecipe.endpoint("http");
-          const tables = yield* client.get(
-            `http://127.0.0.1:${metaEndpoint.port}/pg/tables?included_schemas=public`,
+          const metaUrl = `http://127.0.0.1:${metaEndpoint.port}`;
+          const sql = (query: string, parameters: ReadonlyArray<unknown> = []) =>
+            client
+              .execute(
+                HttpClientRequest.post(`${metaUrl}/pg/query`).pipe(
+                  HttpClientRequest.bodyJsonUnsafe({ query, parameters }),
+                ),
+              )
+              .pipe(
+                Effect.flatMap((response) =>
+                  Effect.map(response.json, (body) => ({ status: response.status, body })),
+                ),
+              );
+
+          const catalog = yield* sql("select * from pg_enum");
+          expect(catalog).toMatchObject({
+            status: 400,
+            body: { code: "42P01", message: "no such table: pg_enum", hint: null },
+          });
+          const doBlock = yield* sql("do $$ begin end $$");
+          expect(doBlock).toMatchObject({
+            status: 400,
+            body: { code: "0A000", message: "DO is not supported" },
+          });
+
+          const created = yield* sql("create table public.tags (id bigint primary key, name text)");
+          expect(created.status).toBe(201);
+          const migrations = yield* fs.readDirectory(path.join(root, "supabase", "migrations"));
+          expect(migrations.filter((file) => file.endsWith("_studio.sql"))).toHaveLength(1);
+
+          const inserted = yield* sql(
+            "insert into public.tags (id, name) values ($1, $2) returning name",
+            [1, "a"],
           );
-          expect(yield* tables.json).toMatchObject([{ schema: "public", name: "notes" }]);
+          expect(inserted).toEqual({ status: 201, body: [{ name: "a" }] });
+
+          const fn =
+            "create function public.f() returns int language plpgsql as $$ begin return 1; end $$";
+          const [status] = yield* client
+            .execute(
+              HttpClientRequest.post(
+                `${metaUrl}/v1/projects/default/database/migrations?dry_run=true`,
+              ).pipe(HttpClientRequest.bodyJsonUnsafe({ query: fn })),
+            )
+            .pipe(
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(DryRun)),
+              Effect.map(({ statuses }) => statuses),
+            );
+          const refused = yield* sql(fn);
+          expect(refused).toMatchObject({
+            status: 400,
+            body: {
+              code: status?.code ?? (status?.status === "unsupported" ? "0A000" : "42000"),
+              message: status?.message,
+              details: expect.stringContaining("CreateFunctionStmt"),
+            },
+          });
 
           yield* meta.stop;
           yield* spark.stop;

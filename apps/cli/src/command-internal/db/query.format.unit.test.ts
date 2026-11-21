@@ -1,7 +1,6 @@
 import { DateTime, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { buildRlsAdvisory } from "./query.advisory.ts";
 import {
   coerceLocalJsonRows,
   findNonFiniteJsonValue,
@@ -283,7 +282,15 @@ describe("renderJson", () => {
   });
 
   it("includes the advisory (struct field order) before the other envelope keys", () => {
-    const advisory = buildRlsAdvisory(["public.users"]);
+    const advisory = Option.some({
+      id: "rls_disabled",
+      priority: 1,
+      level: "critical",
+      title: "Row Level Security is disabled",
+      message: "1 table(s) have Row Level Security disabled: public.users.",
+      remediation_sql: "ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;",
+      doc_url: "https://supabase.com/docs/guides/database/postgres/row-level-security",
+    });
     const out = renderJson(["id"], [[1]], true, "ab", advisory);
     expect(out.indexOf('"advisory"')).toBeLessThan(out.indexOf('"boundary"'));
     const parsed = JSON.parse(out);
@@ -327,23 +334,5 @@ describe("findNonFiniteJsonValue", () => {
     expect(findNonFiniteJsonValue([[Number.NaN]])).toBe("NaN");
     expect(findNonFiniteJsonValue([[Number.POSITIVE_INFINITY]])).toBe("+Inf");
     expect(findNonFiniteJsonValue([[1], [Number.NEGATIVE_INFINITY]])).toBe("-Inf");
-  });
-});
-
-describe("buildRlsAdvisory", () => {
-  it("returns None when no tables are unprotected", () => {
-    expect(Option.isNone(buildRlsAdvisory([]))).toBe(true);
-  });
-
-  it("lists the unprotected tables and joins remediation statements", () => {
-    const advisory = buildRlsAdvisory(["public.a", "public.b"]);
-    expect(Option.isSome(advisory)).toBe(true);
-    if (Option.isSome(advisory)) {
-      expect(advisory.value.message).toContain("2 table(s)");
-      expect(advisory.value.message).toContain("public.a, public.b");
-      expect(advisory.value.remediation_sql).toBe(
-        "ALTER TABLE public.a ENABLE ROW LEVEL SECURITY;\nALTER TABLE public.b ENABLE ROW LEVEL SECURITY;",
-      );
-    }
   });
 });

@@ -1,5 +1,5 @@
 import { Option } from "effect";
-import type { Advisory } from "./query.format.ts";
+import type { Advisory } from "../../../command-internal/db/query.format.ts";
 
 /**
  * RLS advisory. Agent mode only: a best-effort check for user-schema tables

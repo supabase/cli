@@ -1,19 +1,10 @@
 import { Clock, DateTime, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type SparkAdmin, SparkQueryError, type SparkAdminError } from "./Admin.ts";
-import {
-  adapters,
-  type AdapterShapeError,
-  makeModel,
-  type Model,
-  publicationRows,
-  roleRows,
-} from "./Catalog.ts";
+import { oneLine, sparkDryRun, sparkSchemaDump, sparkTypescriptTypes } from "../SparkClient.ts";
 import { openApi } from "./OpenApi.ts";
-import type { ParsedStatement } from "./Description.ts";
-import { boolLiterals, isStudioDo, isStudioTempObject, rewriteEditorWrite } from "./StudioShims.ts";
-import { renderDump } from "./Dump.ts";
-import { type SparkTypegenError, typescript } from "./Typegen.ts";
+import type { Description, ParsedStatement } from "./Description.ts";
+import type { SparkTypegenError } from "./Typegen.ts";
 
 export interface SparkMetaSettings {
   readonly projectRef: string;
@@ -22,7 +13,7 @@ export interface SparkMetaSettings {
   readonly serviceRoleKey: string;
   /** Where schema changes made through Studio or MCP are written as migration files. */
   readonly migrationsDir: string;
-  /** JSON lines of SQL Spark could not run, for finding adapter gaps. */
+  /** JSON lines of SQL Spark could not run, for finding Spark gaps. */
   readonly gapsFile: string;
 }
 
@@ -70,7 +61,7 @@ const json = (body: unknown, status = 200, headers: Readonly<Record<string, stri
 const rejected = (code: string, message: string, hint?: string) =>
   new SparkQueryError({ code, message, status: 400, ...(hint === undefined ? {} : { hint }) });
 
-const errorResponse = (error: SparkAdminError | AdapterShapeError | SparkTypegenError) => {
+const errorResponse = (error: SparkAdminError | SparkTypegenError) => {
   if (error._tag !== "SparkQueryError") return json({ message: error.message }, 500);
   const { code, message, details, hint } = error;
   const formattedError = `ERROR:  ${code ?? ""}: ${message}${details === undefined ? "" : `\nDETAIL:  ${details}`}${hint === undefined ? "" : `\nHINT:  ${hint}`}`;
@@ -98,15 +89,6 @@ const schemaList = (value: string | null | undefined) =>
 const migrationTimestamp = (millis: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
 
-const oneLine = (s: string, n = 160): string => s.replace(/\s+/gu, " ").trim().slice(0, n);
-
-/** Statements Spark keeps nothing of: Studio's `DO` loops (TEMPORARY, D23) and comments, which turso drops. */
-const isDropped = (s: ParsedStatement): boolean =>
-  (s.kind === "DoStmt" && isStudioDo(s.statement)) || s.kind === "CommentStmt";
-
-const isSchemaChange = (s: ParsedStatement): boolean =>
-  s.category === "ddl" && !isDropped(s) && !isStudioTempObject(s.statement);
-
 const script = (statements: ReadonlyArray<ParsedStatement>): string =>
   statements.map((s) => s.statement).join(";\n");
 
@@ -119,29 +101,27 @@ const GapRecord = Schema.Struct({
 });
 const encodeGapRecord = Schema.encodeEffect(Schema.fromJsonString(GapRecord));
 
-/** Answers Studio's pg-meta calls and the Management API subset MCP uses from Spark's description. */
+/** Answers Studio's pg-meta SQL and the Management API subset MCP uses, over Spark. */
 export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
   admin: SparkAdmin,
   settings: SparkMetaSettings,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cached = yield* Ref.make<{ readonly version: string; readonly model: Model } | undefined>(
-    undefined,
-  );
+  const cached = yield* Ref.make<Description | undefined>(undefined);
 
-  /** The model for Spark's current schema version; the full description only when it changed. */
+  /** Spark's description at its current schema version; fetched in full only when it changed. */
   const current = Effect.gen(function* () {
     const { schema_version } = yield* admin.schemaVersion;
     const hit = yield* Ref.get(cached);
-    if (hit?.version === schema_version) return hit.model;
+    if (hit?.schema_version === schema_version) return hit;
     const description = yield* admin.schema;
-    const model = makeModel(description);
-    yield* Ref.set(cached, { version: description.schema_version, model });
-    return model;
+    yield* Ref.set(cached, description);
+    return description;
   }).pipe(Effect.withSpan("SparkMeta.description"));
 
   const invalidate = Ref.set(cached, undefined);
+  const cachedDescription = { schema: current };
 
   const logGap = Effect.fn("SparkMeta.logGap")(
     function* (
@@ -178,10 +158,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     yield* fs.writeFileString(path.join(settings.migrationsDir, file), `${sql.trim()}\n`);
   });
 
-  /** The script without what Spark keeps nothing of; Spark itself folds, and ignores transaction control. */
-  const prepareStatements = (sql: string) =>
-    admin.parse(sql).pipe(Effect.map((statements) => statements.filter((s) => !isDropped(s))));
-
   /** Runs a migration in a rolled-back transaction on the current database and reports each statement. */
   const dryRunSchemaChange = Effect.fn("SparkMeta.dryRunSchemaChange")(function* (
     sql: string,
@@ -190,30 +166,28 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
   ) {
     if (wanted !== undefined && !/^\d+$/u.test(wanted))
       return yield* rejected("22023", "migration version must contain digits only");
-    const forSpark = yield* prepareStatements(sql);
-    yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
-    if (forSpark.length === 0) return [];
+    const statements = yield* admin.parse(sql);
+    yield* Effect.annotateCurrentSpan({ "spark.statements": statements.length });
+    if (statements.length === 0) return [];
     const version = wanted ?? migrationTimestamp(yield* Clock.currentTimeMillis);
-    const { statuses } = yield* admin.dryRunMigration(version, name, `${script(forSpark)};`);
-    return statuses.map((s) => ({
-      ...s,
-      statement: oneLine(s.statement ?? forSpark[s.index]?.statement ?? "", 200),
-    }));
+    return yield* sparkDryRun(
+      admin,
+      { version, name, sql: `${script(statements)};` },
+      (index) => statements[index]?.statement,
+    );
   });
 
   /** Applies a schema change as a Spark migration after a dry run on a scratch copy. */
   const applySchemaChange = Effect.fn("SparkMeta.applySchemaChange")(function* (
-    sql: string,
+    statements: ReadonlyArray<ParsedStatement>,
     name: string,
     wanted?: string,
   ) {
     if (wanted !== undefined && !/^\d+$/u.test(wanted))
       return yield* rejected("22023", "migration version must contain digits only");
-    const forSpark = yield* prepareStatements(sql);
-    yield* Effect.annotateCurrentSpan({ "spark.statements": forSpark.length });
-    // Only Studio's grant loops: nothing for Spark, and no migration.
-    if (forSpark.length === 0) return undefined;
-    const migration = `${script(forSpark)};`;
+    yield* Effect.annotateCurrentSpan({ "spark.statements": statements.length });
+    if (statements.length === 0) return undefined;
+    const migration = `${script(statements)};`;
     const latest =
       (yield* admin.migrations)
         .map((m) => m.version)
@@ -234,16 +208,21 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     const bad = dry.statuses.filter((s) => s.status === "unsupported" || s.status === "error");
     const first = bad[0];
     if (first !== undefined) {
-      const lines = bad.map(
-        (s) =>
-          `${s.status === "unsupported" ? "Not supported on Spark" : "Error"} (${s.kind}): ${oneLine(s.statement ?? forSpark[s.index]?.statement ?? "", 100)}${s.message === null || s.message === undefined ? "" : ` -- ${s.message}`}`,
-      );
-      yield* logGap(name, migration, { code: first.status, message: lines.join("; ") }, false);
-      return yield* rejected(
-        first.status === "unsupported" ? "0A000" : "42000",
-        lines.join("\n"),
-        "spark runs tables, views, indexes, enums and RLS policies; functions, triggers and extensions are not supported",
-      );
+      const summary = bad
+        .map(
+          (s) =>
+            `${s.status === "unsupported" ? "Not supported on Spark" : "Error"} (${s.kind}): ${oneLine(s.statement ?? statements[s.index]?.statement ?? "", 100)}${s.message === null || s.message === undefined ? "" : ` -- ${s.message}`}`,
+        )
+        .join("\n");
+      yield* logGap(name, migration, { code: first.status, message: summary }, false);
+      // The first refusal's own code and message: Studio's pg-meta fallbacks match on them.
+      return yield* new SparkQueryError({
+        code: first.code ?? (first.status === "unsupported" ? "0A000" : "42000"),
+        message: first.message ?? summary,
+        details: summary,
+        hint: "spark runs tables, views, indexes, enums and RLS policies; functions, triggers and extensions are not supported",
+        status: 400,
+      });
     }
     yield* admin.applyMigration(version, name, migration);
     yield* invalidate;
@@ -256,6 +235,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     return version;
   });
 
+  /** DDL becomes a migration; everything else goes to Spark as sent, and its errors come back unchanged. */
   const routeSql = Effect.fn("SparkMeta.routeSql")(function* (
     query: string,
     parameters: ReadonlyArray<unknown>,
@@ -263,73 +243,31 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     source: string,
   ) {
     const statements = yield* admin.parse(query);
-    const kept = statements.filter((s) => !isDropped(s));
-    // Studio's grant loops and comments, around session settings at most: nothing Spark keeps.
-    const onlySession = kept.every((s) => s.category === "session" || s.category === "transaction");
-    if (kept.length < statements.length && onlySession)
-      return { rows: [], target: "ignored" } satisfies Routed;
-    if (kept.some(isSchemaChange)) {
+    if (statements.some((s) => s.category === "ddl")) {
       if (readOnly)
         return yield* rejected("25006", "cannot execute DDL in a read-only transaction");
-      yield* applySchemaChange(query, source);
+      // A migration is recorded as text: a bound value would be lost, on Spark and in the file.
+      if (parameters.length > 0)
+        return yield* rejected("0A000", "a script with a schema change takes no parameters");
+      yield* applySchemaChange(statements, source);
       return { rows: [], target: "migration" } satisfies Routed;
     }
-    const model = yield* current;
-    const adapter = adapters.find((candidate) => candidate.match(query));
-    if (adapter !== undefined) {
-      const rows = yield* adapter.run({
-        model,
-        sql: query,
-        params: parameters,
-        spark: (q) => admin.query(q, [], true),
-        migrations: admin.migrations,
-        boolLiterals: (sql) => boolLiterals(model, sql),
-      });
-      return { rows, target: `adapter:${adapter.name}` } satisfies Routed;
-    }
-    if (kept.length === 0) return { rows: [], target: "ignored" } satisfies Routed;
-    // TEMPORARY (D23): Studio's `EXPLAIN` probe and table-editor writes until Studio sends intents.
-    if (kept.length === 1 && kept[0]?.kind === "ExplainStmt")
-      return {
-        rows: [{ "QUERY PLAN": "Result  (cost=0.00..0.01 rows=1 width=0)" }],
-        target: "explain",
-      } satisfies Routed;
-    const rewritten =
-      statements.length === 1 && kept[0] !== undefined
-        ? rewriteEditorWrite(model, kept[0].statement)
-        : undefined;
-    const sql = rewritten ?? (kept.length === statements.length ? query : script(kept));
-    return yield* admin.query(sql, parameters, readOnly).pipe(
-      Effect.map((rows): Routed => ({
-        rows,
-        target: rewritten === undefined ? "spark" : "spark:rewritten",
-      })),
-      Effect.catchTag("SparkQueryError", (error) =>
-        Effect.gen(function* () {
-          const catalog =
-            /\b(pg_catalog|information_schema)\b|\bpg_[a-z_]+\b|::regclass|\bplpgsql\b/iu.test(
+    return yield* admin.query(query, parameters, readOnly).pipe(
+      Effect.map((rows): Routed => ({ rows, target: "spark" })),
+      Effect.tapError((error) =>
+        error._tag === "SparkQueryError"
+          ? logGap(
+              source,
               query,
-            );
-          yield* logGap(source, query, error, catalog);
-          return yield* catalog
-            ? new SparkQueryError({
-                ...error,
-                message: error.message,
-                // Spark's message stays exact: Studio's pg-meta fallbacks match on it (D25).
-                hint: [
-                  error.hint,
-                  `Not supported on Spark (catalog query not adapted): ${oneLine(query, 80)}`,
-                ]
-                  .filter((part) => part !== undefined)
-                  .join("\n"),
-              })
-            : error;
-        }),
+              error,
+              /\b(pg_catalog|information_schema)\b|\bpg_[a-z_]+\b|::regclass/iu.test(query),
+            )
+          : Effect.void,
       ),
     );
   });
 
-  /** pg-meta `/query` semantics over Spark: DDL, catalog adapters, editor writes, then Spark. */
+  /** pg-meta `/query` semantics over Spark. */
   const runSql = Effect.fn("SparkMeta.runSql")(function* (
     query: string,
     parameters: ReadonlyArray<unknown>,
@@ -343,75 +281,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       "spark.rows": routed.rows.length,
     });
     return routed;
-  });
-
-  const pgMetaRest = Effect.fn("SparkMeta.pgMetaRest")(function* (
-    resourcePath: string,
-    search: URLSearchParams,
-  ) {
-    const model = yield* current;
-    const included = schemaList(search.get("included_schemas"));
-    const excluded = schemaList(search.get("excluded_schemas")) ?? [];
-    const inSchema = (schema: string) =>
-      (included === undefined || included.includes(schema)) && !excluded.includes(schema);
-    const match = /^\/([\w-]+)(?:\/(\d+))?\/?$/u.exec(resourcePath);
-    const resource = match?.[1];
-    const id = match?.[2];
-    const pick = (rows: ReadonlyArray<{ readonly id: number | string }>) =>
-      id === undefined ? rows : (rows.find((row) => String(row.id) === id) ?? null);
-    const withColumns = search.get("include_columns") !== "false";
-    const { description } = model;
-    switch (resource) {
-      case "tables":
-        return json(
-          pick(
-            description.tables
-              .filter((t) => inSchema(t.schema))
-              .map((t) => model.table(t, withColumns)),
-          ),
-        );
-      case "columns":
-        return json(
-          pick(
-            description.tables
-              .filter((t) => inSchema(t.schema))
-              .flatMap((t) => t.columns.map((c) => model.column(t, c))),
-          ),
-        );
-      case "views":
-        return json(pick(description.views.filter((v) => inSchema(v.schema)).map(model.view)));
-      case "schemas":
-        return json(pick(model.schemas().filter((s) => inSchema(s.name))));
-      case "policies":
-        return json(pick(model.policies().filter((p) => inSchema(p.schema))));
-      case "types":
-        return json(pick(model.types().filter((t) => inSchema(t.schema))));
-      case "roles":
-        return json(pick(roleRows()));
-      case "publications":
-        return json(pick(publicationRows()));
-      case "extensions":
-      case "functions":
-      case "triggers":
-      case "materialized-views":
-      case "foreign-tables":
-      case "column-privileges":
-      case "table-privileges":
-        return json(id === undefined ? [] : null);
-      case "config":
-        return json([{ name: "server_version", setting: "17.0" }]);
-      case "generators":
-        if (resourcePath.startsWith("/generators/typescript"))
-          return HttpServerResponse.text(yield* typescript(model, included ?? ["public"]), {
-            headers: corsHeaders,
-          });
-    }
-    return json(
-      {
-        message: `Not supported on Spark: GET /pg${resourcePath} is not served from the schema description`,
-      },
-      501,
-    );
   });
 
   const project = () => ({
@@ -431,11 +300,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
   });
 
   const typesFor = (search: URLSearchParams) =>
-    current.pipe(
-      Effect.flatMap((model) =>
-        typescript(model, schemaList(search.get("included_schemas")) ?? ["public"]),
-      ),
-    );
+    sparkTypescriptTypes(cachedDescription, schemaList(search.get("included_schemas")));
 
   /** The Management API subset MCP and the CLI call; any access token is accepted locally. */
   const management = Effect.fn("SparkMeta.management")(function* (
@@ -472,13 +337,16 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         return json({
           statuses: yield* dryRunSchemaChange(body.query, name, body.version ?? undefined),
         });
-      const version = yield* applySchemaChange(body.query, name, body.version ?? undefined);
+      const version = yield* applySchemaChange(
+        yield* admin.parse(body.query),
+        name,
+        body.version ?? undefined,
+      );
       return json({ version: version ?? null, name }, 201);
     }
     if (rest === "/database/dump" && method === "GET") {
-      const model = yield* current;
       return HttpServerResponse.text(
-        renderDump(model.description, schemaList(search.get("schemas"))),
+        yield* sparkSchemaDump(cachedDescription, schemaList(search.get("schemas"))),
         { headers: { ...corsHeaders, "content-type": "application/sql; charset=utf-8" } },
       );
     }
@@ -526,8 +394,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       });
     if (p === "/health") return json({ healthy: true });
     if (p === "/rest/v1/" && method === "GET") {
-      const model = yield* current;
-      return json(openApi(model.description, settings.publicUrl), 200, {
+      return json(openApi(yield* current, settings.publicUrl), 200, {
         "content-type": "application/openapi+json",
       });
     }
@@ -543,23 +410,30 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       );
       return json(routed.rows, 201, { "x-spark-target": routed.target });
     }
-    if (p.startsWith("/pg/") && method === "GET")
-      return yield* pgMetaRest(p.slice(3), url.searchParams);
     if (p.startsWith("/pg/"))
       return json({ message: `Not supported on Spark: ${method} ${p} (use POST /pg/query)` }, 501);
-    if (p === "/_dev/types/typescript" && method === "GET")
-      return HttpServerResponse.text(yield* typesFor(url.searchParams), { headers: corsHeaders });
-    if (p === "/_dev/sync" && method === "POST") {
-      yield* invalidate;
-      const model = yield* current;
-      return json({
-        schemaVersion: model.description.schema_version,
-        tables: model.description.tables.length,
-      });
-    }
     if (p === "/v1/projects" && method === "GET") return json([project()]);
+    // Studio's own project detail route comes here (the stack routes it from Studio's listener), at
+    // the platform API's path: Studio's self-hosted project plus the engine the platform reports.
+    const studioProject = /^\/platform\/projects\/([^/]+)$/u.exec(p);
+    if (studioProject !== null && method === "GET")
+      return json({
+        id: 1,
+        ref: studioProject[1],
+        name: "Supabase Studio (CLI)",
+        organization_id: 1,
+        cloud_provider: "localhost",
+        status: "ACTIVE_HEALTHY",
+        region: "local",
+        inserted_at: "2021-08-02T06:40:40.646Z",
+        connectionString: "",
+        restUrl: `${settings.publicUrl}/rest/v1/`,
+        postgres_engine: "spark",
+      });
     if (p === "/v1/organizations" && method === "GET")
       return json([{ id: "local", name: "Local" }]);
+    // The stand-in Management API: what the standalone MCP server calls, and the test double of
+    // the CLI's linked-project path. The CLI's local target calls Spark's admin routes directly.
     const projectPath = /^\/v1\/projects\/([^/]+)(\/.*)?$/u.exec(p);
     if (projectPath !== null)
       return yield* management(
@@ -571,15 +445,13 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     return json({ message: "not found" }, 404);
   });
 
-  const fail = (error: SparkAdminError | AdapterShapeError | SparkTypegenError) =>
-    Effect.succeed(errorResponse(error));
+  const fail = (error: SparkAdminError | SparkTypegenError) => Effect.succeed(errorResponse(error));
   return (request: HttpServerRequest.HttpServerRequest) =>
     route(request).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, request),
       Effect.catchTags({
         SparkQueryError: fail,
         SparkTransportError: fail,
-        AdapterShapeError: fail,
         SparkTypegenError: fail,
       }),
     );

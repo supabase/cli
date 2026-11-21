@@ -3,6 +3,7 @@ import { Command } from "effect/cli";
 import { sparkDbDiffCommand } from "./db/diff/diff.command.ts";
 import { sparkDbPullCommand } from "./db/pull/pull.command.ts";
 import { sparkDbPushCommand } from "./db/push/push.command.ts";
+import { sparkDbQueryCommand } from "./db/query/query.command.ts";
 import { sparkDbResetCommand } from "./db/reset/reset.command.ts";
 import { sparkGenTypesCommand } from "./gen/types/types.command.ts";
 import { sparkLinkCommand } from "./link/link.command.ts";
@@ -15,6 +16,7 @@ const sparkDbCommand = Command.make("db").pipe(
     sparkDbDiffCommand,
     sparkDbPullCommand,
     sparkDbPushCommand,
+    sparkDbQueryCommand,
     sparkDbResetCommand,
   ]),
 );

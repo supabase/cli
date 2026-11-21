@@ -572,7 +572,27 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           message:
             "experimental.spark.executable must be the absolute path of the spark binary (or set SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE)",
         });
-      /** Spark serves the Data API and Auth itself; its meta adapter answers Studio and MCP. */
+      const studioExecutable = spark?.studio_executable;
+      if (
+        spark?.enabled === true &&
+        studioExecutable !== undefined &&
+        !path.isAbsolute(studioExecutable)
+      )
+        return yield* new StackConfigError({
+          message:
+            "experimental.spark.studio_executable must be the absolute path of a Studio launcher (or set SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE)",
+        });
+      // The pinned Studio has no pg-meta fallbacks for Spark's catalog, so it would start and show nothing.
+      if (
+        spark?.enabled === true &&
+        validatedConfig.studio.enabled &&
+        studioExecutable === undefined
+      )
+        return yield* new StackConfigError({
+          message:
+            "Studio on a Spark project needs a build with the Spark pg-meta fallbacks: set experimental.spark.studio_executable (or SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE), or set [studio] enabled = false",
+        });
+      /** Spark serves the Data API and Auth itself; sparkmeta answers Studio and MCP. */
       const sparkCreations: ReadonlyArray<ServiceCreationType> = [
         {
           service: "spark",
@@ -581,10 +601,29 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         },
         {
           service: "sparkmeta",
-          config: { projectRoot },
+          // Studio's project detail comes from sparkmeta (D31), so its REST URL follows `[studio] api_url`.
+          config: {
+            projectRoot,
+            ...(studioCreation.config.publicApiUrl === undefined
+              ? {}
+              : { publicUrl: studioCreation.config.publicApiUrl }),
+          },
           endpoints: { http: endpoint(undefined) },
         },
-        ...(validatedConfig.studio.enabled ? [studioCreation] : []),
+        ...(validatedConfig.studio.enabled
+          ? [
+              studioExecutable === undefined
+                ? studioCreation
+                : {
+                    ...studioCreation,
+                    config: {
+                      ...studioCreation.config,
+                      executable: studioExecutable,
+                      projectFromApi: true,
+                    },
+                  },
+            ]
+          : []),
       ];
       const createCreations = (
         stackId: string,

@@ -713,6 +713,18 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("fails linked JSON output on a number JSON cannot carry, no stdout", () => {
+    const { layer, out } = setup({ linkedBody: '[{"n":1e400}]', agent: "no", outputFlag: "json" });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(
+        flags({ sql: Option.some("select 1e400 as n"), remote: REMOTE_LINKED }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("json: unsupported value: +Inf");
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("records the resolved -o as the telemetry output_format", () => {
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });

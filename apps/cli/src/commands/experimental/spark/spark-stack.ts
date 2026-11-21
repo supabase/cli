@@ -28,7 +28,7 @@ const isSpark = (instance: AnyInstance): instance is ServiceInstance<"spark"> =>
   instance.service === "spark";
 
 /** Opens the project's stack and finds its Spark member, when both exist. */
-const openSpark = Effect.fn("SparkStack.open")(function* () {
+export const openSpark = Effect.fn("SparkStack.open")(function* () {
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
@@ -50,7 +50,7 @@ const openSpark = Effect.fn("SparkStack.open")(function* () {
   return Option.none<{ stack: Stack; spark: ServiceInstance<"spark"> }>();
 });
 
-const running = (spark: ServiceInstance<"spark">) =>
+export const isSparkRunning = (spark: ServiceInstance<"spark">) =>
   spark.status.pipe(
     Effect.map(({ lifecycle }) => lifecycle === "running"),
     Effect.orElseSucceed(() => false),
@@ -67,7 +67,9 @@ export const sparkStackLayer = Layer.effect(
           Effect.gen(function* () {
             const found = yield* opened;
             const live =
-              Option.isSome(found) && (yield* running(found.value.spark)) ? found.value : undefined;
+              Option.isSome(found) && (yield* isSparkRunning(found.value.spark))
+                ? found.value
+                : undefined;
             yield* Effect.annotateCurrentSpan({ "spark.running": live !== undefined });
             if (live !== undefined) yield* live.stack.composition.stop.pipe(Effect.mapError(fail));
             const result = yield* effect;

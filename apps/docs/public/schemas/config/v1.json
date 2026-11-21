@@ -4370,6 +4370,11 @@
               "type": "string",
               "description": "Absolute path of the spark binary.",
               "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
+            },
+            "studio_executable": {
+              "type": "string",
+              "description": "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
+              "examples": ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"]
             }
           },
           "additionalProperties": false
@@ -8986,6 +8991,11 @@
                             "type": "string",
                             "description": "Absolute path of the spark binary.",
                             "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
+                          },
+                          "studio_executable": {
+                            "type": "string",
+                            "description": "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
+                            "examples": ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"]
                           }
                         },
                         "additionalProperties": false

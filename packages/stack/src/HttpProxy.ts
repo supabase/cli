@@ -39,6 +39,8 @@ export interface HttpRoute {
   readonly freshWrites?: boolean;
   /** Leaves CORS, preflights included, to the upstream, like Edge Functions on the platform. */
   readonly upstreamCors?: boolean;
+  /** Matches only `prefix` itself, not the paths under it. */
+  readonly exact?: boolean;
 }
 
 /** Configures Supabase API-key rewriting for one HTTP route. */
@@ -304,8 +306,8 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute>) => {
   for (const route of routes)
     if (
       (pathname === route.prefix ||
-        route.prefix === "/" ||
-        pathname.startsWith(`${route.prefix}/`)) &&
+        (route.exact !== true &&
+          (route.prefix === "/" || pathname.startsWith(`${route.prefix}/`)))) &&
       (best === undefined || route.prefix.length > best.prefix.length)
     )
       best = route;

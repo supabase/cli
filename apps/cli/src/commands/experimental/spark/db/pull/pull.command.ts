@@ -5,9 +5,11 @@ import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { sparkDbPull } from "./pull.handler.ts";
-import { projectRef, schema, shadowRuntimeLayer } from "../../spark.flags.ts";
+import { schema, shadowRuntimeLayer } from "../../spark.flags.ts";
+import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
-const pullConfig = { projectRef, schema } as const;
+const pullConfig = { ...targetFlags({ subject: "database", dbUrl: false }), schema } as const;
 
 export const sparkDbPullCommand = Command.make("pull", pullConfig).pipe(
   Command.withDescription(
@@ -23,4 +25,5 @@ export const sparkDbPullCommand = Command.make("pull", pullConfig).pipe(
   Command.provide(shadowRuntimeLayer(["db", "pull"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(pullConfig),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

@@ -47,6 +47,7 @@ import {
   endpointPort,
   freshWrites,
   joinRoutes,
+  toSharedRoutes,
   outputsFor,
   publicUrl,
   sharedRoutes,
@@ -595,6 +596,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       endpointNames(initial).map((name) => {
         const shared = sharedRoutes(initial, name, routeKeys, backendFor);
         const join = joinRoutes(initial, name);
+        const toShared = toSharedRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
@@ -603,6 +605,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
           ...(freshWrites(initial, name) ? { freshWrites: true } : {}),
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
+          ...(toShared === undefined ? {} : { toShared }),
         };
         return [name, endpoint];
       }),

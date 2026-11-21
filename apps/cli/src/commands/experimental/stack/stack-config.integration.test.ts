@@ -97,14 +97,17 @@ describe("loadStackConfig", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("runs Spark, its meta adapter and Studio instead of the Postgres services", () =>
+  it.effect("runs Spark, sparkmeta and the named Studio instead of the Postgres services", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-spark"
 [api]
 port = 55521
+[studio]
+api_url = "http://studio-api.localhost:55521"
 [experimental.spark]
 enabled = true
 executable = "/opt/spark/bin/spark"
+studio_executable = "/opt/studio/bin/studio"
 `);
       const config = yield* load(root);
       const services = yield* config.creations("stack-spark");
@@ -115,7 +118,31 @@ executable = "/opt/spark/bin/spark"
         config: { executable: "/opt/spark/bin/spark", projectRoot: root },
         endpoints: { http: { port: 55521 } },
       });
-      expect(byService(services).get("sparkmeta")?.config).toEqual({ projectRoot: root });
+      expect(byService(services).get("sparkmeta")?.config).toEqual({
+        projectRoot: root,
+        publicUrl: "http://studio-api.localhost:55521",
+      });
+      const studio = byService(services).get("studio");
+      expect(studio?.service === "studio" ? studio.config : undefined).toMatchObject({
+        executable: "/opt/studio/bin/studio",
+        projectFromApi: true,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a Spark project whose Studio has no launcher with the pg-meta fallbacks", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-spark-stock-studio"
+[experimental.spark]
+enabled = true
+executable = "/opt/spark/bin/spark"
+`);
+      const exit = yield* load(root).pipe(
+        Effect.flatMap((config) => config.creations("stack-spark-stock-studio")),
+        Effect.exit,
+      );
+
+      expect(String(exit)).toContain("experimental.spark.studio_executable");
     }).pipe(Effect.scoped),
   );
 

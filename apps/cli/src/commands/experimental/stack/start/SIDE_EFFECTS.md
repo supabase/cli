@@ -361,12 +361,16 @@ uses the stack backend and its composition is `spark`, `sparkmeta` and, when `[s
 - `spark` runs the binary `experimental.spark.executable` names (`SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE`)
   as `spark --workdir <project> start`, which applies `supabase/migrations` and keeps its data in
   `supabase/.temp/spark.db`. A relative or missing path exits 1 before the stack is created.
+- `studio` runs the launcher `experimental.spark.studio_executable` names
+  (`SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE`) instead of the pinned Studio build, with the same
+  environment, when it is set. A relative or missing path exits 1 before the stack is created.
 - `spark` serves `/rest/v1`, `/auth/v1` and `/_spark` on `[api] port`; publishable and secret keys
   in `apikey` and `Authorization` are rewritten to the anon and service_role JWTs.
-- `sparkmeta` runs inside the stack owner and serves `/pg`, `/v1/projects`, `/v1/organizations`,
-  `/_dev` and `GET /rest/v1/` on the API port. SQL from Studio or MCP that changes the schema is
-  applied as a Spark migration and written to `supabase/migrations/<version>_<name>.sql`; SQL Spark
-  cannot run is appended to `supabase/.temp/spark-gaps.jsonl`.
+- `sparkmeta` runs inside the stack owner and serves `POST /pg/query`, `/v1/projects`,
+  `/v1/organizations` and `GET /rest/v1/` on the API port. SQL from Studio or MCP that changes the
+  schema is applied as a Spark migration and written to `supabase/migrations/<version>_<name>.sql`;
+  other SQL runs on Spark as sent. SQL Spark cannot run is appended to
+  `supabase/.temp/spark-gaps.jsonl`.
 
 ## Processes, network, and output
 

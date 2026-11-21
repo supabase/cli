@@ -1,7 +1,7 @@
 import { DateTime, Option, Predicate } from "effect";
 
-import { formatGeneralFloat } from "../../../command-internal/format-float.ts";
-import { stringWidth } from "../../../command-internal/string-width.ts";
+import { formatGeneralFloat } from "../format-float.ts";
+import { stringWidth } from "../string-width.ts";
 
 // `JSON.rawJSON` (ES2025, in Bun) wraps a string so `JSON.stringify` emits it verbatim as a
 // number token, used for exact int8/bigint precision. TypeScript's bundled lib doesn't declare it.
@@ -392,6 +392,35 @@ function orderedRow(cols: ReadonlyArray<string>, values: ReadonlyArray<unknown>)
   const byKey = new Map<string, unknown>();
   cols.forEach((col, i) => byKey.set(col, values[i] ?? null));
   return new OrderedJson([...byKey].sort(([a], [b]) => byteLess(a, b)));
+}
+
+/** The payload formats `db query` renders: `json|table|csv`. */
+export type QueryFormat = "json" | "table" | "csv";
+
+const SQL_PREVIEW_LENGTH = 120;
+
+/** The statement on one line, cut for a consent prompt. */
+export const sqlPreview = (sql: string): string => {
+  const oneLine = sql.replaceAll(/\s+/gu, " ").trim();
+  return oneLine.length > SQL_PREVIEW_LENGTH
+    ? `${oneLine.slice(0, SQL_PREVIEW_LENGTH)}...`
+    : oneLine;
+};
+
+/**
+ * An explicit `-o json|table|csv` always wins; otherwise JSON for agents and machine output
+ * formats, table for humans. Any other `-o` value (from the global union, e.g. `yaml`) falls
+ * through to that default rather than erroring.
+ */
+export function resolveQueryFormat(
+  explicit: string | undefined,
+  outputFormat: string,
+  agentMode: boolean,
+): QueryFormat {
+  if (explicit === "json") return "json";
+  if (explicit === "csv") return "csv";
+  if (explicit === "table" || explicit === "pretty") return "table";
+  return explicit === undefined && (outputFormat !== "text" || agentMode) ? "json" : "table";
 }
 
 /** The agent-mode RLS advisory. */

@@ -26,7 +26,7 @@ export type ServiceKind =
 
 /**
  * Experimental service kinds with no published artifact: Spark runs a host binary the caller
- * names, and its meta adapter runs inside the stack owner.
+ * names, and sparkmeta runs inside the stack owner.
  */
 export type HostServiceKind = "spark" | "sparkmeta";
 

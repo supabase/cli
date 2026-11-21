@@ -19,7 +19,7 @@ import { makeSparkAdmin } from "./meta/Admin.ts";
 import { makeSparkMetaHandler } from "./meta/Handler.ts";
 
 export const Config = Schema.Struct({
-  /** Spark's own API, which serves the admin routes the adapter reads. */
+  /** Spark's own API, which serves the admin routes sparkmeta calls. */
   sparkUrl: Schema.optionalKey(Schema.String),
   /** The public API URL clients use; it is the OpenAPI document's host. */
   publicUrl: Schema.optionalKey(Schema.String),
@@ -46,8 +46,8 @@ export interface SparkMetaDependencies {
 }
 
 /**
- * Serves Studio's pg-meta routes and the Management API subset MCP uses from Spark's schema
- * description, inside the stack owner: there is no Postgres for a pg-meta process to read.
+ * Serves Studio's pg-meta SQL route and the Management API subset MCP uses over Spark, inside the
+ * stack owner: there is no Postgres for a pg-meta process to read.
  */
 export const makeRecipe = (
   deps: SparkMetaDependencies,

@@ -1,23 +1,23 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
-import { ERR_MISSING_LOCAL } from "../../../../../command-internal/migration-pending.ts";
+import { requireTargetMutationConsent } from "../../../../../command-internal/hosted-consent/hosted-consent.ts";
+import {
+  ERR_MISSING_LOCAL,
+  ERR_MISSING_REMOTE,
+  findPendingMigrations,
+} from "../../../../../command-internal/migration-pending.ts";
+import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
-import { applySparkMigration, dryRunSparkMigration, listSparkMigrations } from "../../spark-api.ts";
 import { SparkBackendError, SparkMigrationRefusedError } from "../../spark-project.ts";
 import { attributeDryRunStatuses } from "../../spark-schema-files.ts";
-import {
-  localMigrations,
-  projectPaths,
-  reportRefusals,
-  withLinkedProject,
-} from "../../spark.shared.ts";
+import { localMigrations, projectPaths, reportRefusals } from "../../spark.shared.ts";
+import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
 /** `supabase db push`: the pending migrations are dry-run together on Spark, then applied in order. */
-export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
-  readonly projectRef: Option.Option<string>;
-}) {
-  yield* withLinkedProject(flags.projectRef, (ref) =>
+export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: TargetFlagValues) {
+  yield* withSparkTarget(flags, (target) =>
     Effect.gen(function* () {
+      const spark = yield* SparkTarget;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const output = yield* Output;
@@ -32,14 +32,22 @@ export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
           });
         firstOfVersion.set(m.version, m.file);
       }
-      const remote = new Set((yield* listSparkMigrations(ref)).map((m) => m.version));
-      const localVersions = new Set(local.map((m) => m.version));
-      const remoteOnly = [...remote].filter((version) => !localVersions.has(version));
-      if (remoteOnly.length > 0)
+      const remote = (yield* spark.listMigrations).map((m) => m.version).toSorted();
+      const reconciled = findPendingMigrations(
+        local.map((m) => m.file),
+        remote,
+      );
+      if (reconciled.kind === "missing-local")
         return yield* new SparkBackendError({
-          message: `${ERR_MISSING_LOCAL} Versions: ${remoteOnly.join(", ")}`,
+          message: `${ERR_MISSING_LOCAL} Versions: ${reconciled.versions.join(", ")}`,
         });
-      const pending = local.filter((m) => !remote.has(m.version));
+      // A file older than an applied migration would run after it here and before it on a reset.
+      if (reconciled.kind === "missing-remote")
+        return yield* new SparkBackendError({
+          message: `${ERR_MISSING_REMOTE} Files: ${reconciled.paths.join(", ")}`,
+        });
+      const pendingFiles = new Set(reconciled.pending);
+      const pending = local.filter((m) => pendingFiles.has(m.file));
       yield* Effect.annotateCurrentSpan({ "spark.migrations.pending": pending.length });
       if (pending.length === 0) return yield* output.raw("Remote database is up to date.\n");
       const files = yield* Effect.forEach(pending, (migration) =>
@@ -49,7 +57,7 @@ export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
         })),
       );
       // One dry run of all pending files, so nothing is applied when a later file is refused.
-      const statuses = yield* dryRunSparkMigration(ref, {
+      const statuses = yield* spark.dryRunMigration({
         query: files.map((m) => m.query).join("\n;\n"),
         name: "pending",
       });
@@ -75,9 +83,13 @@ export const sparkDbPush = Effect.fn("spark.db.push")(function* (flags: {
         return yield* new SparkMigrationRefusedError({
           message: `Spark recorded nothing for ${silent[0]}: it contains no statement Spark runs`,
         });
+      yield* requireTargetMutationConsent(target, {
+        action: "Push migrations",
+        details: [`Apply these migrations:\n${files.map((m) => ` • ${m.file}`).join("\n")}`],
+      });
       for (const migration of files) {
         yield* output.raw(`Applying migration ${migration.file}...\n`, "stderr");
-        const recorded = yield* applySparkMigration(ref, {
+        const recorded = yield* spark.applyMigration({
           query: migration.query,
           name: migration.name,
           version: migration.version,

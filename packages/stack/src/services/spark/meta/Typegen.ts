@@ -6,7 +6,7 @@ import {
 } from "@supabase/typegen";
 import { Data, Effect } from "effect";
 
-import type { Model } from "./Catalog.ts";
+import type { Model } from "./Model.ts";
 
 export class SparkTypegenError extends Data.TaggedError("SparkTypegenError")<{
   readonly message: string;
@@ -54,7 +54,7 @@ const generatorMetadata = (model: Model, schemas: ReadonlyArray<string>): Genera
         return { ...column, type_schema: format_schema, enums: [...column.enums] };
       }),
     ),
-    primaryKeys: tables.flatMap((t) => model.table(t, false).primary_keys),
+    primaryKeys: tables.flatMap(model.primaryKeys),
     relationships: model.foreignKeys
       .filter(({ table, references }) => included(table.schema) && included(references.schema))
       .map(({ table, constraint, references }) => ({

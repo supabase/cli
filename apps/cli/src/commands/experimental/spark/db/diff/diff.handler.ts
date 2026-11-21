@@ -1,4 +1,4 @@
-import { DateTime, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { Output } from "../../../../../shared/output/output.service.ts";
 import {
@@ -11,27 +11,27 @@ import {
 } from "../../../../../command-internal/db/pgdelta/pgdelta-files.ts";
 import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
 import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
-import { dryRunSparkMigration, dumpSparkSchema, isRefused } from "../../spark-api.ts";
+import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import { isRefused } from "../../spark-api.ts";
 import { SparkBackendError, SparkMigrationRefusedError } from "../../spark-project.ts";
 import { locateInSchemaFiles } from "../../spark-schema-files.ts";
 import { acquireSparkShadows, loadSparkDump } from "../../spark-shadow.ts";
-import { projectPaths, reportRefusals, withLinkedProject } from "../../spark.shared.ts";
-
-const migrationVersion = Effect.map(DateTime.now, (now) =>
-  DateTime.formatIso(now).replace(/\D/gu, "").slice(0, 14),
-);
+import { projectPaths, reportRefusals } from "../../spark.shared.ts";
+import { migrationVersion, SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
 /**
  * `supabase db diff`: plans `supabase/schemas` against the project's dump in a shadow Postgres
  * with pg-delta, then dry-runs the migration on Spark; a refused statement writes nothing.
  */
-export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (flags: {
-  readonly projectRef: Option.Option<string>;
-  readonly schema: ReadonlyArray<string>;
-  readonly file: Option.Option<string>;
-}) {
-  yield* withLinkedProject(flags.projectRef, (ref) =>
+export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (
+  flags: TargetFlagValues & {
+    readonly schema: ReadonlyArray<string>;
+    readonly file: Option.Option<string>;
+  },
+) {
+  yield* withSparkTarget(flags, () =>
     Effect.gen(function* () {
+      const spark = yield* SparkTarget;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const output = yield* Output;
@@ -43,7 +43,7 @@ export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (flags: {
         });
       const files = yield* LoadPgDeltaSqlFiles(fs, path, paths.schemas);
       const manifest = yield* ReadPgDeltaExportManifest(fs, path, paths.schemas);
-      const dump = yield* dumpSparkSchema(ref, flags.schema);
+      const dump = yield* spark.dump(flags.schema);
       const plan = yield* Effect.scoped(
         Effect.gen(function* () {
           const [target, desired] = yield* acquireSparkShadows(2);
@@ -68,7 +68,7 @@ export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (flags: {
         return yield* output.raw("No schema changes found\n");
 
       const name = Option.getOrElse(flags.file, () => "db_diff");
-      const statuses = yield* dryRunSparkMigration(ref, { query: plan.sql, name });
+      const statuses = yield* spark.dryRunMigration({ query: plan.sql, name });
       const refused = statuses.filter(isRefused);
       if (refused.length > 0) {
         // A location is a hint; the refusal is reported without one if the analysis fails.

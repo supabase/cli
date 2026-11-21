@@ -27,6 +27,13 @@ export const Config = Schema.Struct({
   secretKey: Schema.optionalKey(Schema.String),
   openaiApiKey: Schema.optionalKey(Schema.String),
   cliVersion: Schema.optionalKey(Schema.String),
+  /** A Studio launcher on the host to run instead of the pinned build, with the same environment. */
+  executable: Schema.optionalKey(Schema.String),
+  /**
+   * Studio's own project detail route answered by the shared API listener's `/platform/projects`,
+   * the platform API's path, where a stand-in reports what the platform would (the database engine).
+   */
+  projectFromApi: Schema.optionalKey(Schema.Boolean),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -40,6 +47,7 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "studio",
   executable: "bin/studio",
+  hostExecutable: (creation) => creation.config.executable,
   ports: { http: 3000 },
   healthPath: "/api/platform/profile",
   env: (creation, endpoints, container) =>

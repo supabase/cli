@@ -99,10 +99,10 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly service: C["service"];
   readonly executable: string;
   /**
-   * A host executable the creation names instead of a pinned artifact; such a recipe runs only on
-   * the native runtime.
+   * A host executable the creation names instead of the pinned artifact, or `undefined` for the
+   * artifact; a named executable runs only on the native runtime.
    */
-  readonly hostExecutable?: (creation: C) => string;
+  readonly hostExecutable?: (creation: C) => string | undefined;
   readonly ports: Readonly<Record<string, number>>;
   readonly healthPath: string;
   /** The `ports` entry `healthPath` is probed on; defaults to `http`. */
@@ -450,10 +450,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       creation: C,
       launchScope: Scope.Scope,
     ) {
-      if (spec.hostExecutable !== undefined) {
-        const executable = spec.hostExecutable(creation);
-        return { executable, root: deps.path.dirname(executable), lockPath: undefined };
-      }
+      const hostExecutable = spec.hostExecutable?.(creation);
+      if (hostExecutable !== undefined)
+        return {
+          executable: hostExecutable,
+          root: deps.path.dirname(hostExecutable),
+          lockPath: undefined,
+        };
       return yield* useNativeArtifact(
         yield* pinnedArtifact("launch", creation),
         options.cacheRoot,
@@ -481,13 +484,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         for (const candidatePath of spec.callerPaths(candidate))
           yield* deps.borrowCallerPath(candidatePath);
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
-      if (spec.hostExecutable !== undefined) {
+      const executable = spec.hostExecutable?.(candidate);
+      if (executable !== undefined) {
         if (options.runtime !== "native")
           return yield* serviceError(
             "prepare",
             `${candidate.service} runs a host executable and needs the native runtime`,
           );
-        const executable = spec.hostExecutable(candidate);
         const present = yield* deps.fs
           .exists(executable)
           .pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
