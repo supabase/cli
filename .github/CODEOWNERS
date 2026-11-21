@@ -20,3 +20,5 @@
 /.github/workflows/ai-review.yml @supabase/cli
 /.github/workflows/github-scripts-ci.yml @supabase/cli
 /.github/workflows/cli-artifacts-infra.yml @supabase/cli
+
+/apps/cli/src/shared/telemetry/event-catalog.ts @supabase/growth-eng
