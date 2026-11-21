@@ -4,6 +4,7 @@ import {
   type ServiceCreation,
   type StackError,
 } from "@supabase/stack/effect";
+import { DEFAULT_STACK_NAME } from "@supabase/stack/defaults";
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -148,18 +149,47 @@ export const unmatchedStackIdAdvice = (value: string | undefined) =>
     : undefined;
 
 /** The not-found message for a selection no saved stack matches, and the start that creates it. */
-export const missingStackAdvice = (name: string | undefined) => {
+export const missingStackAdvice = (name: string | undefined, others?: string) => {
   const unmatched = unmatchedStackIdAdvice(name);
   if (unmatched !== undefined) return unmatched;
   const named = name === undefined ? undefined : describeStackSelector({ stack: name });
+  const start = `supabase stack start${named === undefined ? "" : ` ${named.flags}`}`;
   return {
     message:
       named === undefined
         ? "No managed stack exists for the selected project."
         : `No managed stack named ${named.label} exists for this project.`,
-    suggestion: `Run supabase stack start${named === undefined ? "" : ` ${named.flags}`} first.`,
+    suggestion:
+      others === undefined
+        ? `Run ${start} first.`
+        : `This project has stacks on other branches: ${others}. Rerun with one of them, or run ${start} to create one for this branch.`,
   };
 };
+
+/** `--stack <short id> (<branch>)` per stack of `projectRoot` with this name on another branch. */
+export const otherBranchStacks = Effect.fn("StackTarget.otherBranchStacks")(
+  function* (projectRoot: string, name: string | undefined) {
+    const settings = yield* CommandSettings;
+    const path = yield* Path.Path;
+    const stackName = name ?? DEFAULT_STACK_NAME;
+    const others = (yield* (yield* StackApi).discover({
+      stateRoot: path.join(settings.supabaseHome, "stacks"),
+      owners: false,
+    })).filter(
+      ({ definition: { identity } }) =>
+        identity.projectRoot === projectRoot && identity.stackName === stackName,
+    );
+    return others.length === 0
+      ? undefined
+      : others
+          .map(
+            ({ definition }) =>
+              `--stack ${definition.id.slice(0, 8)} (${definition.identity.branchContext})`,
+          )
+          .join(", ");
+  },
+  Effect.catchTag("StackError", () => Effect.undefined),
+);
 
 /** Whether `SUPABASE_STACK` may select a stack; an explicit target such as a URL turns it off. */
 export const StackEnvSelection = Context.Reference<boolean>(

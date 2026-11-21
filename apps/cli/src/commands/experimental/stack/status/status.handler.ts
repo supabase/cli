@@ -23,9 +23,11 @@ import {
 import {
   mapTargetError,
   missingStackAdvice,
+  otherBranchStacks,
   rejectStackOutput,
   StackApi,
   StackTargetResolver,
+  unmatchedStackIdAdvice,
 } from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
@@ -259,7 +261,12 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
-      ...missingStackAdvice(target.name),
+      ...missingStackAdvice(
+        target.name,
+        unmatchedStackIdAdvice(target.name) === undefined
+          ? yield* otherBranchStacks(target.projectRoot, target.name)
+          : undefined,
+      ),
     });
   return {
     ...target,

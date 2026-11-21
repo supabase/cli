@@ -780,6 +780,59 @@ it.effect("reports unavailable owner and does not query service status", () =>
   }),
 );
 
+it.effect("names this project's stacks on other branches when it finds none", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-status-" });
+    const saved = (id: string, root: string, stackName: string) => ({
+      definition: {
+        id,
+        identity: { projectRoot: root, branchContext: "ordinary-workspace", stackName },
+        runtime: "native" as const,
+        instances: [],
+        composition: { members: [], dependencies: [] },
+        lifetime: "detached" as const,
+      },
+      host: undefined,
+    });
+    const layer = Layer.mergeAll(
+      Layer.succeed(StackApi, {
+        create: () => Effect.die("create must not run"),
+        open: () => Effect.die("open must not run"),
+        discover: (options) =>
+          Effect.succeed(
+            options.owners === false
+              ? [
+                  saved(stackId, projectRoot, "default"),
+                  saved("b".repeat(64), projectRoot, "other"),
+                  saved("c".repeat(64), `${projectRoot}-elsewhere`, "default"),
+                ]
+              : [],
+          ),
+        find: () => Effect.die("find must not run"),
+        findDeleted: () => Effect.die("findDeleted must not run"),
+      }),
+      Layer.succeed(StackTargetResolver, {
+        resolve: (target) =>
+          Effect.succeed({ projectRoot: target.projectRoot, hostRunning: false }),
+      }),
+      mockOutput({ format: "text" }).layer,
+      mockTelemetryStateTracked().layer,
+      mockCommandSettings({ workdir: projectRoot, supabaseHome: projectRoot }),
+      cliConfigValuesTestLayer,
+      BunServices.layer,
+      BunCrypto.layer,
+      runtimeInfoLayer,
+    );
+    const error = yield* stackStatus(flags()).pipe(Effect.provide(layer), Effect.flip);
+    expect(error).toMatchObject({
+      reason: "not-found",
+      message: "No managed stack exists for the selected project.",
+      suggestion: `This project has stacks on other branches: --stack ${stackId.slice(0, 8)} (ordinary-workspace). Rerun with one of them, or run supabase stack start to create one for this branch.`,
+    });
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
 it.effect("rejects environment export when the owner is unavailable", () =>
   Effect.gen(function* () {
     const run = yield* runStatus({

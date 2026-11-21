@@ -1004,12 +1004,14 @@ export const open = Effect.fn("Stack.open")(
 
 /**
  * Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries.
- * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it.
+ * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it. With
+ * `owners: false` nothing is probed and every `host` is undefined.
  */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
       readonly idPrefix?: string;
+      readonly owners?: false;
       readonly onInvalidState?: (
         id: string,
         error: StackNamespace.NamespaceError,
@@ -1031,6 +1033,8 @@ export const discover = Effect.fn("Stack.discover")(
       ),
     );
     const saved = (yield* state.list).filter(({ id }) => selected(id));
+    if (options.owners === false)
+      return saved.map((definition) => ({ definition, host: undefined }));
     return yield* Effect.forEach(
       saved,
       (definition) =>
