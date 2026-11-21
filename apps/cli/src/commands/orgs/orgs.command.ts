@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { orgsCreateCommand } from "./create/create.command.ts";
 import { orgsListCommand } from "./list/list.command.ts";
@@ -6,6 +7,7 @@ import { orgsListCommand } from "./list/list.command.ts";
 // summary and the `supabase orgs --help` long description. No trailing
 // period.
 export const orgsCommand = Command.make("orgs").pipe(
+  withSidebar({ category: "organizations", title: "Manage organizations" }),
   Command.withDescription("Manage Supabase organizations"),
   Command.withShortDescription("Manage Supabase organizations"),
   Command.withSubcommands([orgsListCommand, orgsCreateCommand]),

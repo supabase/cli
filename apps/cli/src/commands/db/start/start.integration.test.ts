@@ -465,6 +465,8 @@ interface SetupOpts {
   readonly recordCatalog?: boolean;
   /** Fail catalog setup after the database has been created. */
   readonly catalogFails?: boolean;
+  /** `--stack`. */
+  readonly stack?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -486,7 +488,11 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
-  const cliSettings = mockCommandSettings({ workdir, projectId: opts.projectId });
+  const cliSettings = mockCommandSettings({
+    workdir,
+    projectId: opts.projectId,
+    ...(opts.stack === undefined ? {} : { stack: opts.stack }),
+  });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -2247,9 +2253,18 @@ describe("db start stack backend", () => {
     };
   };
 
-  const stackLayer = (root: string, fixture: ReturnType<typeof stackFixture>, existing: boolean) =>
+  const stackLayer = (
+    root: string,
+    fixture: ReturnType<typeof stackFixture>,
+    existing: boolean,
+    createdNames: Array<string | undefined> = [],
+  ) =>
     Layer.succeed(StackApi, {
-      create: () => Effect.succeed(fixture.stack),
+      create: (options) =>
+        Effect.sync(() => {
+          createdNames.push(options.name);
+          return fixture.stack;
+        }),
       open: () => Effect.succeed(fixture.stack),
       discover: () => Effect.die("unused"),
       find: () =>
@@ -2286,6 +2301,34 @@ describe("db start stack backend", () => {
       );
       expect(fixture.state.running).toBe(true);
       expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
+    });
+  });
+
+  it.effect("creates the stack --stack names when it does not exist yet", () => {
+    const { layer } = setup({ stack: "feature" });
+    const fixture = stackFixture(false);
+    const createdNames: Array<string | undefined> = [];
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false, createdNames),
+          ),
+        ),
+      );
+      expect(createdNames).toEqual(["feature"]);
+      expect(fixture.state.running).toBe(true);
+    });
+  });
+
+  it.effect("rejects --stack on the legacy backend before starting a container", () => {
+    const { layer, child } = setup({ stack: "feature" });
+    return Effect.gen(function* () {
+      const error = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error.message).toBe("--stack requires the experimental stack backend.");
+      expect(child.spawned).toEqual([]);
     });
   });
 
@@ -2468,6 +2511,42 @@ describe("db start stack backend", () => {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(provided));
       expect(out.stderrText).toContain("already running");
       expect(fixture.state.destroyed).toBe(false);
+    });
+  });
+
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(false);
+    const database: DatabaseInstance = {
+      ...databaseInstance(fixture.state),
+      start: Effect.fail(
+        new StackError({
+          operation: "start",
+          message:
+            "database-primary failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+        }),
+      ),
+    };
+    const stack: Stack = {
+      ...fixture.stack,
+      composition: { ...fixture.stack.composition, supabase: () => Effect.succeed([database]) },
+    };
+    return Effect.gen(function* () {
+      const error = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, { ...fixture, stack }, false),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        suggestion: expect.stringMatching(
+          /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+        ),
+      });
     });
   });
 

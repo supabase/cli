@@ -131,7 +131,7 @@ enabled = false
 const inspectStackState = (home: string, stackId: string) => {
   return Effect.gen(function* () {
     const result = yield* runSupabaseEffect(
-      ["stack", "status", "--stack-id", stackId, "--output-format", "json"],
+      ["stack", "status", "--stack", stackId, "--output-format", "json"],
       {
         home,
         env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -151,7 +151,7 @@ const inspectStackState = (home: string, stackId: string) => {
 
 const destroyStack = (home: string, stackId: string) =>
   Effect.flatMap(
-    runSupabaseEffect(["stack", "destroy", "--stack-id", stackId, "--yes"], {
+    runSupabaseEffect(["stack", "destroy", "--stack", stackId, "--yes"], {
       home,
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
       exitTimeoutMs: CLEANUP_TIMEOUT_MS,
@@ -299,7 +299,7 @@ describe("stack start (compiled e2e)", () => {
           yield* access(join(databasePath, "data", "PG_VERSION"));
 
           const stoppedRunningStack = yield* runSupabaseEffect(
-            ["stack", "stop", "--stack-id", idText],
+            ["stack", "stop", "--stack", idText],
             {
               cwd: projectRoot,
               home: homeDir.dir,
@@ -347,7 +347,7 @@ describe("stack start (compiled e2e)", () => {
                   "stack",
                   "logs",
                   "--follow",
-                  "--stack-id",
+                  "--stack",
                   idText,
                   "--service",
                   "database",
@@ -372,15 +372,12 @@ describe("stack start (compiled e2e)", () => {
                 /"type":"log-entry".*"source":"history"/u,
                 START_TIMEOUT_MS,
               );
-              const restarted = yield* runSupabaseEffect(
-                ["stack", "restart", "--stack-id", idText],
-                {
-                  cwd: projectRoot,
-                  home: homeDir.dir,
-                  env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-                  exitTimeoutMs: START_TIMEOUT_MS,
-                },
-              );
+              const restarted = yield* runSupabaseEffect(["stack", "restart", "--stack", idText], {
+                cwd: projectRoot,
+                home: homeDir.dir,
+                env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                exitTimeoutMs: START_TIMEOUT_MS,
+              });
               expect(
                 restarted.exitCode,
                 `stdout:\n${restarted.stdout}\nstderr:\n${restarted.stderr}`,
@@ -417,7 +414,7 @@ describe("stack start (compiled e2e)", () => {
           expect(
             afterFollow.composition.members.find(({ service }) => service === "database")?.state,
           ).toBe("running");
-          const status = yield* runSupabaseEffect(["stack", "status", "--stack-id", idText], {
+          const status = yield* runSupabaseEffect(["stack", "status", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
@@ -427,7 +424,7 @@ describe("stack start (compiled e2e)", () => {
           expect(status.stdout).toMatch(/database +│ running · healthy · eager +│/u);
           expect(status.stdout).not.toContain(idText);
 
-          const topLevelStatus = yield* runSupabaseEffect(["status", "--stack-id", idText], {
+          const topLevelStatus = yield* runSupabaseEffect(["status", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
             env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -440,7 +437,7 @@ describe("stack start (compiled e2e)", () => {
           expect(topLevelStatus.stdout).toContain(" · ready · native · ");
 
           const env = yield* runSupabaseEffect(
-            ["stack", "status", "--env", "--stack-id", idText, "--output-format", "json"],
+            ["stack", "status", "--env", "--stack", idText, "--output-format", "json"],
             { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: CLEANUP_TIMEOUT_MS },
           );
           expect(env.exitCode, `stdout:\n${env.stdout}\nstderr:\n${env.stderr}`).toBe(0);
@@ -461,7 +458,7 @@ describe("stack start (compiled e2e)", () => {
           expect(variables.SECRET_KEY).toMatch(/^sb_secret_.+$/u);
 
           const dotenv = yield* runSupabaseEffect(
-            ["stack", "status", "--env", "--stack-id", idText, "--output-format", "text"],
+            ["stack", "status", "--env", "--stack", idText, "--output-format", "text"],
             { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: CLEANUP_TIMEOUT_MS },
           );
           expect(dotenv.exitCode, `stdout:\n${dotenv.stdout}\nstderr:\n${dotenv.stderr}`).toBe(0);
@@ -471,7 +468,7 @@ describe("stack start (compiled e2e)", () => {
             recursive: false,
             force: false,
           });
-          const stop = yield* runSupabaseEffect(["stack", "stop", "--stack-id", idText], {
+          const stop = yield* runSupabaseEffect(["stack", "stop", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
             env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -488,15 +485,12 @@ describe("stack start (compiled e2e)", () => {
             observed.composition.members.find(({ service }) => service === "database")?.state,
           ).toBe("unavailable");
 
-          const stoppedStatus = yield* runSupabaseEffect(
-            ["stack", "status", "--stack-id", idText],
-            {
-              cwd: projectRoot,
-              home: homeDir.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-              exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-            },
-          );
+          const stoppedStatus = yield* runSupabaseEffect(["stack", "status", "--stack", idText], {
+            cwd: projectRoot,
+            home: homeDir.dir,
+            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+          });
           expect(
             stoppedStatus.exitCode,
             `stdout:\n${stoppedStatus.stdout}\nstderr:\n${stoppedStatus.stderr}`,
@@ -505,7 +499,7 @@ describe("stack start (compiled e2e)", () => {
           expect(stoppedStatus.stdout).toContain("The stack owner is not running.");
 
           const stoppedEnv = yield* runSupabaseEffect(
-            ["stack", "status", "--env", "--stack-id", idText],
+            ["stack", "status", "--env", "--stack", idText],
             {
               cwd: projectRoot,
               home: homeDir.dir,
@@ -524,7 +518,7 @@ describe("stack start (compiled e2e)", () => {
           const stoppedLogsArgs = [
             "stack",
             "logs",
-            "--stack-id",
+            "--stack",
             idText,
             "--service",
             "database",
@@ -560,7 +554,7 @@ describe("stack start (compiled e2e)", () => {
           const unifiedHistory = yield* runSupabaseEffect(
             [
               "logs",
-              "--stack-id",
+              "--stack",
               idText,
               "--service",
               "postgres",

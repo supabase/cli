@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -15,6 +16,7 @@ import { dbPushRuntimeLayer } from "./push.layers.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
@@ -51,21 +53,17 @@ const config = {
 export type DbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbPushCommand = Command.make("push", config).pipe(
+  withSidebar({ title: "Push migration to remote database" }),
   Command.withDescription(
     "Push new migrations to a database. Vault secrets from the config file are updated before migrations unless --skip-vault is set.",
   ),
   Command.withShortDescription("Push new migrations to a database"),
-  withPermissions(
-    compose(
-      {
-        operations: [],
-        noApiEffectFlags: ["include-all", "include-roles", "include-seed", "skip-vault", "dry-run"],
-      },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
+  Command.withExamples([
+    {
+      command: "supabase db push --dry-run",
+      description: "Preview changes to the local database without applying them",
+    },
+  ]),
   Command.withHandler((flags) =>
     dbPush(flags).pipe(
       withCommandTelemetry({
@@ -87,4 +85,16 @@ export const dbPushCommand = Command.make("push", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: ["include-all", "include-roles", "include-seed", "skip-vault", "dry-run"],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

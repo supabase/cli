@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -14,6 +15,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   versions: Argument.String("version").pipe(
@@ -33,16 +35,9 @@ const config = {
 } as const;
 
 export const migrationRepairCommand = Command.make("repair", config).pipe(
+  withSidebar({ title: "Repair migration history table" }),
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: ["status"] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     migrationRepair({
       versions: flags.versions.map(String),
@@ -71,4 +66,13 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["status"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

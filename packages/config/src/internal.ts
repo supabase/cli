@@ -25,11 +25,12 @@ export {
   type ConfigEditValue,
   updateJsonDocument,
 } from "./config-edit.ts";
+export { CliConfigConvertError, type MovedTomlComment } from "./config-convert.ts";
+export type { CliConfigConvertedToml, MovedJsoncComment } from "./config-convert-toml.ts";
 export {
-  CliConfigConvertError,
+  convertCliConfigJsoncToToml,
   convertCliConfigTomlToJsonc,
-  type MovedTomlComment,
-} from "./config-convert.ts";
+} from "./config-convert-effect.ts";
 export { projectConfigApiBlockKeys } from "./project-config/api-attributes.ts";
 export { dualScopeProjectConfigPaths } from "./project-config/project-config.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";

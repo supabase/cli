@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -14,6 +15,7 @@ const config = {
 export type CompletionBashFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const completionBashCommand = Command.make("bash", config).pipe(
+  withSidebar({ title: "Generate bash script" }),
   Command.withDescription(
     "Generate the autocompletion script for the bash shell.\n\n" +
       "This script depends on the 'bash-completion' package.\n" +
@@ -21,9 +23,9 @@ export const completionBashCommand = Command.make("bash", config).pipe(
       "To load completions in your current shell session:\n\n" +
       "\tsource <(supabase completion bash)\n\n" +
       "To load completions for every new session, execute once:\n\n" +
-      "#### Linux:\n\n" +
+      "Linux:\n\n" +
       "\tsupabase completion bash > /etc/bash_completion.d/supabase\n\n" +
-      "#### macOS:\n\n" +
+      "macOS:\n\n" +
       "\tsupabase completion bash > $(brew --prefix)/etc/bash_completion.d/supabase\n\n" +
       "You will need to start a new shell for this setup to take effect.",
   ),

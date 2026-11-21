@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { Argument, Command, Flag } from "effect/cli";
 
@@ -30,6 +31,7 @@ const config = {
 export type SecretsSetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const secretsSetCommand = Command.make("set", config).pipe(
+  withSidebar({ title: "Set a secret" }),
   Command.withDescription("Set a secret(s) to the linked Supabase project."),
   Command.withShortDescription("Set a secret(s) on Supabase"),
   Command.withExamples([

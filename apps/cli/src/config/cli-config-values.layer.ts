@@ -25,8 +25,9 @@ import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { escapeControlCharacters } from "../shared/output/escape-control-characters.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { PropConfigFormat, PropConfigKey } from "../shared/telemetry/event-catalog.ts";
+import { PropConfigKey } from "../shared/telemetry/event-catalog.ts";
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
+import { failedConfigFilePath, recordConfigFormat } from "./cli-config-format-telemetry.ts";
 import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
   collectEnvReferences,
@@ -127,18 +128,6 @@ const withEnvOrigins = <T extends { readonly valueOrigins?: ReadonlyArray<CliCon
           (origin) => injected.find((env) => sameDocumentValue(env.path, origin.path)) ?? origin,
         ),
       };
-
-const cliConfigFileFormat = (filePath: string) =>
-  filePath.endsWith(".jsonc") ? "jsonc" : filePath.endsWith(".json") ? "json" : "toml";
-
-const recordConfigFormat = (filePath: string | undefined) =>
-  filePath === undefined
-    ? Effect.void
-    : recordCommandTelemetry({ [PropConfigFormat]: cliConfigFileFormat(filePath) });
-
-const failedConfigFilePath = (
-  error: Effect.Error<ReturnType<typeof parseCliConfigDocumentFile>>,
-): string | undefined => ("path" in error ? error.path : undefined);
 
 export const cliConfigValuesLayer = Layer.effect(
   CliConfigValues,

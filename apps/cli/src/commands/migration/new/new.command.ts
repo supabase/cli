@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -17,6 +18,7 @@ const config = {
 export type MigrationNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationNewCommand = Command.make("new", config).pipe(
+  withSidebar({ title: "Create a migration" }),
   Command.withDescription("Create an empty migration script."),
   Command.withShortDescription("Create an empty migration script"),
   withPermissions({ operations: [] }),

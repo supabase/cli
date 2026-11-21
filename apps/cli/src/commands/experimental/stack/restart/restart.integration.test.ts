@@ -74,7 +74,7 @@ const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
     output,
     telemetry,
     layer,
-    flags: { stack: Option.none<string>(), stackId: Option.some(stack.id) },
+    flags: { stack: Option.some(stack.id) },
   };
 });
 
@@ -203,6 +203,50 @@ describe("stack restart", () => {
       expect(error.message).toBe("Some services failed to restart");
       expect(error.detail).toBe("rest-instance: Port is occupied");
       expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const failure = new StackError({
+        operation: "composition.restart",
+        message: "Composition start had failures",
+        outcomes: [
+          {
+            id: "database-instance",
+            succeeded: false,
+            error:
+              "database-instance failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+          },
+        ],
+      });
+      const api = Layer.succeed(
+        StackApi,
+        StackApi.of({
+          ...f.api,
+          open: () =>
+            Effect.succeed({
+              ...f.stack,
+              composition: {
+                ...f.stack.composition,
+                describe: Effect.succeed({
+                  members: [{ id: "database-instance", activation: "eager" }],
+                  dependencies: [],
+                }),
+                restart: Effect.fail(failure),
+              },
+            }),
+        }),
+      );
+      const error = yield* stackRestart(f.flags).pipe(
+        Effect.provide(Layer.provideMerge(f.layer, api)),
+        Effect.flip,
+      );
+      expect(error.message).toBe("Composition start had failures");
+      expect(error.suggestion).toMatch(
+        /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+      );
     }).pipe(Effect.provide(live)),
   );
 });

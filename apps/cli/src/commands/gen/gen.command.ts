@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { genTypesCommand } from "./types/types.command.ts";
 import { genSigningKeyCommand } from "./signing-key/signing-key.command.ts";
@@ -5,6 +6,7 @@ import { genBearerJwtCommand } from "./bearer-jwt/bearer-jwt.command.ts";
 import { genKeysCommand } from "./keys/keys.command.ts";
 
 export const genCommand = Command.make("gen").pipe(
+  withSidebar({ category: "generate-types" }),
   Command.withDescription("Run code generation tools."),
   Command.withShortDescription("Run code generation tools"),
   Command.withSubcommands([

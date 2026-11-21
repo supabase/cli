@@ -796,6 +796,21 @@ describe("Output", () => {
       },
     );
 
+    it.effect("promptSelect interrupts without a cancel message when silentCancel is set", () => {
+      mockClack.select.mockResolvedValue(Symbol("clack-cancel"));
+      mockClack.isCancel.mockReturnValueOnce(true);
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* Effect.exit(
+          out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }], {
+            silentCancel: true,
+          }),
+        );
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        expect(mockClack.cancel).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("promptSelect uses autocomplete for long lists in auto mode", () => {
       mockClack.autocomplete.mockResolvedValue("project-11");
       return Effect.gen(function* () {

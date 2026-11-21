@@ -76,6 +76,8 @@ ConfigConvertAlreadyJsonError
 ConfigConvertFileChangedError
 ConfigConvertLoadConfigError
 ConfigConvertOutputFlagUnsupportedError
+ConfigConvertReasonWithoutTomlTargetError
+ConfigConvertTomlExistsError
 ConfigConvertUnsupportedError
 ConfigConvertWorkdirError
 ConfigConvertWriteError
@@ -218,7 +220,6 @@ DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerRunError
-DocsExamplesError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError

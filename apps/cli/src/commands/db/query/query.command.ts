@@ -14,12 +14,16 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 /**
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
  * flag registry that can't hold two `output` flags, so the global choice is the union of every
  * command's values instead. This handler reads the global flag, honors `json`/`table`/`csv`, and
- * defaults by agent mode (JSON for agents, table for humans) when unset. See SIDE_EFFECTS.md.
+ * defaults by agent mode (JSON for agents, table for humans) when unset.
  */
 const config = {
   sql: Argument.String("sql").pipe(
@@ -45,18 +49,6 @@ export type DbQueryFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbQueryCommand = Command.make("query", config).pipe(
   Command.withDescription("Execute a SQL query against the database."),
   Command.withShortDescription("Execute a SQL query against the database"),
-  withPermissions(
-    compose(
-      {
-        operations: [
-          { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
-        ],
-        noApiEffectFlags: ["file", "read-only"],
-      },
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     dbQuery(flags).pipe(
       withCommandTelemetry({
@@ -75,4 +67,17 @@ export const dbQueryCommand = Command.make("query", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
+        ],
+        noApiEffectFlags: ["file", "read-only", ...STACK_SELECTOR_FLAG_NAMES],
+      },
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

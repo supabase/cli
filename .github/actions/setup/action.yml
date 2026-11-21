@@ -120,9 +120,9 @@ runs:
         commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Install toolchains
-      uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       with:
-        version: 2026.10.17
+        version: 2026.11.6
         install_args: ${{ inputs.tools }}
 
     - name: Resolve pnpm store path

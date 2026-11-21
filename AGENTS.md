@@ -100,8 +100,8 @@ comment states only the why that the code cannot carry. Most code needs no comme
 ### When to comment
 
 Write a comment only for an invariant or constraint the types cannot express, an external quirk,
-a decision that would otherwise read as a bug, or a pointer to an ADR, `SIDE_EFFECTS.md`, docs
-page, or upstream issue. If the rationale needs more than three lines, move it to documentation.
+a decision that would otherwise read as a bug, or a pointer to an ADR, docs page, or upstream
+issue. If the rationale needs more than three lines, move it to documentation.
 
 ### How to comment
 

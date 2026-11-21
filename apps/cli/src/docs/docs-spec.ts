@@ -1,3 +1,4 @@
+import { isDeprecated, readExperimentalAccess } from "../command-internal/command-access-policy.ts";
 import { hasOptionalSubcommand } from "../shared/output/optional-subcommand-usage.ts";
 import { Option } from "effect";
 import { stringify } from "yaml";
@@ -10,23 +11,10 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { flagDefault, flagDocumentation } from "../command-internal/flag-documentation.ts";
 import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
 import { remoteFlagName } from "../shared/output/target-help.ts";
-import {
-  DOCS_ARG_OVERRIDES,
-  DOCS_CHOICE_OVERRIDES,
-  DOCS_DEFAULT_OVERRIDES,
-  DOCS_EXCLUDED,
-  DOCS_EXCLUDED_FLAGS,
-  DOCS_EXPERIMENTAL,
-  DOCS_EXPERIMENTAL_OPTIONAL,
-  DOCS_EXTRA_FLAGS,
-  DOCS_INFO_DESCRIPTION,
-  DOCS_INFO_TAGS,
-  DOCS_REQUIRED,
-  DOCS_TAGS,
-} from "./docs-spec.tables.ts";
-import type { DocsInfoTag } from "./docs-spec.tables.ts";
+import { DOCS_ARG_OVERRIDES, DOCS_EXTRA_FLAGS, DOCS_INFO_DESCRIPTION } from "./docs-spec.tables.ts";
 
 /**
  * Builds the `clispec 001` document consumed by the supabase.com CLI reference
@@ -37,11 +25,10 @@ import type { DocsInfoTag } from "./docs-spec.tables.ts";
  * failing the build on stale entries instead of silently degrading the reference.
  */
 
-export interface DocsExample {
-  readonly id?: string;
-  readonly name?: string;
-  readonly code?: string;
-  readonly response?: string;
+interface DocsExample {
+  readonly id: string;
+  readonly name: string;
+  readonly code: string;
 }
 
 interface DocsAcceptedValue {
@@ -65,7 +52,7 @@ export interface DocsCommand {
   readonly summary: string;
   readonly description: string;
   readonly examples?: ReadonlyArray<DocsExample>;
-  readonly tags: ReadonlyArray<string>;
+  readonly tags: ReadonlyArray<never>;
   readonly links: ReadonlyArray<never>;
   readonly usage?: string;
   readonly subcommands: ReadonlyArray<string>;
@@ -81,7 +68,7 @@ interface DocsInfo {
   readonly bugs: string;
   readonly spec: string;
   readonly description: string;
-  readonly tags: ReadonlyArray<DocsInfoTag>;
+  readonly tags: ReadonlyArray<never>;
 }
 
 export interface DocsSpec {
@@ -96,8 +83,6 @@ export interface DocsSpecInput {
   readonly version: string;
   /** Overlay markdown keyed by docs-relative POSIX path, e.g. `supabase/db/push.md`. */
   readonly overlays: ReadonlyMap<string, string>;
-  /** Examples keyed by doc id, from `docs/templates/examples.yaml`. */
-  readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
 }
 
 /**
@@ -193,14 +178,12 @@ export function docsFlagDoc(
     );
   }
   const { single, isVariadic } = unwrapped;
+  const documentation = flagDocumentation(single);
   if (single.hidden) return undefined;
-
-  const docId = commandPath.join("-");
-  const overrideKey = `${docId} ${single.name}`;
 
   let acceptedValues: ReadonlyArray<DocsAcceptedValue> | undefined;
   let enumType: string | undefined;
-  const choices = DOCS_CHOICE_OVERRIDES[overrideKey] ?? choiceKeysOf(single.primitiveType);
+  const choices = documentation.choices ?? choiceKeysOf(single.primitiveType);
   if (choices !== undefined) {
     enumType = docsEnumTypeString(choices);
     const type = enumType;
@@ -216,14 +199,17 @@ export function docsFlagDoc(
       : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
-  const required = DOCS_REQUIRED.has(overrideKey);
+  const required =
+    documentation.required ??
+    (!unwrapped.isOptional &&
+      (isVariadic ? unwrapped.variadicMin > 0 : single.primitiveType._tag !== "Boolean"));
 
   return {
     id: single.name,
     name,
     description: docsNormalizeText(Option.getOrElse(single.description, () => "")),
     ...(required ? { required: true } : {}),
-    default_value: DOCS_DEFAULT_OVERRIDES[overrideKey] ?? docsTypeDefault(single, isVariadic),
+    default_value: flagDefault(unwrapped) ?? docsTypeDefault(single, isVariadic),
     ...(acceptedValues === undefined ? {} : { accepted_values: acceptedValues }),
   };
 }
@@ -251,8 +237,56 @@ function docsVisibleChildren(command: Command.Command.Any): ReadonlyArray<Comman
     .toSorted((a, b) => docsCompare(a.name, b.name));
 }
 
+/** Visits every published command depth-first, children in byte-wise name order. */
+export function walkDocsCommands(
+  root: Command.Command.Any,
+  onCommand: (
+    command: Command.Command.Any,
+    path: ReadonlyArray<string>,
+    inheritedParams: ReadonlyArray<Param.AnyFlag>,
+    children: ReadonlyArray<Command.Command.Any>,
+    publishedChildren: ReadonlyArray<Command.Command.Any>,
+  ) => void,
+  onExcluded?: (path: ReadonlyArray<string>) => void,
+): void {
+  const visit = (
+    command: Command.Command.Any,
+    path: ReadonlyArray<string>,
+    inheritedParams: ReadonlyArray<Param.AnyFlag>,
+  ): void => {
+    if (isDeprecated(command)) {
+      onExcluded?.(path);
+      return;
+    }
+    const children = docsVisibleChildren(command);
+    const publishedChildren = children.filter((child) => !isDeprecated(child));
+    onCommand(command, path, inheritedParams, children, publishedChildren);
+    const childInherited = [
+      ...inheritedParams,
+      ...commandInternals(command).contextConfig.flags,
+      ...userGlobalFlagParams(command),
+    ];
+    for (const child of children) visit(child, [...path, child.name], childInherited);
+  };
+  for (const child of docsVisibleChildren(root)) visit(child, ["supabase", child.name], []);
+}
+
+/** Published command IDs and their children, excluding the root and hidden subtrees. */
+export function docsCommandTree(
+  root: Command.Command.Any,
+): ReadonlyMap<string, ReadonlyArray<string>> {
+  const tree = new Map<string, ReadonlyArray<string>>();
+  walkDocsCommands(root, (_command, path, _inherited, _children, publishedChildren) => {
+    tree.set(
+      path.join("-"),
+      publishedChildren.map((child) => [...path, child.name].join("-")),
+    );
+  });
+  return tree;
+}
+
 /** First line of a command's long description, for the listing summary fallback. */
-function docsSummary(command: Command.Command.Any): string {
+export function docsSummary(command: Command.Command.Any): string {
   if (command.shortDescription !== undefined) return command.shortDescription;
   const description = command.description ?? "";
   const newline = description.indexOf("\n");
@@ -296,37 +330,18 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
   const commands: Array<DocsCommand> = [];
   const emittedIds = new Set<string>();
-  const skippedExcludedIds = new Set<string>();
-  const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
-  const consumedExcludedFlagKeys = new Set<string>();
   const consumedArgOverrideIds = new Set<string>();
   const consumedExtraFlagIds = new Set<string>();
-  const consumedExperimentalIds = new Set<string>();
   const consumedOverlayPaths = new Set<string>();
   const allowedOrphanOverlayPaths = new Set<string>();
 
-  /**
-   * Builds the visible flag docs for a command's params, dropping hidden flags and
-   * `DOCS_EXCLUDED_FLAGS` entries. Does not record `seenFlagKeys` itself — callers record
-   * only the flags that reach the output, so table validation reflects the published spec,
-   * not intermediate candidates.
-   */
   const flagDocsFor = (
     commandPath: ReadonlyArray<string>,
     params: ReadonlyArray<Param.AnyFlag>,
   ): ReadonlyArray<DocsFlag> => {
-    const docId = commandPath.join("-");
     return params
       .map((param) => docsFlagDoc(commandPath, param))
       .filter((flag) => flag !== undefined)
-      .filter((flag) => {
-        const key = `${docId} ${flag.id}`;
-        if (DOCS_EXCLUDED_FLAGS.has(key)) {
-          consumedExcludedFlagKeys.add(key);
-          return false;
-        }
-        return true;
-      })
       .toSorted((a, b) => docsCompare(a.id, b.id));
   };
 
@@ -334,9 +349,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
     command: Command.Command.Any,
     commandPath: ReadonlyArray<string>,
     inheritedParams: ReadonlyArray<Param.AnyFlag>,
+    children: ReadonlyArray<Command.Command.Any>,
+    publishedChildren: ReadonlyArray<Command.Command.Any>,
   ): void => {
     const docId = commandPath.join("-");
-    const children = docsVisibleChildren(command);
     const internals = commandInternals(command);
     const optionalSubcommand = hasOptionalSubcommand(command);
     const isExecutable = children.length === 0 || optionalSubcommand;
@@ -351,7 +367,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
     const flags: Array<DocsFlag> = [];
     if (isExecutable) {
-      const declared = flagDocsFor(commandPath, internals.config.flags);
+      const declared = flagDocsFor(commandPath, [
+        ...internals.config.flags,
+        ...userGlobalFlagParams(command),
+      ]);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
       if (extraFlags !== undefined) {
@@ -364,21 +383,15 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
         }
       }
       const own = [...declared, ...(extraFlags ?? [])].toSorted((a, b) => docsCompare(a.id, b.id));
-      own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
-      if (DOCS_EXPERIMENTAL.has(docId)) {
-        consumedExperimentalIds.add(docId);
-        flags.push(experimentalFlag);
-      }
-      if (DOCS_EXPERIMENTAL_OPTIONAL.has(docId)) {
-        consumedExperimentalIds.add(docId);
-        flags.push(experimentalOptionalFlag);
+      const experimental = readExperimentalAccess(command);
+      if (Option.isSome(experimental)) {
+        flags.push(experimental.value === "required" ? experimentalFlag : experimentalOptionalFlag);
       }
       const ownIds = new Set(own.map((flag) => flag.id));
       const inherited = flagDocsFor(commandPath, inheritedParams).filter(
         (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
       );
-      inherited.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...inherited);
     }
 
@@ -400,24 +413,18 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       ].join(" ");
     }
 
-    const tags = DOCS_TAGS[docId];
-    if (tags === undefined && commandPath.length === 2) {
-      throw new Error(
-        `docs-spec.ts: top-level command "${docId}" has no DOCS_TAGS entry — add its docs-site section tag (or "other-commands") to docs-spec.tables.ts.`,
-      );
-    }
-
-    const fromYaml = input.examples[docId];
     const commandExamples =
-      fromYaml !== undefined && fromYaml.length > 0
-        ? fromYaml
-        : command.examples.length > 0
-          ? command.examples.map((example, index) => ({
-              id: `example-${index + 1}`,
-              name: example.description ?? example.command,
-              code: example.command,
-            }))
-          : undefined;
+      command.examples.length > 0
+        ? command.examples.map((example, index) => {
+            const name = example.description ?? example.command;
+            if (name.trim() === "" || example.command.trim() === "") {
+              throw new Error(
+                `docs-spec.ts: "${docId}" example-${index + 1} must have nonempty name and code.`,
+              );
+            }
+            return { id: `example-${index + 1}`, name, code: example.command };
+          })
+        : undefined;
 
     commands.push({
       id: docId,
@@ -425,57 +432,24 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       summary: docsSummary(command),
       description,
       ...(commandExamples === undefined ? {} : { examples: commandExamples }),
-      tags: tags ?? [],
+      tags: [],
       links: [],
       ...(usage === undefined ? {} : { usage }),
-      subcommands: children
-        .map((child) => [...commandPath, child.name].join("-"))
-        .filter((childId) => !DOCS_EXCLUDED.has(childId)),
+      subcommands: publishedChildren.map((child) => [...commandPath, child.name].join("-")),
       flags,
     });
-
-    // A non-root command's own global flags (e.g. `seed`'s `--remote`) behave like
-    // persistent flags: they're surfaced on every leaf beneath it, alongside shared flags.
-    const childInherited = [
-      ...inheritedParams,
-      ...internals.contextConfig.flags,
-      ...userGlobalFlagParams(command),
-    ];
-    for (const child of children) {
-      const childPath = [...commandPath, child.name];
-      const childId = childPath.join("-");
-      if (DOCS_EXCLUDED.has(childId)) {
-        skippedExcludedIds.add(childId);
-        allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
-        continue;
-      }
-      visit(child, childPath, childInherited);
-    }
   };
 
-  for (const child of docsVisibleChildren(input.root)) {
-    const childPath = ["supabase", child.name];
-    const childId = childPath.join("-");
-    if (DOCS_EXCLUDED.has(childId)) {
-      skippedExcludedIds.add(childId);
-      allowedOrphanOverlayPaths.add(docsOverlayPath(childPath));
-      continue;
-    }
-    visit(child, childPath, []);
-  }
+  walkDocsCommands(input.root, visit, (path) => {
+    allowedOrphanOverlayPaths.add(docsOverlayPath(path));
+  });
 
   validateDocsTables({
     emittedIds,
-    skippedExcludedIds,
-    seenFlagKeys,
-    consumedExcludedFlagKeys,
     consumedArgOverrideIds,
     consumedExtraFlagIds,
-    consumedExperimentalIds,
   });
   validateDocsContent(input, {
-    emittedIds,
-    skippedExcludedIds,
     consumedOverlayPaths,
     allowedOrphanOverlayPaths,
   });
@@ -491,7 +465,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       bugs: "https://github.com/supabase/cli/issues",
       spec: "https://github.com/supabase/spec/cli_v1_commands.yaml",
       description: DOCS_INFO_DESCRIPTION,
-      tags: DOCS_INFO_TAGS,
+      tags: [],
     },
     flags: rootFlags,
     commands,
@@ -520,42 +494,12 @@ export function stringifyDocsSpec(spec: DocsSpec): string {
  */
 function validateDocsTables(seen: {
   readonly emittedIds: ReadonlySet<string>;
-  readonly skippedExcludedIds: ReadonlySet<string>;
-  readonly seenFlagKeys: ReadonlySet<string>;
-  readonly consumedExcludedFlagKeys: ReadonlySet<string>;
   readonly consumedArgOverrideIds: ReadonlySet<string>;
   readonly consumedExtraFlagIds: ReadonlySet<string>;
-  readonly consumedExperimentalIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
-  for (const key of Object.keys(DOCS_DEFAULT_OVERRIDES)) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_DEFAULT_OVERRIDES: "${key}"`);
-  }
-  for (const id of Object.keys(DOCS_TAGS)) {
-    if (!seen.emittedIds.has(id)) stale.push(`DOCS_TAGS: "${id}"`);
-  }
-  for (const id of DOCS_EXPERIMENTAL) {
-    if (!seen.consumedExperimentalIds.has(id)) stale.push(`DOCS_EXPERIMENTAL: "${id}"`);
-  }
-  for (const id of DOCS_EXPERIMENTAL_OPTIONAL) {
-    if (!seen.consumedExperimentalIds.has(id)) {
-      stale.push(`DOCS_EXPERIMENTAL_OPTIONAL: "${id}"`);
-    }
-  }
-  for (const key of Object.keys(DOCS_CHOICE_OVERRIDES)) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_CHOICE_OVERRIDES: "${key}"`);
-  }
   for (const id of Object.keys(DOCS_EXTRA_FLAGS)) {
     if (!seen.consumedExtraFlagIds.has(id)) stale.push(`DOCS_EXTRA_FLAGS: "${id}"`);
-  }
-  for (const id of DOCS_EXCLUDED) {
-    if (!seen.skippedExcludedIds.has(id)) stale.push(`DOCS_EXCLUDED: "${id}"`);
-  }
-  for (const key of DOCS_REQUIRED) {
-    if (!seen.seenFlagKeys.has(key)) stale.push(`DOCS_REQUIRED: "${key}"`);
-  }
-  for (const key of DOCS_EXCLUDED_FLAGS) {
-    if (!seen.consumedExcludedFlagKeys.has(key)) stale.push(`DOCS_EXCLUDED_FLAGS: "${key}"`);
   }
   for (const id of Object.keys(DOCS_ARG_OVERRIDES)) {
     if (!seen.consumedArgOverrideIds.has(id)) stale.push(`DOCS_ARG_OVERRIDES: "${id}"`);
@@ -568,16 +512,12 @@ function validateDocsTables(seen: {
 }
 
 /**
- * Extends the build-fails-on-drift guarantee to content inputs: an overlay or `examples.yaml`
- * doc id matching no emitted command would otherwise vanish from the published reference
- * silently. Overlays belonging to `DOCS_EXCLUDED` commands stay allowed as orphans until their
- * pages are removed.
+ * Rejects overlays matching no emitted command, except pages belonging to deprecated
+ * commands, which remain allowed until their pages are removed.
  */
 function validateDocsContent(
   input: DocsSpecInput,
   seen: {
-    readonly emittedIds: ReadonlySet<string>;
-    readonly skippedExcludedIds: ReadonlySet<string>;
     readonly consumedOverlayPaths: ReadonlySet<string>;
     readonly allowedOrphanOverlayPaths: ReadonlySet<string>;
   },
@@ -586,11 +526,6 @@ function validateDocsContent(
   for (const path of input.overlays.keys()) {
     if (!seen.consumedOverlayPaths.has(path) && !seen.allowedOrphanOverlayPaths.has(path)) {
       orphaned.push(`overlay: "${path}"`);
-    }
-  }
-  for (const docId of Object.keys(input.examples)) {
-    if (!seen.emittedIds.has(docId) && !seen.skippedExcludedIds.has(docId)) {
-      orphaned.push(`examples.yaml: "${docId}"`);
     }
   }
   if (orphaned.length > 0) {

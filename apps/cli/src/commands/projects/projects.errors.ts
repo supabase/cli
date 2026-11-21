@@ -5,6 +5,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 
 export class ProjectsListNetworkError extends Data.TaggedError("ProjectsListNetworkError")<{
   readonly message: string;
@@ -49,6 +50,7 @@ export class ProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status);

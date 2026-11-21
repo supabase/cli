@@ -591,7 +591,7 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
     warnings(out).filter((message) => message.startsWith("stack "));
 
   const destroy = (stackId: string) =>
-    `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+    `run \`supabase stack destroy --stack ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
 
   it.live(
     "offers pinning the recorded build when linking moves off the build that initialized the data",

@@ -136,7 +136,7 @@ describe("stack start Storage behind the API gateway (compiled e2e)", () => {
             "stack",
             "status",
             "--env",
-            "--stack-id",
+            "--stack",
             id,
             "--output-format",
             "json",

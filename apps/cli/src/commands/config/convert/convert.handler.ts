@@ -1,42 +1,28 @@
-import {
-  convertCliConfigTomlToJsonc,
-  parseCliConfigDocumentFile,
-  createCliConfigDocumentText,
-} from "@supabase/config/internal";
-import { CliConfigParseError } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { convertCliConfigTomlToJsonc } from "@supabase/config/internal";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import {
-  aqua,
-  blue,
-  bold,
-  type ColorStream,
-  dim,
-  green,
-  yellow,
-} from "../../../command-internal/colors.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
-import {
-  describeConfigParseError,
-  missingProjectConfigMessageEffect,
-} from "../../../command-internal/workdir-project.ts";
 import { trustSupabaseSchemaDomain } from "../../../shared/init/project-init.ts";
 import { InitParseSettingsError } from "../../../shared/init/project-init.errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import {
+  PropConvertMovedCommentCount,
+  PropConvertTarget,
+} from "../../../shared/telemetry/event-catalog.ts";
+import { recordCommandTelemetry } from "../../../telemetry/command-telemetry-attributes.ts";
 import type { ConfigConvertFlags } from "./convert.command.ts";
 import {
   ConfigConvertAlreadyJsonError,
-  ConfigConvertFileChangedError,
   ConfigConvertLoadConfigError,
   ConfigConvertOutputFlagUnsupportedError,
+  ConfigConvertReasonWithoutTomlTargetError,
   ConfigConvertUnsupportedError,
   ConfigConvertWorkdirError,
-  ConfigConvertWriteError,
 } from "./convert.errors.ts";
 import {
   alreadyConvertedMessage,
@@ -49,7 +35,6 @@ import {
   dryRunPayload,
   jsonPrecedenceMessage,
   refusalMessage,
-  type ReportStyle,
   JSONC_APPEARED_MESSAGE,
   JSONC_CHANGED_NOTE,
   JSONC_REMOVED_NOTE,
@@ -64,6 +49,16 @@ import {
   undoCommand,
   writeFailureMessage,
 } from "./convert.format.ts";
+import {
+  freeBackupPath,
+  isSymlink,
+  readConfigDocument,
+  reportStyle,
+  requireUtf8,
+  writeConversion,
+} from "./convert.shared.ts";
+import { configConvertToToml } from "./convert-to-toml.handler.ts";
+import { REASON_WITHOUT_TOML_TARGET_MESSAGE } from "./convert-to-toml.format.ts";
 
 const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
   workdir: string,
@@ -84,9 +79,6 @@ const trustSchemaDomainInVscode = Effect.fn("config.convert.vscode")(function* (
   return result;
 });
 
-const isSymlink = (fs: FileSystem.FileSystem, target: string) =>
-  fs.readLink(target).pipe(Effect.match({ onSuccess: () => true, onFailure: () => false }));
-
 const refuseSymlinks = Effect.fnUntraced(function* (tomlPath: string, jsoncPath: string) {
   const fs = yield* FileSystem.FileSystem;
   if (yield* isSymlink(fs, tomlPath)) {
@@ -95,55 +87,6 @@ const refuseSymlinks = Effect.fnUntraced(function* (tomlPath: string, jsoncPath:
   if (yield* isSymlink(fs, jsoncPath)) {
     return yield* new ConfigConvertUnsupportedError({ message: JSONC_SYMLINK_MESSAGE });
   }
-});
-
-const freeBackupPath = Effect.fnUntraced(function* (configDir: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  for (let attempt = 1; ; attempt++) {
-    const candidate = path.join(
-      configDir,
-      attempt === 1 ? "config.toml.bak" : `config.toml.${attempt}.bak`,
-    );
-    const taken = yield* fs
-      .exists(candidate)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigConvertWriteError({ message: backupCheckFailureMessage(cause.message) }),
-        ),
-      );
-    if (!taken) {
-      return candidate;
-    }
-  }
-});
-
-const rollbackJsonc = Effect.fnUntraced(function* (jsoncPath: string, text: string) {
-  const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(jsoncPath).pipe(
-    Effect.flatMap((written) =>
-      written === text
-        ? fs.remove(jsoncPath).pipe(Effect.as(JSONC_REMOVED_NOTE))
-        : Effect.succeed(JSONC_CHANGED_NOTE),
-    ),
-    Effect.catchTag("PlatformError", (cause) =>
-      Effect.succeed(
-        Predicate.isTagged(cause.reason, "NotFound")
-          ? JSONC_REMOVED_NOTE
-          : jsoncRemovalFailureNote(cause.message),
-      ),
-    ),
-  );
-});
-
-const reportStyle = (stream: ColorStream): ReportStyle => ({
-  bold: (text) => bold(text, stream),
-  dim: (text) => dim(text, stream),
-  green: (text) => green(text, stream),
-  yellow: (text) => yellow(text, stream),
-  blue: (text) => blue(text, stream),
-  code: (text) => aqua(text, stream),
 });
 
 export const configConvert = Effect.fn("config.convert")(function* (flags: ConfigConvertFlags) {
@@ -156,6 +99,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* Effect.gen(function* () {
+    yield* recordCommandTelemetry({ [PropConvertTarget]: flags.to === "toml" ? "toml" : "jsonc" });
     if (Option.isSome(outputFlag)) {
       return yield* new ConfigConvertOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config convert"),
@@ -166,24 +110,18 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       Effect.mapError((error) => new ConfigConvertWorkdirError({ message: error.message })),
     );
 
-    yield* Effect.annotateCurrentSpan("config.dry_run", flags.dryRun);
-    const parsed = yield* parseCliConfigDocumentFile(cliSettings.workdir, { search: false }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ConfigConvertLoadConfigError({
-            message:
-              cause instanceof CliConfigParseError
-                ? describeConfigParseError(cliSettings.workdir, cause)
-                : cause.message,
-          }),
-      ),
-      Effect.withSpan("config.convert.read"),
-    );
-    if (parsed === null) {
-      return yield* new ConfigConvertLoadConfigError({
-        message: yield* missingProjectConfigMessageEffect(cliSettings),
+    if (Option.isSome(flags.reason) && flags.to !== "toml") {
+      return yield* new ConfigConvertReasonWithoutTomlTargetError({
+        message: REASON_WITHOUT_TOML_TARGET_MESSAGE,
       });
     }
+    if (flags.to === "toml") {
+      return yield* configConvertToToml(flags);
+    }
+
+    yield* Effect.annotateCurrentSpan("config.dry_run", flags.dryRun);
+    yield* Effect.annotateCurrentSpan("config.convert.target", "jsonc");
+    const parsed = yield* readConfigDocument();
     const configDir = path.dirname(parsed.path);
     if (parsed.format === "json") {
       const jsonFile = path.basename(parsed.path);
@@ -205,15 +143,7 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       return;
     }
 
-    yield* fs.readFile(parsed.path).pipe(
-      Effect.mapError((cause) => new ConfigConvertLoadConfigError({ message: cause.message })),
-      Effect.flatMap((bytes) =>
-        Effect.try({
-          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-          catch: () => new ConfigConvertUnsupportedError({ message: NOT_UTF8_MESSAGE }),
-        }),
-      ),
-    );
+    yield* requireUtf8(parsed.path, NOT_UTF8_MESSAGE);
     const outcome = yield* convertCliConfigTomlToJsonc(parsed.rawText).pipe(
       Effect.catchTag(
         "CliConfigConvertError",
@@ -226,10 +156,11 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       "config.comment_count": outcome.commentCount,
       "config.moved_comment_count": outcome.movedComments.length,
     });
+    yield* recordCommandTelemetry({ [PropConvertMovedCommentCount]: outcome.movedComments.length });
 
     const jsoncPath = path.join(configDir, "config.jsonc");
     yield* refuseSymlinks(parsed.path, jsoncPath);
-    const backupPath = yield* freeBackupPath(configDir);
+    const backupPath = yield* freeBackupPath(configDir, "config.toml", backupCheckFailureMessage);
     const backup = `supabase/${path.basename(backupPath)}`;
     const windows = runtimeInfo.platform === "win32";
     const root = path.relative(runtimeInfo.cwd, cliSettings.workdir);
@@ -280,50 +211,27 @@ export const configConvert = Effect.fn("config.convert")(function* (flags: Confi
       return;
     }
 
-    yield* Effect.gen(function* () {
-      const tomlMode = yield* fs.stat(parsed.path).pipe(
-        Effect.map((info) => info.mode & 0o7777),
-        Effect.mapError(
-          (cause) =>
-            new ConfigConvertWriteError({
-              message: `Could not read the permissions of supabase/config.toml: ${cause.message}. Nothing was converted.`,
-            }),
-        ),
-      );
-      const created = yield* createCliConfigDocumentText(jsoncPath, outcome.text, tomlMode).pipe(
-        Effect.catchTag(
-          "CliConfigWriteError",
-          (cause) => new ConfigConvertWriteError({ message: writeFailureMessage(cause.message) }),
-        ),
-      );
-      if (!created) {
-        return yield* new ConfigConvertFileChangedError({ message: JSONC_APPEARED_MESSAGE });
-      }
-      yield* fs.rename(parsed.path, backupPath).pipe(
-        Effect.catchTag("PlatformError", (cause) =>
-          Effect.flatMap(rollbackJsonc(jsoncPath, outcome.text), (note) =>
-            Effect.fail(
-              new ConfigConvertWriteError({
-                message: backupFailureMessage(backup, cause.message, note),
-              }),
-            ),
-          ),
-        ),
-      );
-      const moved = yield* fs.readFileString(backupPath).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ConfigConvertWriteError({
-              message: backupUnverifiedMessage(backup, cause.message, undo),
-            }),
-        ),
-      );
-      if (moved !== parsed.rawText) {
-        return yield* new ConfigConvertFileChangedError({
-          message: tomlChangedMessage(backup, undo),
-        });
-      }
-    }).pipe(Effect.withSpan("config.convert.write"));
+    yield* writeConversion({
+      sourcePath: parsed.path,
+      targetPath: jsoncPath,
+      backupPath,
+      text: outcome.text,
+      sourceText: parsed.rawText,
+      messages: {
+        permissions: (cause) =>
+          `Could not read the permissions of supabase/config.toml: ${cause}. Nothing was converted.`,
+        write: writeFailureMessage,
+        targetAppeared: JSONC_APPEARED_MESSAGE,
+        rollback: {
+          removed: JSONC_REMOVED_NOTE,
+          changed: JSONC_CHANGED_NOTE,
+          removalFailure: jsoncRemovalFailureNote,
+        },
+        backupFailure: (cause, note) => backupFailureMessage(backup, cause, note),
+        backupUnverified: (cause) => backupUnverifiedMessage(backup, cause, undo),
+        sourceChanged: tomlChangedMessage(backup, undo),
+      },
+    });
 
     const vscode = yield* trustSchemaDomainInVscode(cliSettings.workdir, false);
 

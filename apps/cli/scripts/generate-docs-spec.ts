@@ -12,6 +12,7 @@ import { Effect, Path } from "effect";
 import process from "node:process";
 import { readDocsContent } from "../src/docs/docs-spec.content.ts";
 import { buildDocsSpec, stringifyDocsSpec } from "../src/docs/docs-spec.ts";
+import { buildDocsSidebar } from "../src/docs/docs-sidebar.ts";
 import { rootCommand } from "../src/cli/root.ts";
 
 function resolveVersion(): string {
@@ -28,11 +29,13 @@ const content = await Effect.runPromise(
   ),
 );
 
+// The release publishes only the spec, so sidebar problems must fail it here.
+buildDocsSidebar(rootCommand);
+
 const spec = buildDocsSpec({
   root: rootCommand,
   version: resolveVersion(),
   overlays: content.overlays,
-  examples: content.examples,
 });
 
 process.stdout.write(stringifyDocsSpec(spec));
