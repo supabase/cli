@@ -57,6 +57,7 @@ jobs:
             docs
             process-compose
             stack
+            tui
             ci
             deps
             repo

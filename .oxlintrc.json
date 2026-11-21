@@ -579,6 +579,211 @@
       "rules": {
         "effecttsgo/node-builtin-import": "off"
       }
+    },
+    {
+      // The TUI renderer (terminal, runtime, view, theme, capabilities) is written to move into a
+      // standalone package, so it never reaches into the Supabase consumer layer or the mixed
+      // `src/index.ts` facade. Each restricted path is listed extensionless, `.ts` and `.js`, the
+      // forms Bundler resolution accepts. Replaces the repo-wide rule for these files, so the
+      // namespace pattern is repeated; keep the two in sync.
+      "files": [
+        "packages/tui/src/terminal/**",
+        "packages/tui/src/runtime/**",
+        "packages/tui/src/view/**",
+        "packages/tui/src/theme/**",
+        "packages/tui/src/capabilities.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@supabase/tui",
+                "message": "The renderer does not import its own consumer-facing facade."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              },
+              {
+                "group": [
+                  "**/blocks",
+                  "**/blocks/**",
+                  "**/supabase",
+                  "**/supabase/**",
+                  "**/examples",
+                  "**/examples/**"
+                ],
+                "message": "The TUI renderer must not depend on Supabase blocks, theme or examples."
+              },
+              {
+                "group": ["**/index", "**/index.ts", "**/index.js"],
+                "message": "src/index.ts is the consumer facade; the renderer must not import it."
+              },
+              {
+                "regex": "^\\.\\.?/?$",
+                "message": "A bare directory import resolves to src/index.ts, the consumer facade."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Supabase TUI production code (blocks, supabase theme, examples, the mixed facade and the
+      // demos) reaches the renderer only through each module's `public.ts`. Each restricted path
+      // is listed extensionless, `.ts` and `.js`. Replaces the repo-wide rule for these files, so
+      // the namespace pattern is repeated; keep the two in sync.
+      "files": [
+        "packages/tui/src/blocks/**",
+        "packages/tui/src/supabase/**",
+        "packages/tui/src/examples/**",
+        "packages/tui/src/index.ts",
+        "packages/tui/examples/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              },
+              {
+                "group": [
+                  "**/terminal",
+                  "**/terminal/**",
+                  "!**/terminal/public",
+                  "!**/terminal/public.ts",
+                  "!**/terminal/public.js"
+                ],
+                "message": "Import the renderer through terminal/public.ts."
+              },
+              {
+                "group": [
+                  "**/runtime",
+                  "**/runtime/**",
+                  "!**/runtime/public",
+                  "!**/runtime/public.ts",
+                  "!**/runtime/public.js"
+                ],
+                "message": "Import the renderer through runtime/public.ts."
+              },
+              {
+                "group": [
+                  "**/view",
+                  "**/view/**",
+                  "!**/view/public",
+                  "!**/view/public.ts",
+                  "!**/view/public.js"
+                ],
+                "message": "Import the renderer through view/public.ts."
+              },
+              {
+                "group": [
+                  "**/theme",
+                  "**/theme/**",
+                  "!**/theme/public",
+                  "!**/theme/public.ts",
+                  "!**/theme/public.js"
+                ],
+                "message": "Import the renderer through theme/public.ts."
+              },
+              {
+                "group": ["**/capabilities", "**/capabilities.ts", "**/capabilities.js"],
+                "message": "Import the capability types through terminal/public.ts."
+              },
+              {
+                "group": [
+                  "@supabase/tui/testing",
+                  "**/test-support",
+                  "**/test-support.ts",
+                  "**/test-support.js"
+                ],
+                "message": "Test harnesses pull dev dependencies; import them only from tests."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Supabase TUI test files and the block test helper may also use the renderer's test harness
+      // (`terminal/testing.ts`, `runtime/test-support.ts`); production files may not, because the
+      // harness pulls `@effect/vitest`.
+      "files": [
+        "packages/tui/src/blocks/**/*.test.ts",
+        "packages/tui/src/blocks/test-support.ts",
+        "packages/tui/src/supabase/**/*.test.ts",
+        "packages/tui/src/examples/**/*.test.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              },
+              {
+                "group": [
+                  "**/terminal",
+                  "**/terminal/**",
+                  "!**/terminal/public",
+                  "!**/terminal/public.ts",
+                  "!**/terminal/public.js",
+                  "!**/terminal/testing",
+                  "!**/terminal/testing.ts",
+                  "!**/terminal/testing.js"
+                ],
+                "message": "Import the renderer through terminal/public.ts or terminal/testing.ts."
+              },
+              {
+                "group": [
+                  "**/runtime",
+                  "**/runtime/**",
+                  "!**/runtime/public",
+                  "!**/runtime/public.ts",
+                  "!**/runtime/public.js",
+                  "!**/runtime/test-support",
+                  "!**/runtime/test-support.ts",
+                  "!**/runtime/test-support.js"
+                ],
+                "message": "Import the renderer through runtime/public.ts or runtime/test-support.ts."
+              },
+              {
+                "group": [
+                  "**/view",
+                  "**/view/**",
+                  "!**/view/public",
+                  "!**/view/public.ts",
+                  "!**/view/public.js"
+                ],
+                "message": "Import the renderer through view/public.ts."
+              },
+              {
+                "group": [
+                  "**/theme",
+                  "**/theme/**",
+                  "!**/theme/public",
+                  "!**/theme/public.ts",
+                  "!**/theme/public.js"
+                ],
+                "message": "Import the renderer through theme/public.ts."
+              },
+              {
+                "group": ["**/capabilities", "**/capabilities.ts", "**/capabilities.js"],
+                "message": "Import the capability types through terminal/public.ts."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

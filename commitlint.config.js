@@ -7,6 +7,7 @@ const PROJECT_SCOPES = [
   "docs",
   "process-compose",
   "stack",
+  "tui",
 ];
 
 // Non-project changes that don't map to a single turbo project. `release`

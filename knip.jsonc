@@ -56,6 +56,10 @@
       // Run from workflow steps; declared for the same cross-workspace reason as apps/cli.
       "entry": ["scripts/*.ts"],
     },
+    "packages/tui": {
+      // Run directly with bun; they are the prototype's demos.
+      "entry": ["examples/*.ts"],
+    },
     "packages/stack": {
       "entry": [
         // Source-mode NativeProcess resolves this standalone launcher by URL.
