@@ -93,19 +93,6 @@ export function resolveKongNginxWorkerProcesses(
   return envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
 
-const KONG_AUTO_NOFILE_CEILING = 16384;
-
-/**
- * Kong's `auto` worker_connections is min(ulimit -n, 16384), so a 1024 engine
- * default caps it there. Lifts it only where the host hard limit allows, else
- * keeps the engine default.
- */
-export function kongNofileUlimits(hostHardLimit: number | undefined): ReadonlyArray<string> {
-  return hostHardLimit === undefined || hostHardLimit >= KONG_AUTO_NOFILE_CEILING
-    ? [`nofile=${KONG_AUTO_NOFILE_CEILING}:${KONG_AUTO_NOFILE_CEILING}`]
-    : [];
-}
-
 export interface KongEmailTemplateMount {
   /**
    * The `config.auth.email.template` key, or `<key>_notification` for a
@@ -144,13 +131,17 @@ export function buildKongEmailTemplateBind(
   return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
 
+/* Kong's `auto` follows the soft limit, 1024 on Docker 29, so nginx is sized from the hard limit up to
+   Kong's 16384 ceiling instead, and `kong reload` reuses the values Kong saved in `.kong_env` */
 const KONG_ENTRYPOINT_HEAD =
+  'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
+  "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
   "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
- * Builds the non-secret half of the Kong entrypoint: the
- * `custom_nginx.template` heredoc plus the final `docker-entrypoint.sh` exec
+ * Builds the non-secret half of the Kong entrypoint: the nginx sizing exports,
+ * the `custom_nginx.template` heredoc and the final `docker-entrypoint.sh` exec
  * line. `kong.yml` and the TLS cert/key travel via `secretFiles` instead —
  * see this module's header.
  */
@@ -208,8 +199,6 @@ export interface KongContainerSpecInput {
   readonly poolerId: string;
   /** Already resolved by the caller via {@link resolveKongNginxWorkerProcesses}, keeping this builder pure. */
   readonly nginxWorkerProcesses: string;
-  /** Already resolved by the caller via {@link kongNofileUlimits}, keeping this builder pure. */
-  readonly nofileUlimits: ReadonlyArray<string>;
   /**
    * Every `config.auth.email.template.*`/enabled `notification.*` entry the
    * caller has gathered — see {@link KongEmailTemplateMount}. Defaults to `[]`.
@@ -292,7 +281,6 @@ export function buildKongContainerSpec(
       retries: 10,
     },
     restartPolicy: "unless-stopped",
-    ulimits: input.nofileUlimits,
     networkId: input.networkId,
     networkAliases: KONG_NETWORK_ALIASES,
     labels: {},

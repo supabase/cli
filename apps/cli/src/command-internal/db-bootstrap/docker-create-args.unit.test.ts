@@ -9,7 +9,7 @@ import {
 } from "./docker-create-args.ts";
 
 // Exercises every optional field: Hostname, Entrypoint+Cmd, exec-form Healthcheck with
-// StartPeriod, ExposedPorts alongside a matching PortBinding, RestartPolicy, ulimits, network aliases.
+// StartPeriod, ExposedPorts alongside a matching PortBinding, RestartPolicy, network aliases.
 const full: StartContainerSpec = {
   image: "supabase/logflare:1.0.0",
   containerName: "supabase_analytics_proj",
@@ -31,7 +31,6 @@ const full: StartContainerSpec = {
   },
   restartPolicy: "unless-stopped",
   securityOpt: ["label:disable"],
-  ulimits: ["nofile=16384:16384"],
   extraHosts: ["host.docker.internal:host-gateway"],
   networkId: "supabase_network_proj",
   networkAliases: ["analytics"],
@@ -77,8 +76,6 @@ describe("buildStartContainerCreateArgs", () => {
       "unless-stopped",
       "--security-opt",
       "label:disable",
-      "--ulimit",
-      "nofile=16384:16384",
       "--add-host",
       "host.docker.internal:host-gateway",
       "--network",

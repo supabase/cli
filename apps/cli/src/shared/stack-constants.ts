@@ -29,12 +29,11 @@ export interface EdgeRuntimeNofileUlimit {
   readonly clampWarning?: string;
 }
 
-export const hostHardNofileLimit = (platformOs: string): number | undefined =>
-  platformOs === "linux" ? hardNofileLimitFromReport(process.report?.getReport()) : undefined;
-
 export const edgeRuntimeNofileUlimit = (
   platformOs: string,
-  hostHardLimit: number | undefined = hostHardNofileLimit(platformOs),
+  hostHardLimit: number | undefined = platformOs === "linux"
+    ? hardNofileLimitFromReport(process.report?.getReport())
+    : undefined,
 ): EdgeRuntimeNofileUlimit => {
   const limit =
     hostHardLimit === undefined ? desiredNofile : Math.min(desiredNofile, hostHardLimit);

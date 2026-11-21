@@ -9,7 +9,6 @@ import {
   buildKongEmailTemplateBind,
   buildKongEntrypointScript,
   buildKongQueryToken,
-  kongNofileUlimits,
   resolveKongNginxWorkerProcesses,
   type KongApiKeys,
   type KongContainerSpecInput,
@@ -50,18 +49,6 @@ describe("resolveKongNginxWorkerProcesses", () => {
 
   test("uses a project dotenv-only value", () => {
     expect(resolveKongNginxWorkerProcesses({ KONG_NGINX_WORKER_PROCESSES: "auto" })).toBe("auto");
-  });
-});
-
-describe("kongNofileUlimits", () => {
-  test("lifts the container limit to Kong's 16384 auto ceiling where the host allows it", () => {
-    expect(kongNofileUlimits(524288)).toEqual(["nofile=16384:16384"]);
-    expect(kongNofileUlimits(16384)).toEqual(["nofile=16384:16384"]);
-    expect(kongNofileUlimits(undefined)).toEqual(["nofile=16384:16384"]);
-  });
-
-  test("keeps the engine default when the host hard limit is lower", () => {
-    expect(kongNofileUlimits(16383)).toEqual([]);
   });
 });
 
@@ -111,10 +98,12 @@ describe("buildKongEmailTemplateBind", () => {
 });
 
 describe("buildKongEntrypointScript", () => {
-  test("writes only the custom_nginx.template heredoc, then execs docker-entrypoint.sh (minus the secretFiles-carried heredocs)", () => {
+  test("renders the nginx sizing exports and the custom_nginx.template heredoc, then execs docker-entrypoint.sh", () => {
     const script = buildKongEntrypointScript("NGINX_TEMPLATE");
     expect(script).toBe(
-      "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
+      'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
+        "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
+        "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
         "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n" +
         "NGINX_TEMPLATE\nEOF\n",
     );
@@ -148,7 +137,6 @@ const base: KongContainerSpecInput = {
   logflareId: "supabase_analytics_proj",
   poolerId: "supabase_pooler_proj",
   nginxWorkerProcesses: "1",
-  nofileUlimits: ["nofile=16384:16384"],
 };
 
 describe("buildKongContainerSpec", () => {
