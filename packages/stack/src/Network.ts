@@ -26,6 +26,7 @@ type RouteContribution =
       | "forwardedPrefix"
       | "keyRewrite"
       | "upstreamCors"
+      | "localOriginOnly"
     > &
       Partial<Pick<HttpRoute, "target">>)
   | Pick<HttpFileRoute, "prefix" | "file">;
@@ -42,6 +43,8 @@ export interface NetworkEndpoint {
   readonly join?: ReadonlyArray<RouteContribution>;
   /** Sends each write to this endpoint, on every route, over a fresh upstream connection. */
   readonly freshWrites?: boolean;
+  /** A dedicated HTTP listener's routes; defaults to one catch-all with the gateway's CORS. */
+  readonly dedicated?: ReadonlyArray<RouteContribution>;
   readonly enabled: Effect.Effect<boolean>;
 }
 
@@ -323,7 +326,12 @@ const makeNetwork = (options: {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
                                   yield* proxy.setRoutes(
-                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint, false),
+                                    toHttpRoutes(
+                                      id,
+                                      endpoint.dedicated ?? [{ prefix: "/" }],
+                                      endpoint,
+                                      false,
+                                    ),
                                   );
                                   return { proxy };
                                 }
