@@ -350,8 +350,8 @@ importers:
         specifier: 'catalog:'
         version: 2.112.4
       '@supabase/typegen':
-        specifier: 0.3.2
-        version: 0.3.2(oxfmt@0.66.0)
+        specifier: github:supabase/sdk#5a5db05b23a12f1cdea0406e082d465eacc1d6a7&path:/packages/typegen
+        version: https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen(oxfmt@0.66.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -636,8 +636,8 @@ importers:
         specifier: 'catalog:'
         version: 4.1.2(effect@4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c))
       '@supabase/typegen':
-        specifier: 0.3.2
-        version: 0.3.2(oxfmt@0.66.0)
+        specifier: github:supabase/sdk#5a5db05b23a12f1cdea0406e082d465eacc1d6a7&path:/packages/typegen
+        version: https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen(oxfmt@0.66.0)
       effect:
         specifier: 'catalog:'
         version: 4.1.2(patch_hash=faa1652a408bc1c627b2c98c6ebcab36b114ffce91795781a692d6ef4970150c)
@@ -2935,8 +2935,9 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@supabase/typegen@0.3.2':
-    resolution: {integrity: sha512-b48/ZCYnKtl6qdjDlkuXpU33lWEYo0x4pvZCaFyLaY+mbJ0DxZAoS6Jpsa0pBUYGwcDVupBLpDKcjXQPSZPNJA==}
+  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen':
+    resolution: {gitHosted: true, integrity: sha512-c4XphNBhHXkNxc1hf7z2NFg7tFprPdnF3oEZbe4OVcwZFVSndOND7P89s3hy7pA0OnRJ0E9Qd8ZyZkAWn9YVEg==, path: /packages/typegen, tarball: https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7}
+    version: 0.3.2
     engines: {node: '>=22.12.0'}
     peerDependencies:
       oxfmt: 0.66.0
@@ -8665,7 +8666,7 @@ snapshots:
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
 
-  '@supabase/typegen@0.3.2(oxfmt@0.66.0)':
+  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen(oxfmt@0.66.0)':
     dependencies:
       '@supabase/postgrest-typegen': 0.7.0(oxfmt@0.66.0)
     optionalDependencies:

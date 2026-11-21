@@ -1,4 +1,5 @@
 import { operationDefinitions } from "@supabase/api/effect";
+import { SparkDryRunStatus } from "@supabase/stack/spark";
 import { Effect, Option, Redacted, Schema } from "effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
@@ -59,17 +60,7 @@ const MigrationHistory = Schema.Array(
 
 const AppliedMigration = Schema.Struct({ version: Schema.NullOr(Schema.String) });
 
-const DryRunStatus = Schema.Struct({
-  index: Schema.Finite,
-  kind: Schema.String,
-  status: Schema.String,
-  message: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  line: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
-  statement: Schema.String,
-});
-export type SparkDryRunStatus = typeof DryRunStatus.Type;
-
-const DryRun = Schema.Struct({ statuses: Schema.Array(DryRunStatus) });
+const DryRun = Schema.Struct({ statuses: Schema.Array(SparkDryRunStatus) });
 
 /**
  * A raw call for the Spark routes the Management API contract does not describe yet (the dump

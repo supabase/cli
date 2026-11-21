@@ -48,8 +48,9 @@ service_role key:
 - `POST /system/v1/migrations?dry_run=1` with `{version, name, sql}`, the version taken from the
   current time (`db diff`, `db push`).
 - `POST /system/v1/migrations` with `{version, name, sql}`, the file's version (`db push`).
-- `GET /_spark/v1/schema` (`db diff`, `db pull`, `gen types`): the dump and the types are rendered
-  in the CLI from the description, as the stand-in Management API renders them.
+- `GET /_spark/v1/dump[?schemas=a,b]` (`db diff`, `db pull`): Spark renders the dump.
+- `GET /_spark/v1/schema` (`gen types`): the types are rendered in the CLI from the description, as the
+  stand-in Management API renders them.
 
 Linked target, and `link`:
 
@@ -77,9 +78,10 @@ on the local target, Spark runs it as the query route runs it, without a migrati
 
 ## Docker
 
-`db diff` starts two `supabase/postgres` shadow containers (one loaded with the dump, one clean
-for the schema files) and `db pull` one; all are removed with `docker rm -f -v` when the command
-ends.
+`db diff` and `db pull` each start two `supabase/postgres` shadow containers (one loaded with the
+dump, one clean, for the schema files or the image's own objects), wait up to 10 minutes (or
+`db.health_timeout` when longer) for their first boot to accept a connection, and remove them
+with `docker rm -f -v` when the command ends.
 
 ## Environment Variables
 

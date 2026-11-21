@@ -25,6 +25,13 @@ import { SparkShadowError } from "./spark-project.ts";
 const SHADOW_PASSWORD = "postgres";
 
 /**
+ * A Spark shadow is always a first boot (initdb, then the image's bundled migrations), which on a
+ * busy Docker host outlasts `db.health_timeout`, the budget for starting an initialised database.
+ * A first boot that fails exits the container, which ends the wait at once.
+ */
+const FIRST_BOOT_TIMEOUT_SECONDS = 600;
+
+/**
  * Starts `count` fresh Supabase Postgres containers (the project's image, so the platform roles
  * and schemas exist) and returns a pool for each. They are removed when the scope closes.
  */
@@ -76,12 +83,18 @@ export const acquireSparkShadows = Effect.fn("Spark.acquireShadows")(function* (
           fs,
           path,
         );
-        const handle = yield* Effect.acquireRelease(createShadowDatabase(spawner, input), (h) =>
-          removeShadowDatabase(spawner, h.containerId).pipe(Effect.provideService(Output, output)),
+        // Kept after it exits, so the wait sees a failed first boot as exited instead of
+        // polling a container Docker already removed; the release removes it.
+        const handle = yield* Effect.acquireRelease(
+          createShadowDatabase(spawner, { ...input, autoRemove: false }),
+          (h) =>
+            removeShadowDatabase(spawner, h.containerId).pipe(
+              Effect.provideService(Output, output),
+            ),
         );
         const connection = shadowConnConfig(input);
         yield* waitForPostgresReady(spawner, handle.containerId, connection, {
-          timeoutSeconds: input.healthTimeoutSeconds,
+          timeoutSeconds: Math.max(input.healthTimeoutSeconds, FIRST_BOOT_TIMEOUT_SECONDS),
           image,
         });
         return yield* acquirePgPool(connection, { isLocal: true, dnsResolver: "native" });

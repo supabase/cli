@@ -683,6 +683,59 @@ it.live("serves legacy Kong's gateway routes while each service runs", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live(
+  "sends the OpenAPI document path /rest/v1/ to Spark and the other stand-in routes to sparkmeta",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-spark-routes-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(stack("stack"));
+        const spark = yield* backendWith(echo("spark"));
+        const sparkmeta = yield* backendWith(echo("sparkmeta"));
+        const keys = {
+          publishableKey: "sb_publishable_example",
+          secretKey: "sb_secret_example",
+          anonKey: "anon.jwt.value",
+          serviceRoleKey: "service.role.jwt",
+        };
+        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const sparkNamespace = yield* network.register({
+          id: "spark",
+          endpoints: {
+            http: {
+              ...endpoint(spark, Effect.succeed(true)),
+              shared: sharedRoutes({ service: "spark" }, "http", keys, () => Effect.succeed(spark)),
+            },
+          },
+        });
+        yield* sparkNamespace.bind;
+        const meta = yield* network.register({
+          id: "sparkmeta",
+          endpoints: {
+            http: {
+              ...endpoint(sparkmeta, Effect.succeed(true)),
+              join: joinRoutes({ service: "sparkmeta" }, "http"),
+            },
+          },
+        });
+        yield* meta.bind;
+        const address = yield* sparkNamespace.address("http", "host");
+        const backendOf = (path: string) =>
+          Effect.gen(function* () {
+            const client = yield* HttpClient.HttpClient;
+            const response = yield* client.get(`http://${address.host}:${address.port}${path}`);
+            return Reflect.get(Object(yield* response.json), "backend");
+          }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+
+        expect(yield* backendOf("/rest/v1/")).toBe("spark");
+        expect(yield* backendOf("/rest/v1/todos")).toBe("spark");
+        expect(yield* backendOf("/pg/query")).toBe("sparkmeta");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's gateway set", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -161,13 +161,11 @@ export const joinRoutes = (
     case "pooler":
       return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
     case "sparkmeta":
-      return ["/pg", "/v1/projects", "/v1/organizations", "/platform/projects", "/rest/v1/"].map(
-        (prefix) => ({
-          prefix,
-          upstreamPrefix: prefix,
-          forwardedPrefix: prefix,
-        }),
-      );
+      return ["/pg", "/v1/projects", "/v1/organizations", "/platform/projects"].map((prefix) => ({
+        prefix,
+        upstreamPrefix: prefix,
+        forwardedPrefix: prefix,
+      }));
     default:
       return undefined;
   }

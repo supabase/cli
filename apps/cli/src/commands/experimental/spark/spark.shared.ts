@@ -1,10 +1,10 @@
+import type { SparkDryRunStatus } from "@supabase/stack/spark";
 import { Effect, FileSystem, Path } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { MIGRATE_FILE_PATTERN } from "../../../command-internal/migration-history.ts";
 import { sortMigrationVersions } from "../../../command-internal/migration-timestamp.format.ts";
-import type { SparkDryRunStatus } from "./spark-api.ts";
 
 export const projectPaths = Effect.fn("Spark.projectPaths")(function* () {
   const settings = yield* CommandSettings;

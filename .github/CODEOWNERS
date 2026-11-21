@@ -24,5 +24,4 @@
 # Spark backend (experimental). Either team approves; global files Spark uses stay with @supabase/cli.
 # See apps/cli/src/commands/experimental/spark/AGENTS.md.
 /apps/cli/src/commands/experimental/spark/ @supabase/cli @supabase/spark
-/apps/cli/scripts/spark/ @supabase/cli @supabase/spark
 /packages/stack/src/services/spark/ @supabase/cli @supabase/spark

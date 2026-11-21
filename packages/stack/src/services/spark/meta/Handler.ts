@@ -1,8 +1,7 @@
 import { Clock, DateTime, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type SparkAdmin, SparkQueryError, type SparkAdminError } from "./Admin.ts";
-import { oneLine, sparkDryRun, sparkSchemaDump, sparkTypescriptTypes } from "../SparkClient.ts";
-import { openApi } from "./OpenApi.ts";
+import { oneLine, sparkDryRun, sparkTypescriptTypes } from "../SparkClient.ts";
 import type { Description, ParsedStatement } from "./Description.ts";
 import type { SparkTypegenError } from "./Typegen.ts";
 
@@ -61,10 +60,14 @@ const json = (body: unknown, status = 200, headers: Readonly<Record<string, stri
 const rejected = (code: string, message: string, hint?: string) =>
   new SparkQueryError({ code, message, status: 400, ...(hint === undefined ? {} : { hint }) });
 
+/** The text `psql` prints, for an error Spark did not format. */
+const formatError = ({ code, message, details, hint }: SparkQueryError) =>
+  `ERROR:  ${code ?? ""}: ${message}${details === undefined ? "" : `\nDETAIL:  ${details}`}${hint === undefined ? "" : `\nHINT:  ${hint}`}`;
+
 const errorResponse = (error: SparkAdminError | SparkTypegenError) => {
   if (error._tag !== "SparkQueryError") return json({ message: error.message }, 500);
   const { code, message, details, hint } = error;
-  const formattedError = `ERROR:  ${code ?? ""}: ${message}${details === undefined ? "" : `\nDETAIL:  ${details}`}${hint === undefined ? "" : `\nHINT:  ${hint}`}`;
+  const formattedError = error.formattedError ?? formatError(error);
   return json(
     {
       code: code ?? null,
@@ -345,10 +348,9 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       return json({ version: version ?? null, name }, 201);
     }
     if (rest === "/database/dump" && method === "GET") {
-      return HttpServerResponse.text(
-        yield* sparkSchemaDump(cachedDescription, schemaList(search.get("schemas"))),
-        { headers: { ...corsHeaders, "content-type": "application/sql; charset=utf-8" } },
-      );
+      return HttpServerResponse.text(yield* admin.dump(schemaList(search.get("schemas"))), {
+        headers: { ...corsHeaders, "content-type": "application/sql; charset=utf-8" },
+      });
     }
     const keysRoute = rest.replace(/\/$/u, "");
     if ((keysRoute === "/api-keys" || keysRoute === "/api-keys/legacy") && method === "GET") {
@@ -393,11 +395,6 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
         },
       });
     if (p === "/health") return json({ healthy: true });
-    if (p === "/rest/v1/" && method === "GET") {
-      return json(openApi(yield* current, settings.publicUrl), 200, {
-        "content-type": "application/openapi+json",
-      });
-    }
     if (p === "/pg/query" && method === "POST") {
       const body = yield* HttpServerRequest.schemaBodyJson(QueryBody).pipe(
         Effect.mapError(() => rejected("22P02", "invalid request body")),

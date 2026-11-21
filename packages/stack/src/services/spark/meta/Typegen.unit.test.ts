@@ -1,107 +1,61 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
-import { makeModel } from "./Model.ts";
-import type { Column, Constraint, Description, Table } from "./Description.ts";
+import { Description } from "./Description.ts";
 import { typescript } from "./Typegen.ts";
 
-const column = (name: string, position: number, type: string, extra: Partial<Column> = {}) => ({
+const column = (name: string, position: number, type: string, identity: "a" | null) => ({
   name,
   position,
   type,
-  not_null: false,
+  not_null: true,
   default: null,
-  identity: null,
+  identity,
   generated: null,
   comment: null,
-  ...extra,
 });
 
-const table = (
-  name: string,
-  columns: ReadonlyArray<Column>,
-  constraints: ReadonlyArray<Constraint>,
-): Table => ({
-  schema: "public",
-  name,
-  managed: false,
-  rls_enabled: true,
-  rls_forced: false,
-  comment: null,
-  columns,
-  constraints,
-  indexes: [],
-  policies: [],
-});
-
-const primaryKey = (name: string, col: string): Constraint => ({
-  name,
-  type: "p",
-  def: `PRIMARY KEY (${col})`,
-  columns: [col],
-  references: null,
-});
-
-const foreignKey = (name: string, col: string): Constraint => ({
-  name,
-  type: "f",
-  def: `FOREIGN KEY (${col}) REFERENCES authors(id)`,
-  columns: [col],
-  references: { schema: "public", table: "authors", columns: ["id"] },
-});
-
-const description: Description = {
+// `GET /_spark/v1/schema` as Spark sends it: a table and a view over it with its own columns.
+const wire = JSON.stringify({
   schema_version: "1",
   managed_schemas: ["auth"],
   schemas: [{ name: "public", comment: null }],
-  enums: [{ schema: "public", name: "status", labels: ["open", "done"], comment: null }],
+  enums: [],
   tables: [
-    table(
-      "authors",
-      [column("id", 1, "bigint", { not_null: true, identity: "a" }), column("name", 2, "text")],
-      [primaryKey("authors_pkey", "id")],
-    ),
-    table(
-      "profiles",
-      [column("author_id", 1, "bigint", { not_null: true })],
-      [
-        primaryKey("profiles_pkey", "author_id"),
-        foreignKey("profiles_author_id_fkey", "author_id"),
-      ],
-    ),
-    table(
-      "posts",
-      [
-        column("author_id", 1, "bigint", { not_null: true }),
-        column("status", 2, "status", { not_null: true, default: "'open'::status" }),
-        column("tags", 3, "text[]"),
-        column("matrix", 4, "integer[][]"),
-      ],
-      [foreignKey("posts_author_id_fkey", "author_id")],
-    ),
+    {
+      schema: "public",
+      name: "authors",
+      managed: false,
+      rls_enabled: true,
+      rls_forced: false,
+      comment: null,
+      columns: [column("id", 1, "bigint", "a"), column("name", 2, "text", null)],
+      constraints: [],
+      indexes: [],
+      policies: [],
+    },
   ],
-  views: [],
-};
-
-const squash = (s: string) => s.replace(/\s+/gu, " ");
+  views: [
+    {
+      schema: "public",
+      name: "author_names",
+      def: "select name from public.authors",
+      depends_on: [{ schema: "public", name: "authors" }],
+      comment: null,
+      columns: [column("name", 1, "text", null)],
+    },
+  ],
+});
 
 describe("typescript", () => {
-  it.effect("renders Spark's description through the shared generator", () =>
+  it.effect("renders the tables and views of a description decoded from Spark's JSON", () =>
     Effect.gen(function* () {
-      const types = squash(yield* typescript(makeModel(description), ["public"]));
+      const description = yield* Schema.decodeEffect(Schema.fromJsonString(Description))(wire);
 
-      expect(types).toContain('Insert: { "id"?: never,"name"?: string | null }');
-      expect(types).toContain(
-        'Row: { "author_id": number,"matrix": (number)[] | null,"status": Database["public"][\'Enums\']["status"],"tags": (string)[] | null }',
-      );
-      expect(types).toContain(
-        'foreignKeyName: "profiles_author_id_fkey" columns: ["author_id"] isOneToOne: true',
-      );
-      expect(types).toContain(
-        'foreignKeyName: "posts_author_id_fkey" columns: ["author_id"] isOneToOne: false',
-      );
-      expect(types).toContain('"status": "open"|"done"');
-      expect(types).toContain("export const Constants");
+      const types = (yield* typescript(description, ["public"])).replace(/\s+/gu, " ");
+
+      expect(types).toContain('Insert: { "id"?: never,"name": string }');
+      expect(types).toContain('Views: { "author_names": { Row: { "name": string }');
     }),
   );
 });

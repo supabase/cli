@@ -1,7 +1,7 @@
 # Spark command tree
 
 Owned by `@supabase/cli` and `@supabase/spark` (`.github/CODEOWNERS`): an approval from either team is enough for
-changes inside this folder, `apps/cli/scripts/spark/` and `packages/stack/src/services/spark/`. Read
+changes inside this folder and `packages/stack/src/services/spark/`. Read
 [`apps/cli/AGENTS.md`](../../../../AGENTS.md) and the root [`AGENTS.md`](../../../../../../AGENTS.md) first; their rules
 apply here too.
 
@@ -27,7 +27,7 @@ stubbed, and never fall back to Postgres.
    the Spark server through the stack's API URL with the stack's service_role key (the `@supabase/stack/spark`
    client), a linked target the Management API (`spark-api.ts`). No other calls to Spark's admin routes.
 4. Record its writes in `SIDE_EFFECTS.md`.
-5. If it changes the end-to-end flow, extend `apps/cli/scripts/spark/e2e.sh`.
+5. If it changes the end-to-end flow, extend `spark.e2e.test.ts`.
 
 ## Boundaries
 
@@ -42,4 +42,14 @@ stubbed, and never fall back to Postgres.
 ## Checks
 
 From the repository root: `pnpm --filter supabase run types:check`, `pnpm run lint:check`, the unit and
-integration suites, and `apps/cli/scripts/spark/e2e.sh` (needs a Spark binary and the MCP server; ends with "E2E OK").
+integration suites, and the end-to-end scenario, `spark.e2e.test.ts` in this folder. It runs the compiled CLI and is
+skipped unless `SUPABASE_SPARK_BIN` is set; with it set, `SPARK_EXAMPLE_DIR` (with `bun install` run),
+`SUPABASE_MCP_CLI` and `SUPABASE_SPARK_STUDIO_BIN` are required, and a browser for the Studio check
+(`CHROMIUM_PATH`). From the repository root:
+
+```sh
+pnpm exec turbo run supabase#build
+SUPABASE_SPARK_BIN=<spark> SPARK_EXAMPLE_DIR=<examples/spark-todos> SUPABASE_MCP_CLI=<mcp cli.js> \
+  SUPABASE_SPARK_STUDIO_BIN=<studio launcher> \
+  pnpm --filter supabase exec bun --bun vitest run --project e2e-exclusive src/commands/experimental/spark/spark.e2e.test.ts
+```

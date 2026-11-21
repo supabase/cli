@@ -330,6 +330,13 @@ const FIXED_PORT_RANGE_END = 10_000;
 
 const envOrEmpty = (name: string) => Config.String(name).pipe(Config.withDefault(""));
 
+// Docker publishes on every interface; macOS lets that bind succeed over a loopback listener.
+/** Whether nothing listens on `port`, on every interface or on loopback. */
+export const portIsFree = (port: number) =>
+  Effect.gen(function* () {
+    return (yield* probePort(port, "0.0.0.0")) && (yield* probePort(port, "127.0.0.1"));
+  });
+
 const FIXED_PORT_SPAN = FIXED_PORT_RANGE_END - FIXED_PORT_RANGE_START;
 /* Walks the range from a random start, so one worker never hands out the same port twice. */
 let nextPortOffset: number | undefined;
@@ -345,8 +352,7 @@ export const pickFreePort = Effect.gen(function* () {
     const port = FIXED_PORT_RANGE_START + offset;
     if (port % e2eWorkers !== e2eWorkerSlot) continue;
     nextPortOffset = offset + 1;
-    // Docker publishes on every interface; macOS lets that bind succeed over a loopback listener.
-    if ((yield* probePort(port, "0.0.0.0")) && (yield* probePort(port, "127.0.0.1"))) return port;
+    if (yield* portIsFree(port)) return port;
   }
   return yield* new E2ePortError({
     message: `No free port for e2e worker slot ${e2eWorkerSlot} of ${e2eWorkers}`,

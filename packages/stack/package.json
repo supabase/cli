@@ -33,7 +33,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@supabase/typegen": "0.3.2",
+    "@supabase/typegen": "github:supabase/sdk#5a5db05b23a12f1cdea0406e082d465eacc1d6a7&path:/packages/typegen",
     "effect": "catalog:",
     "jose": "^6.2.10"
   },

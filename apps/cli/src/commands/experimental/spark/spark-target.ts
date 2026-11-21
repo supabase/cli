@@ -2,7 +2,7 @@ import {
   makeSparkAdmin,
   type SparkAdminError,
   sparkDryRun,
-  sparkSchemaDump,
+  type SparkDryRunStatus,
   type SparkTypegenError,
   sparkTypescriptTypes,
 } from "@supabase/stack/spark";
@@ -29,7 +29,6 @@ import {
   dumpSparkSchema,
   listSparkMigrations,
   runSparkQuery,
-  type SparkDryRunStatus,
   sparkTypescriptTypes as remoteTypescriptTypes,
 } from "./spark-api.ts";
 import { SparkApiError, SparkBackendError } from "./spark-project.ts";
@@ -153,7 +152,7 @@ const localSparkTarget = Effect.fn("SparkTarget.local")(function* () {
         Effect.mapError(adminFailure("dry-run migration")),
       ),
     dump: (schemas) =>
-      sparkSchemaDump(admin, only(schemas)).pipe(Effect.mapError(adminFailure("database dump"))),
+      admin.dump(only(schemas)).pipe(Effect.mapError(adminFailure("database dump"))),
     typescriptTypes: (schemas) =>
       sparkTypescriptTypes(admin, only(schemas)).pipe(
         Effect.mapError(adminFailure("generate types")),

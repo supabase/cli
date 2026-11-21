@@ -16,6 +16,8 @@ export class SparkQueryError extends Data.TaggedError("SparkQueryError")<{
   readonly message: string;
   readonly details?: string;
   readonly hint?: string;
+  /** The error as `psql` prints it; Spark sends it, sparkmeta builds it for errors it raises itself. */
+  readonly formattedError?: string;
   readonly status: number;
 }> {}
 
@@ -32,6 +34,7 @@ const ErrorBody = Schema.Struct({
   message: Schema.optionalKey(Schema.String),
   details: Schema.optionalKey(Schema.NullOr(Schema.String)),
   hint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  formattedError: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 const decodeErrorBody = Schema.decodeUnknownOption(Schema.fromJsonString(ErrorBody));
@@ -39,13 +42,14 @@ const decodeErrorBody = Schema.decodeUnknownOption(Schema.fromJsonString(ErrorBo
 const queryError = (status: number, text: string, statusText: string): SparkQueryError => {
   const body = decodeErrorBody(text);
   if (body._tag === "None") return new SparkQueryError({ message: text || statusText, status });
-  const { code, message, details, hint } = body.value;
+  const { code, message, details, hint, formattedError } = body.value;
   return new SparkQueryError({
     message: message ?? statusText,
     status,
     ...(code === null || code === undefined ? {} : { code }),
     ...(details === null || details === undefined ? {} : { details }),
     ...(hint === null || hint === undefined ? {} : { hint }),
+    ...(formattedError === null || formattedError === undefined ? {} : { formattedError }),
   });
 };
 
@@ -114,6 +118,14 @@ export const makeSparkAdmin = (client: HttpClient.HttpClient, url: string, servi
       request(Schema.Unknown, "POST", "/system/v1/migrations", { version, name, sql }),
     dryRunMigration: (version: string, name: string, sql: string) =>
       request(ScratchResult, "POST", "/system/v1/migrations?dry_run=1", { version, name, sql }),
+    /** Postgres DDL of the project's own schemas, or only of `schemas` when given. */
+    dump: (schemas: ReadonlyArray<string> | undefined) =>
+      requestText(
+        "GET",
+        schemas === undefined
+          ? "/_spark/v1/dump"
+          : `/_spark/v1/dump?schemas=${encodeURIComponent(schemas.join(","))}`,
+      ),
     schemaVersion: request(SchemaVersion, "GET", "/_spark/v1/schema/version"),
     schema: request(Description, "GET", "/_spark/v1/schema"),
     scratch: (files: ReadonlyArray<{ readonly name: string; readonly sql: string }>) =>

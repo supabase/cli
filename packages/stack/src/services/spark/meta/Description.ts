@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 
 /** Spark's schema description (`GET /_spark/v1/schema`); fields as the admin API contract names them. */
-export const Column = Schema.Struct({
+const Column = Schema.Struct({
   name: Schema.String,
   position: Schema.Finite,
   type: Schema.String,
@@ -11,9 +11,8 @@ export const Column = Schema.Struct({
   generated: Schema.NullOr(Schema.String),
   comment: Schema.NullOr(Schema.String),
 });
-export interface Column extends Schema.Schema.Type<typeof Column> {}
 
-export const Constraint = Schema.Struct({
+const Constraint = Schema.Struct({
   name: Schema.String,
   type: Schema.Literals(["p", "u", "f", "c"]),
   def: Schema.String,
@@ -26,7 +25,6 @@ export const Constraint = Schema.Struct({
     }),
   ),
 });
-export interface Constraint extends Schema.Schema.Type<typeof Constraint> {}
 
 const Index = Schema.Struct({
   name: Schema.String,
@@ -44,7 +42,7 @@ const Policy = Schema.Struct({
   check: Schema.NullOr(Schema.String),
 });
 
-export const Table = Schema.Struct({
+const Table = Schema.Struct({
   schema: Schema.String,
   name: Schema.String,
   managed: Schema.Boolean,
@@ -56,15 +54,13 @@ export const Table = Schema.Struct({
   indexes: Schema.Array(Index),
   policies: Schema.Array(Policy),
 });
-export interface Table extends Schema.Schema.Type<typeof Table> {}
 
-export const Enum = Schema.Struct({
+const Enum = Schema.Struct({
   schema: Schema.String,
   name: Schema.String,
   labels: Schema.Array(Schema.String),
   comment: Schema.NullOr(Schema.String),
 });
-export interface Enum extends Schema.Schema.Type<typeof Enum> {}
 
 const View = Schema.Struct({
   schema: Schema.String,
@@ -72,6 +68,8 @@ const View = Schema.Struct({
   def: Schema.String,
   depends_on: Schema.Array(Schema.Struct({ schema: Schema.String, name: Schema.String })),
   comment: Schema.NullOr(Schema.String),
+  /** Absent from a Spark that predates view columns. */
+  columns: Schema.optionalKey(Schema.Array(Column)),
 });
 
 export const Description = Schema.Struct({
