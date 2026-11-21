@@ -4,19 +4,23 @@
  *
  *   bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version>
  *
- * No-op (exit 0) when the spec is already published and no PR is missing; a branch already ahead
+ * No-op (exit 0) when both files are already published and no PR is missing; a branch already ahead
  * of base still gets its PR ensured, so a failed prior run is repaired by the next release.
  */
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { $ } from "bun";
-import { Console, Data, Effect, FileSystem, Layer, Path } from "effect";
+import { Console, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { rootCommand } from "../src/cli/root.ts";
+import { buildDocsSidebar, stringifyDocsSidebar } from "../src/docs/docs-sidebar.ts";
 import { validateDocsSpec } from "./docs-spec-validation.ts";
 import { publishPullRequest, shell } from "./publish-pull-request.ts";
 
 class StdinReadFailed extends Data.TaggedError("StdinReadFailed")<{ readonly cause: unknown }> {}
+class InvalidDestination extends Data.TaggedError("InvalidDestination")<{
+  readonly message: string;
+}> {}
 
 const { values } = parseArgs({
   options: {
@@ -24,6 +28,7 @@ const { values } = parseArgs({
     local: { type: "string" },
     repo: { type: "string", default: "supabase/supabase" },
     "spec-path": { type: "string", default: "apps/docs/spec/cli_v1_commands.yaml" },
+    "sidebar-path": { type: "string" },
     branch: { type: "string", default: "cli/ref-doc" },
     base: { type: "string", default: "master" },
     "dry-run": { type: "boolean", default: false },
@@ -37,7 +42,7 @@ const main = Effect.gen(function* () {
   const versionArgument = values.version;
   if (!versionArgument) {
     yield* Console.error(
-      "Usage: bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--repo <owner/repo>] [--spec-path <path>] [--branch <name>] [--base <branch>] [--local <path>] [--dry-run]",
+      "Usage: bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--repo <owner/repo>] [--spec-path <path>] [--sidebar-path <path>] [--branch <name>] [--base <branch>] [--local <path>] [--dry-run]",
     );
     return yield* Effect.sync(() => process.exit(1));
   }
@@ -45,32 +50,110 @@ const main = Effect.gen(function* () {
 
   const repo = values.repo ?? "supabase/supabase";
   const specPath = values["spec-path"] ?? "apps/docs/spec/cli_v1_commands.yaml";
+  const sidebarPath =
+    values["sidebar-path"] ?? path.join(path.dirname(specPath), "common-cli-sections.json");
   const branch = values.branch ?? "cli/ref-doc";
   const base = values.base ?? "master";
   const dryRun = values["dry-run"] ?? false;
   const localDir = values.local === undefined ? undefined : path.resolve(values.local);
 
-  if (localDir !== undefined) {
-    const relativeTarget = path.relative(localDir, path.resolve(localDir, specPath));
-    if (
-      values.local === "" ||
-      path.isAbsolute(specPath) ||
-      relativeTarget === ".." ||
-      relativeTarget.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relativeTarget)
-    ) {
-      yield* Console.error(
-        "Refusing local preview: provide a checkout path and a --spec-path inside it.",
-      );
-      return yield* Effect.sync(() => process.exit(1));
-    }
-    if (!(yield* fs.exists(path.join(localDir, path.dirname(specPath))))) {
-      yield* Console.error(
-        "Refusing local preview: the spec directory does not exist. Point --local at an existing supabase/supabase checkout.",
-      );
-      return yield* Effect.sync(() => process.exit(1));
+  const isInside = (relative: string) =>
+    relative !== "" &&
+    relative !== "." &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative);
+  for (const [flag, destination] of [
+    ["--spec-path", specPath],
+    ["--sidebar-path", sidebarPath],
+  ]) {
+    if (!destination || !isInside(path.normalize(destination))) {
+      return yield* new InvalidDestination({
+        message: `Provide a checkout path and a ${flag} inside it.`,
+      });
     }
   }
+  if (values.local === "") {
+    return yield* new InvalidDestination({
+      message: "Point --local at an existing supabase/supabase checkout.",
+    });
+  }
+  if (path.resolve(specPath) === path.resolve(sidebarPath)) {
+    return yield* new InvalidDestination({
+      message: "Refusing to write the spec and sidebar to the same path.",
+    });
+  }
+
+  const inspectDestinations = Effect.fn("Docs.inspectDestinations")(function* (
+    checkoutDir: string,
+  ) {
+    const checkout = yield* fs.realPath(checkoutDir).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () =>
+          Effect.fail(
+            new InvalidDestination({
+              message: "Point --local at an existing supabase/supabase checkout.",
+            }),
+          ),
+      ),
+    );
+    const inspect = (relative: string) =>
+      Effect.gen(function* () {
+        const destination = path.resolve(checkout, relative);
+        const parent = yield* fs.realPath(path.dirname(destination));
+        if (parent !== checkout && !isInside(path.relative(checkout, parent))) {
+          return yield* new InvalidDestination({
+            message: `Destination is outside the checkout: ${destination}`,
+          });
+        }
+        const target = path.join(parent, path.basename(destination));
+        const info = yield* fs.stat(target).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.void,
+          ),
+        );
+        const isSymlink =
+          info === undefined
+            ? yield* fs.readLink(target).pipe(
+                Effect.as(true),
+                Effect.catchIf(
+                  (error) => error.reason._tag === "NotFound",
+                  () => Effect.succeed(false),
+                ),
+              )
+            : (yield* fs.realPath(target)) !== target;
+        if (isSymlink) {
+          return yield* new InvalidDestination({
+            message: `Refusing to write through a symlink: ${target}`,
+          });
+        }
+        if (info !== undefined && info.type !== "File") {
+          return yield* new InvalidDestination({ message: `Expected a regular file at ${target}` });
+        }
+        return { parent, target, info };
+      });
+    const spec = yield* inspect(specPath);
+    const sidebar = yield* inspect(sidebarPath);
+    if (
+      spec.target === sidebar.target ||
+      (spec.info !== undefined &&
+        sidebar.info !== undefined &&
+        spec.info.dev === sidebar.info.dev &&
+        Option.isSome(spec.info.ino) &&
+        Option.isSome(sidebar.info.ino) &&
+        spec.info.ino.value === sidebar.info.ino.value)
+    ) {
+      return yield* new InvalidDestination({
+        message: "Refusing to write the spec and sidebar to the same file.",
+      });
+    }
+    return { spec, sidebar };
+  });
+
+  const localDestinations =
+    localDir === undefined ? undefined : yield* inspectDestinations(localDir);
 
   const spec = yield* Effect.tryPromise({
     try: () => Bun.stdin.text(),
@@ -89,29 +172,71 @@ const main = Effect.gen(function* () {
     ),
   );
 
+  const sidebar = yield* Effect.try(() => stringifyDocsSidebar(buildDocsSidebar(rootCommand)));
+
   if (dryRun) {
     yield* Console.log(
       localDir === undefined
-        ? `Would publish ${spec.length} bytes to ${repo}:${specPath} on branch ${branch}`
-        : `Would write ${spec.length} bytes to ${path.join(localDir, specPath)}`,
+        ? `Would publish ${specPath} and ${sidebarPath} to ${repo} on branch ${branch}`
+        : `Would write ${path.join(localDir, specPath)} and ${path.join(localDir, sidebarPath)}`,
     );
     return yield* Effect.sync(() => process.exit(0));
   }
 
   const prettier = path.resolve(import.meta.dir, "../node_modules/.bin/prettier");
-  const writeSpec = Effect.fn("Docs.writeSpec")(function* (checkoutDir: string) {
-    const target = path.join(checkoutDir, specPath);
-    yield* fs.writeFileString(target, spec);
+  const writeReference = Effect.fn("Docs.writeReference")(function* (checkoutDir: string) {
+    const destinations = localDestinations ?? (yield* inspectDestinations(checkoutDir));
+    const specTemp = yield* fs.makeTempDirectoryScoped({
+      directory: destinations.spec.parent,
+      prefix: ".cli-reference-",
+    });
+    const sidebarTemp = yield* fs.makeTempDirectoryScoped({
+      directory: destinations.sidebar.parent,
+      prefix: ".cli-reference-",
+    });
+    const preparedSpec = path.join(specTemp, "commands.yaml");
+    const preparedSidebar = path.join(sidebarTemp, "sections.json");
+    const backup = path.join(specTemp, "original");
+    yield* fs.writeFileString(preparedSpec, spec);
     yield* shell(
       () =>
-        $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${target}`,
+        $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${preparedSpec}`,
+    );
+    yield* fs.writeFileString(preparedSidebar, `${sidebar}\n`);
+    if (destinations.spec.info !== undefined) {
+      yield* fs.copyFile(destinations.spec.target, backup);
+      yield* fs.chmod(preparedSpec, destinations.spec.info.mode & 0o777);
+    }
+    if (destinations.sidebar.info !== undefined) {
+      yield* fs.chmod(preparedSidebar, destinations.sidebar.info.mode & 0o777);
+    }
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* fs.rename(preparedSpec, destinations.spec.target);
+        yield* fs
+          .rename(preparedSidebar, destinations.sidebar.target)
+          .pipe(
+            Effect.onError(() =>
+              (destinations.spec.info === undefined
+                ? fs.remove(destinations.spec.target)
+                : fs.rename(backup, destinations.spec.target)
+              ).pipe(
+                Effect.catch((error) =>
+                  Console.error(`Could not restore ${destinations.spec.target}: ${error.message}`),
+                ),
+              ),
+            ),
+          );
+      }),
     );
     yield* Effect.annotateCurrentSpan("docs.commands.count", commands.length);
-  });
+  }, Effect.scoped);
 
   if (localDir !== undefined) {
-    yield* writeSpec(localDir);
-    yield* Console.log(`Wrote CLI reference to ${path.join(localDir, specPath)}`);
+    yield* writeReference(localDir);
+    yield* Console.log(
+      `Wrote CLI reference to ${path.join(localDir, specPath)} and ${path.join(localDir, sidebarPath)}`,
+    );
     return;
   }
 
@@ -120,21 +245,15 @@ const main = Effect.gen(function* () {
     repo,
     base,
     branch,
-    stagedPath: specPath,
-    write: writeSpec,
+    stagedPaths: [specPath, sidebarPath],
+    write: writeReference,
     commitMessage: message,
     pullRequestTitle: message,
     pullRequestBody: [
       "Updates the CLI reference from the supabase/cli release workflow.",
       "",
-      "Generated by `scripts/generate-docs-spec.ts` in supabase/cli — edit the",
-      "command tree or the content under `apps/cli/docs/` there rather than this",
-      "file.",
-      "",
-      "Generate `apps/docs/spec/common-cli-sections.json` content with `pnpm docs:sidebar`",
-      "from `apps/cli` in supabase/cli and copy it here; missing entries silently drop pages.",
-      "Sidebar fixes can be committed directly onto this branch; later releases",
-      "add commits on top instead of rewriting it.",
+      "The command spec and sidebar are generated from the same CLI command tree.",
+      "For changes, edit the command tree or the content under `apps/cli/docs/` in supabase/cli.",
     ].join("\n"),
     autoMerge: false,
   });
@@ -143,6 +262,9 @@ const main = Effect.gen(function* () {
 await Effect.runPromise(
   main.pipe(
     Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+    Effect.catchTag("InvalidDestination", (error) =>
+      Console.error(error.message).pipe(Effect.andThen(Effect.sync(() => process.exit(1)))),
+    ),
     Effect.catch((error) => Effect.die(error.cause ?? error)),
   ),
 );
