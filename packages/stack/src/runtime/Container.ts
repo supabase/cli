@@ -144,15 +144,22 @@ const engineKind = (
           ? "port-allocation"
           : undefined;
 
+const DAEMON_PROBE_TIMEOUT = "2 seconds";
+const DAEMON_PROBE_FORMAT = {
+  docker: "{{.ServerVersion}} running={{.ContainersRunning}}",
+  podman: "{{.Version.Version}} running={{.Store.ContainerStore.Running}}",
+} as const;
+
 /** Names the stalled engine subcommand and its latest stderr, never the full argv. */
 const commandTimedOut = (
   args: ReadonlyArray<string>,
   timeout: Duration.Input,
   stderr: string,
+  daemon: string,
 ): Cause.TimeoutError => {
   const tail = stderr.trim().slice(-2000);
   return new Cause.TimeoutError(
-    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}; daemon: ${daemon}`,
   );
 };
 
@@ -590,9 +597,9 @@ export const makeContainerRuntime = (options: {
                 Effect.timeoutOrElse({
                   duration: timeout,
                   orElse: () =>
-                    Ref.get(stderrSoFar).pipe(
-                      Effect.flatMap((stderr) =>
-                        Effect.fail(commandTimedOut(args, timeout, stderr)),
+                    Effect.all([Ref.get(stderrSoFar), daemonState]).pipe(
+                      Effect.flatMap(([stderr, daemon]) =>
+                        Effect.fail(commandTimedOut(args, timeout, stderr, daemon)),
                       ),
                     ),
                 }),
@@ -601,6 +608,28 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
       );
     });
+
+    // Separates a daemon-wide stall from one engine call stuck on a single object; runs
+    // without its own command timeout so a stalled probe cannot probe again.
+    const daemonState: Effect.Effect<string> = run(
+      ["info", "--format", DAEMON_PROBE_FORMAT[engine]],
+      { timeout: undefined },
+    ).pipe(
+      Effect.timeout(DAEMON_PROBE_TIMEOUT),
+      Effect.map((info) => ({ outcome: "responsive", text: `responsive (${info})` })),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.succeed({
+            outcome: "unresponsive",
+            text: `unresponsive to info within ${DAEMON_PROBE_TIMEOUT}`,
+          }),
+        ContainerError: (error) =>
+          Effect.succeed({ outcome: "failed", text: `info failed: ${error.message}` }),
+      }),
+      Effect.tap(({ outcome }) => Effect.annotateCurrentSpan("container.daemon_state", outcome)),
+      Effect.map(({ text }) => text),
+      Effect.withSpan("Container.daemonState"),
+    );
 
     const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
     const present = (image: string) =>
