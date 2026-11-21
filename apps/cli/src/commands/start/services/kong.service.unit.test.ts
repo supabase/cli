@@ -98,10 +98,12 @@ describe("buildKongEmailTemplateBind", () => {
 });
 
 describe("buildKongEntrypointScript", () => {
-  test("writes only the custom_nginx.template heredoc, then execs docker-entrypoint.sh (minus the secretFiles-carried heredocs)", () => {
+  test("renders the nginx sizing exports and the custom_nginx.template heredoc, then execs docker-entrypoint.sh", () => {
     const script = buildKongEntrypointScript("NGINX_TEMPLATE");
     expect(script).toBe(
-      "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
+      'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
+        "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
+        "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
         "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n" +
         "NGINX_TEMPLATE\nEOF\n",
     );
