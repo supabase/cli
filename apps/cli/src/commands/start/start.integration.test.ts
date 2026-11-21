@@ -1886,7 +1886,7 @@ describe("start integration", () => {
       );
     });
 
-    it.effect("creates the gateway at Kong's full open-file limit", () =>
+    it.effect("passes Kong's open-file limit to the container create command", () =>
       Effect.gen(function* () {
         /* darwin reports no host hard limit, so the test never reads this machine's. */
         const { layer, child } = yield* setup({ platform: "darwin" });

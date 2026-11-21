@@ -162,7 +162,6 @@ describe("buildKongContainerSpec", () => {
       expect(spec.entrypoint).toBe("sh");
       expect(spec.cmd?.[0]).toBe("-c");
       expect(spec.restartPolicy).toBe("unless-stopped");
-      expect(spec.ulimits).toEqual(["nofile=16384:16384"]);
       expect(spec.networkId).toBe("supabase_network_proj");
       expect(spec.networkAliases).toEqual(["kong", "api.supabase.internal"]);
       expect(spec.labels).toEqual({});
