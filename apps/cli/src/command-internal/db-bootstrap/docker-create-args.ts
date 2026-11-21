@@ -138,6 +138,8 @@ export interface StartContainerSpec {
   readonly autoRemove?: boolean;
   /** Cleared globally under Bitbucket Pipelines; see {@link applyBitbucketStartContainerFilter}. */
   readonly securityOpt?: ReadonlyArray<string>;
+  /** Each emitted as `--ulimit <value>`, e.g. `nofile=16384:16384`. */
+  readonly ulimits?: ReadonlyArray<string>;
   /** Merging in the platform default extra host is a caller concern; this builder just emits whatever is passed here. */
   readonly extraHosts?: ReadonlyArray<string>;
   /** The Docker network every container joins; resolved by the caller. */
@@ -268,6 +270,7 @@ export function buildStartContainerCreateArgs(spec: StartContainerSpec): Readonl
     ...(spec.healthcheck === undefined ? [] : buildHealthcheckArgs(spec.healthcheck)),
     ...(spec.restartPolicy === undefined ? [] : ["--restart", spec.restartPolicy]),
     ...(spec.securityOpt ?? []).flatMap((opt) => ["--security-opt", opt]),
+    ...(spec.ulimits ?? []).flatMap((ulimit) => ["--ulimit", ulimit]),
     ...(spec.extraHosts ?? []).flatMap((host) => ["--add-host", host]),
     "--network",
     spec.networkId,

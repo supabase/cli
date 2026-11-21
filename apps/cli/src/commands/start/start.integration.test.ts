@@ -630,6 +630,8 @@ interface SetupOpts {
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   /** Replaces the factory that dies when a local start reaches for the Management API. */
   readonly platformApiFactoryLayer?: Layer.Layer<CommandPlatformApiFactory>;
+  /** Host OS reported by `RuntimeInfo`; defaults to `"linux"`. */
+  readonly platform?: NodeJS.Platform;
   readonly configuredProjectId?: string;
   /** Raw `config.toml` contents — overrides `configuredProjectId`'s single-line default. */
   readonly configContents?: string;
@@ -684,7 +686,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
     // elsewhere in this merge.
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
-    mockRuntimeInfo({ platform: "linux" }),
+    mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
     opts.platformApiFactoryLayer ??
       Layer.succeed(CommandPlatformApiFactory, {
         make: Effect.die("CommandPlatformApiFactory should not be used by a local start"),
@@ -1883,6 +1885,22 @@ describe("start integration", () => {
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );
     });
+
+    it.effect("creates the gateway at Kong's full open-file limit", () =>
+      Effect.gen(function* () {
+        /* darwin reports no host hard limit, so the test never reads this machine's. */
+        const { layer, child } = yield* setup({ platform: "darwin" });
+
+        yield* start(flags()).pipe(Effect.provide(layer));
+
+        const kongUlimits = child.spawned
+          .find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          )
+          ?.args.filter((_, i, args) => args[i - 1] === "--ulimit");
+        expect(kongUlimits).toEqual(["nofile=16384:16384"]);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
 
     it.effect(
       "starts Studio in a fresh project on Podman, which rejects missing bind sources",

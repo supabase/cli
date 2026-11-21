@@ -93,6 +93,19 @@ export function resolveKongNginxWorkerProcesses(
   return envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
 
+const KONG_AUTO_NOFILE_CEILING = 16384;
+
+/**
+ * Kong's `auto` worker_connections is min(ulimit -n, 16384), so a 1024 engine
+ * default caps it there. Lifts it only where the host hard limit allows, else
+ * keeps the engine default.
+ */
+export function kongNofileUlimits(hostHardLimit: number | undefined): ReadonlyArray<string> {
+  return hostHardLimit === undefined || hostHardLimit >= KONG_AUTO_NOFILE_CEILING
+    ? [`nofile=${KONG_AUTO_NOFILE_CEILING}:${KONG_AUTO_NOFILE_CEILING}`]
+    : [];
+}
+
 export interface KongEmailTemplateMount {
   /**
    * The `config.auth.email.template` key, or `<key>_notification` for a
@@ -195,6 +208,8 @@ export interface KongContainerSpecInput {
   readonly poolerId: string;
   /** Already resolved by the caller via {@link resolveKongNginxWorkerProcesses}, keeping this builder pure. */
   readonly nginxWorkerProcesses: string;
+  /** Already resolved by the caller via {@link kongNofileUlimits}, keeping this builder pure. */
+  readonly nofileUlimits: ReadonlyArray<string>;
   /**
    * Every `config.auth.email.template.*`/enabled `notification.*` entry the
    * caller has gathered — see {@link KongEmailTemplateMount}. Defaults to `[]`.
@@ -277,6 +292,7 @@ export function buildKongContainerSpec(
       retries: 10,
     },
     restartPolicy: "unless-stopped",
+    ulimits: input.nofileUlimits,
     networkId: input.networkId,
     networkAliases: KONG_NETWORK_ALIASES,
     labels: {},

@@ -9,6 +9,7 @@ import {
   buildKongEmailTemplateBind,
   buildKongEntrypointScript,
   buildKongQueryToken,
+  kongNofileUlimits,
   resolveKongNginxWorkerProcesses,
   type KongApiKeys,
   type KongContainerSpecInput,
@@ -49,6 +50,18 @@ describe("resolveKongNginxWorkerProcesses", () => {
 
   test("uses a project dotenv-only value", () => {
     expect(resolveKongNginxWorkerProcesses({ KONG_NGINX_WORKER_PROCESSES: "auto" })).toBe("auto");
+  });
+});
+
+describe("kongNofileUlimits", () => {
+  test("lifts the container limit to Kong's 16384 auto ceiling where the host allows it", () => {
+    expect(kongNofileUlimits(524288)).toEqual(["nofile=16384:16384"]);
+    expect(kongNofileUlimits(16384)).toEqual(["nofile=16384:16384"]);
+    expect(kongNofileUlimits(undefined)).toEqual(["nofile=16384:16384"]);
+  });
+
+  test("keeps the engine default when the host hard limit is lower", () => {
+    expect(kongNofileUlimits(16383)).toEqual([]);
   });
 });
 
@@ -135,6 +148,7 @@ const base: KongContainerSpecInput = {
   logflareId: "supabase_analytics_proj",
   poolerId: "supabase_pooler_proj",
   nginxWorkerProcesses: "1",
+  nofileUlimits: ["nofile=16384:16384"],
 };
 
 describe("buildKongContainerSpec", () => {
@@ -148,6 +162,7 @@ describe("buildKongContainerSpec", () => {
       expect(spec.entrypoint).toBe("sh");
       expect(spec.cmd?.[0]).toBe("-c");
       expect(spec.restartPolicy).toBe("unless-stopped");
+      expect(spec.ulimits).toEqual(["nofile=16384:16384"]);
       expect(spec.networkId).toBe("supabase_network_proj");
       expect(spec.networkAliases).toEqual(["kong", "api.supabase.internal"]);
       expect(spec.labels).toEqual({});

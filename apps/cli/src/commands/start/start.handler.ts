@@ -18,6 +18,7 @@ import {
 } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { hostHardNofileLimit } from "../../shared/stack-constants.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../shared/telemetry/event-catalog.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -165,6 +166,7 @@ import {
 } from "./services/vector.service.ts";
 import {
   buildKongContainerSpec,
+  kongNofileUlimits,
   resolveKongNginxWorkerProcesses,
   type KongEmailTemplateMount,
 } from "./services/kong.service.ts";
@@ -979,6 +981,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 logflareId: logflareContainerName,
                 poolerId: poolerContainerName,
                 nginxWorkerProcesses: resolveKongNginxWorkerProcesses(projectEnvValues),
+                nofileUlimits: kongNofileUlimits(hostHardNofileLimit(runtimeInfo.platform)),
                 emailTemplateMounts: kongEmailTemplateMounts,
               },
               { path, posixPath },

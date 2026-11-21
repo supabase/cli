@@ -5,7 +5,7 @@
  *
  * Delegates to `functions serve`'s bring-up (`shared/functions/serve.ts`)
  * rather than the shared `createContainer` spec, since Edge Runtime needs
- * `--workdir`/`--ulimit` flags and a secret-delivery mechanism (`--env-file`)
+ * a `--workdir` flag and a secret-delivery mechanism (`--env-file`)
  * that spec can't express.
  * `start.handler.ts` must call {@link startStackEdgeRuntimeContainer} directly, the
  * same way it already special-cases Postgres.
