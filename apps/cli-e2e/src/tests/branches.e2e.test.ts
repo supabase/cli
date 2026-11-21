@@ -20,6 +20,19 @@ describe("branches", () => {
     );
 
     testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no branches",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run(["branches", "list", `--remote=${projectRef}`]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
+    );
+
+    testBehaviour.skipIf(isRecording)(
       "returns json output with --output json",
       ({ run, projectRef, signal }) =>
         runE2e(

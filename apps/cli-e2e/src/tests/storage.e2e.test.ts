@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 import { HttpClient } from "effect/http";
 import { describe, expect } from "vitest";
+import { isRecording } from "./env.ts";
 import { getRequestLog } from "./request-log.ts";
 import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
@@ -40,6 +41,20 @@ describe("storage ls", () => {
       }),
       signal,
     ),
+  );
+
+  testBehaviour.skipIf(isRecording)(
+    "shows an empty state when there are no objects",
+    ({ workspace, run, apiUrl, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          yield* setupStorageWorkspace(workspace.path, apiUrl);
+          const result = yield* run(["storage", "ls", ...EXPERIMENTAL_FLAGS, `ss:///${BUCKET}/`]);
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+        }),
+        signal,
+      ),
   );
 
   testBehaviour("lists objects recursively", ({ workspace, run, apiUrl, signal }) =>

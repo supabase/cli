@@ -23,6 +23,19 @@ describe("sso", () => {
       ),
     );
 
+    testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no SSO providers",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run(["sso", "list", `--remote=${projectRef}`]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
+    );
+
     testBehaviour("returns json output with --output json", ({ run, projectRef, signal }) =>
       runE2e(
         Effect.gen(function* () {

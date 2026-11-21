@@ -1,0 +1,80 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/replayfixtureprojref/database/query",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "content-length": "132",
+        "content-type": "application/json",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "query": "SELECT 42 AS int_value, 19.99::numeric AS price, -0.5::float8 AS delta, 3000000000::bigint AS big_count",
+        "read_only": true
+      }
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "x-gotrue-id": "__UUID__",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        {
+          "int_value": 42,
+          "price": 19.99,
+          "delta": -0.5,
+          "big_count": 3000000000
+        }
+      ]
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/replayfixtureprojref",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "__UUID__",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "112",
+        "x-ratelimit-reset": "36"
+      },
+      "body": {
+        "id": "replayfixtureprojref",
+        "ref": "replayfixtureprojref",
+        "organization_id": "replayfixtureprojref",
+        "organization_slug": "replayfixtureprojref",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.replayfixtureprojref.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  }
+]

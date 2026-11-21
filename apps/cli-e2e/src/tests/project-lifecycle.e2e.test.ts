@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Path } from "effect";
-import { describe, expect, inject, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createHarness, makeTempDir } from "@supabase/cli-test-helpers";
 import { ACCESS_TOKEN, isRecording, PROJECT_REF } from "./env.ts";
-import { execCli, postControl, runE2e, testBehaviour } from "./test-context.ts";
+import { execCli, makeTenantUrl, postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 describe("init", () => {
   testBehaviour("creates supabase/config.toml and exits zero", ({ run, workspace, signal }) =>
@@ -110,7 +110,7 @@ describe("link", () => {
   // --project-ref in non-TTY mode. A raw test omits it so the CLI correctly
   // requires the --project-ref flag.
   test("exits non-zero without --project-ref in non-TTY", ({ signal }) => {
-    const serverUrl = inject("replayServerUrl") as string;
+    const serverUrl = makeTenantUrl("link-no-ref");
     return runE2e(
       Effect.acquireUseRelease(
         Effect.promise(() => makeTempDir("cli-e2e-link-no-ref-")),
