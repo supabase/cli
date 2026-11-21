@@ -200,6 +200,7 @@ DbSetupError
 DbStartFromBackupUnsupportedError
 DeclarativeApplyError
 DeclarativeCompatibilityError
+DeclarativeDestructiveChangesError
 DeclarativeDiffError
 DeclarativeMutuallyExclusiveFlagsError
 DeclarativeNoFilesGeneratedError
