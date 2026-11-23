@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -19,6 +20,7 @@ const config = {
 export type SsoInfoFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoInfoCommand = Command.make("info", config).pipe(
+  withSidebar({ title: "See your project's SSO information" }),
   Command.withDescription(
     "Returns all of the important SSO information necessary for your project to be registered with a SAML 2.0 compatible identity provider.",
   ),

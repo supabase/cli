@@ -89,6 +89,7 @@ import {
   mapTargetError,
   rejectStackOutput,
   selectStack,
+  sharedMemorySuggestion,
   StackApi,
   stackCapabilityForService,
   StackTargetResolver,
@@ -167,7 +168,9 @@ const stackError = (
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved, configFile);
+  const suggestion =
+    portConflictSuggestion(cause.conflict, requested, portSaved, configFile) ??
+    sharedMemorySuggestion(`${cause.message}\n${detail ?? ""}`);
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,

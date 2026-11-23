@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbBloat } from "./bloat.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbBloatCommand = Command.make("bloat", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show estimated database bloat" }),
   Command.withDescription("Estimates space allocated to a relation that is full of dead tuples."),
   Command.withShortDescription("Show relation bloat"),
   withPermissions(INSPECT_DB_PERMISSIONS),

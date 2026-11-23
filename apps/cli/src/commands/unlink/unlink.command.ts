@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command } from "effect/cli";
 
@@ -30,6 +31,7 @@ const unlinkRuntimeLayer = Layer.mergeAll(
 );
 
 export const unlinkCommand = Command.make("unlink").pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Unlink a Supabase project."),
   Command.withShortDescription("Unlink a Supabase project"),
   withPermissions({ operations: [] }),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { OptionalSubcommand } from "../../shared/output/optional-subcommand-usage.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
@@ -141,6 +142,7 @@ const logsReadFlags = [
 
 export const logsCommandFor = () =>
   Command.make("logs", config).pipe(
+    withSidebar({ category: "logs", title: "Browse local or hosted logs" }),
     Command.annotate(OptionalSubcommand, true),
     Command.withDescription(
       "Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once. Explicit --output-format text disables the viewer. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
@@ -185,6 +187,7 @@ export const logsCommandFor = () =>
     }),
     Command.withSubcommands([
       Command.make("sources", sourcesConfig).pipe(
+        withSidebar({ title: "List supported log sources and filters" }),
         Command.withDescription(
           "List supported sources and filters. Hosted entries describe capabilities and do not imply that rows exist. Local entries list retained stack instances. Use --output-format json|stream-json for structured output; -o/--output is unsupported.",
         ),

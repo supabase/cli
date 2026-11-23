@@ -66,6 +66,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "project-id",
   "project-ref",
   "query-timeout",
+  "reason",
   "region",
   "release-channel",
   "remote-label",

@@ -22,10 +22,10 @@ import {
   encodeCliConfigToJson,
   encodeCliConfigToToml,
   cliConfigValueSourceAt,
-  isObject,
   type InternalLoadCliConfigOptions,
   type LoadedCliConfig,
 } from "./config-document.ts";
+import { isObject } from "./lib/document-value.ts";
 import {
   configJsonPath,
   configTomlPath,

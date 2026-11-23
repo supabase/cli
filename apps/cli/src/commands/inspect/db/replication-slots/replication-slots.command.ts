@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbReplicationSlots } from "./replication-slots.handler.ts";
@@ -15,6 +16,7 @@ export const inspectDbReplicationSlotsCommand = Command.make(
   "replication-slots",
   INSPECT_DB_FLAGS,
 ).pipe(
+  withSidebar({ title: "Show information about replication slots" }),
   Command.withDescription("Show information about replication slots on the database."),
   Command.withShortDescription("Show replication slots"),
   withPermissions(INSPECT_DB_PERMISSIONS),

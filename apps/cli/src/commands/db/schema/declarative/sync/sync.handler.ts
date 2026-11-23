@@ -43,6 +43,7 @@ import {
 import {
   DeclarativeApplyError,
   DeclarativeCompatibilityError,
+  DeclarativeDestructiveChangesError,
   DeclarativeMutuallyExclusiveFlagsError,
   DeclarativeNoFilesGeneratedError,
   DeclarativeNonInteractiveError,
@@ -459,6 +460,14 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     }
     yield* output.raw("Generated migration SQL:\n", "stderr");
     yield* output.raw(`${result.diffSQL}\n`, "stderr");
+    if (flags.failOnDestructive && result.dropWarnings.length > 0) {
+      return yield* new DeclarativeDestructiveChangesError({
+        message: "Found destructive changes in schema diff; no migration was written.",
+        detail: result.dropWarnings.join("\n"),
+        suggestion:
+          "Check that these destructive changes are expected, then rerun without --fail-on-destructive to write the migration.",
+      });
+    }
 
     // Step 4: resolve migration name (prompt in TTY when --name unset).
     const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);

@@ -83,6 +83,7 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
     | "port_conflict"
     | "filesystem"
     | "database";
+  readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

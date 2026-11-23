@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
@@ -70,6 +71,7 @@ export const pullHandler = (flags: PullFlags) =>
   );
 
 export const pullCommand = Command.make("pull", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription(
     "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into the project config file, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
   ),

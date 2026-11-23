@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { Effect } from "effect";
 import { printParseErrorCode, visit } from "jsonc-parser";
 import * as SmolToml from "smol-toml";
-import { convertCliConfigTomlToJsonc } from "./config-convert.ts";
+import { CliConfigConvertError, convertCliConfigTomlToJsonc } from "./config-convert.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scanTomlDocument } from "./toml-scan.ts";
 
@@ -191,11 +190,15 @@ function proseComments(source: string): string[] {
 
 function checkCase(source: string): string[] {
   const failures: string[] = [];
-  const outcome = Effect.runSync(Effect.result(convertCliConfigTomlToJsonc(source)));
-  if (outcome._tag === "Failure") {
-    return [`conversion refused: ${outcome.failure.reason}: ${outcome.failure.detail}`];
+  let text: string;
+  try {
+    ({ text } = convertCliConfigTomlToJsonc(source));
+  } catch (error) {
+    if (error instanceof CliConfigConvertError) {
+      return [`conversion refused: ${error.reason}: ${error.detail}`];
+    }
+    throw error;
   }
-  const { text } = outcome.success;
 
   const base = strictParse(text);
   if (base.problems.length > 0) failures.push(`output is not strict JSONC: ${base.problems}`);

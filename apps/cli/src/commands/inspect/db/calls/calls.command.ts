@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbCalls } from "./calls.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbCallsCommand = Command.make("calls", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show most frequently run queries" }),
   Command.withDescription("Show queries from pg_stat_statements ordered by total times called."),
   Command.withShortDescription("Show queries by call count"),
   withPermissions(INSPECT_DB_PERMISSIONS),

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { functionsListCommand } from "./list/list.command.ts";
 import { functionsDeleteCommand } from "./delete/delete.command.ts";
@@ -7,6 +8,7 @@ import { functionsNewCommand } from "./new/new.command.ts";
 import { functionsServeCommand } from "./serve/serve.command.ts";
 
 export const functionsCommand = Command.make("functions").pipe(
+  withSidebar({ category: "edge-functions", title: "Manage edge functions" }),
   Command.withDescription("Manage Supabase Edge functions."),
   Command.withShortDescription("Manage Supabase Edge functions"),
   Command.withSubcommands([

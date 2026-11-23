@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -26,6 +27,7 @@ const config = {
 export type SslEnforcementGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const sslEnforcementGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve the current SSL enforcement configuration" }),
   Command.withDescription("Get the current SSL enforcement configuration."),
   Command.withShortDescription("Get SSL enforcement configuration"),
   withPermissions(

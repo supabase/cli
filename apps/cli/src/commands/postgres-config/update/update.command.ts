@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -48,6 +49,7 @@ const config = {
 export type PostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
+  withSidebar({ title: "Update Postgres configurations" }),
   Command.withDescription("Update Postgres database config."),
   Command.withShortDescription("Update Postgres database config"),
   withPermissions(

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -75,6 +76,7 @@ const config = {
 export type SsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoUpdateCommand = Command.make("update", config).pipe(
+  withSidebar({ title: "Update an identity provider" }),
   // The `of a already added` grammar slip is part of the established output
   // string — don't fix it here.
   Command.withDescription(

@@ -39,6 +39,7 @@ import {
   reportPgDeltaNextDiagnostics,
 } from "./pgdelta-next-diagnostics.ts";
 import { PgDeltaNextShadow } from "./pgdelta-next-shadow.service.ts";
+import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 
 function pgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
   if (cause instanceof DbConnectError) return cause.suggestion;
@@ -49,7 +50,9 @@ function pgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
 
 export const pgDeltaNextEngineError = (cause: unknown) => {
   if (cause instanceof PgDeltaEngineError) return cause;
-  const suggestion = pgDeltaNextConnectSuggestion(cause);
+  const suggestion =
+    pgDeltaNextConnectSuggestion(cause) ??
+    (cause instanceof DeclarativeShadowDbError ? cause.suggestion : undefined);
   const diagnostics = cause instanceof PgDeltaNextError ? cause.diagnostics : undefined;
   return new PgDeltaEngineError({
     message:
