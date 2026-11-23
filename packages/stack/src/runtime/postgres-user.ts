@@ -143,7 +143,8 @@ const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag ===
 
 /**
  * Confirms `target`'s unresolved state (one `lstat`, so a symlink is never followed) is a
- * directory worth trusting: owned by `uid`, or by root when `allowRootOwner`, and never writable by
+ * directory worth trusting: owned by `uid`, or when `allowRootOwner` by uid 0 or the default
+ * overflow uid 65534 a user namespace reports for an unmapped host root, and never writable by
  * group or others unless `allowStickyWritable` and the sticky bit guard it, as `/tmp` itself is.
  */
 const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDirectory")(function* (
@@ -167,7 +168,6 @@ const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDire
       operation: "launch",
       message: `${target} is not a directory; refusing to use it for the native runtime root`,
     });
-  /* A user namespace shows unmapped host root as the overflow uid 65534. */
   if (info.uid !== uid && !(policy.allowRootOwner && (info.uid === 0 || info.uid === 65_534)))
     return yield* new ServiceError({
       operation: "launch",
