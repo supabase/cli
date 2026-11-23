@@ -106,8 +106,8 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   readonly aliases?: Readonly<Record<string, string>>;
 }
 
-function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
-  const match = /\/org\/([^/]+)/.exec(upgradeUrl);
+function orgSlugFromUpgradeUrl(upgradeUrl: string | undefined): string {
+  const match = /\/org\/([^/]+)/.exec(upgradeUrl ?? "");
   return match?.[1] ?? "";
 }
 

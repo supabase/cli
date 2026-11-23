@@ -5,6 +5,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type { PlanGateEntitlement } from "../shared/output/normalize-error.ts";
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 
 import { sanitizeInlineName, mapHttpError, unexpectedStatusMessage } from "./http-errors.ts";
@@ -18,6 +19,7 @@ class TestStatusError extends Data.TaggedError("TestStatusError")<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly entitlement?: PlanGateEntitlement;
 }> {}
 
 const mapError = mapHttpError({
@@ -121,13 +123,32 @@ describe("mapHttpError plan-gate entitlement", () => {
       upgradeUrl: "https://supabase.com@evil.example/billing",
     },
     {
-      case: "a feature carrying a bidi override",
-      feature: `backups${String.fromCodePoint(0x202e)}`,
-      upgradeUrl: UPGRADE_URL,
+      case: "an oversized upgrade_url",
+      feature: "backups",
+      upgradeUrl: `https://supabase.com/${"a".repeat(2100)}`,
     },
-  ])("drops the entitlement for $case", ({ feature, upgradeUrl }) =>
+    { case: "an absent upgrade_url", feature: "backups", upgradeUrl: undefined },
+  ])("keeps the gate without a URL for $case", ({ feature, upgradeUrl }) =>
     Effect.gen(function* () {
       const body = planGateBody({ feature, upgrade_url: upgradeUrl });
+
+      const error = yield* mapError(statusFailure(402, body)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "TestStatusError",
+        status: 402,
+        entitlement: { feature },
+      });
+      expect(error).not.toHaveProperty("entitlement.upgrade_url");
+    }),
+  );
+
+  it.effect("drops the entitlement for a feature carrying a bidi override", () =>
+    Effect.gen(function* () {
+      const body = planGateBody({
+        feature: `backups${String.fromCodePoint(0x202e)}`,
+        upgrade_url: UPGRADE_URL,
+      });
 
       const error = yield* mapError(statusFailure(402, body)).pipe(Effect.flip);
 
