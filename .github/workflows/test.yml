@@ -1,7 +1,7 @@
 name: Test
 
-# Release-notes PRs (head ref `release-notes/*`) only add markdown under
-# `release-notes/` and are published via approval — skip the full CI suite.
+# Skip tests for this repository's release-notes/* branches, which only add
+# release notes. The exemption doesn't apply to forks.
 #
 # Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
 # `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
