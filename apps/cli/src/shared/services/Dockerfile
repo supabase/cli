@@ -21,7 +21,7 @@ FROM postgrest/postgrest:v16.6 AS postgrest
 
 FROM supabase/postgres-meta:v0.100.1 AS pgmeta
 
-FROM supabase/studio:2026.11.16-sha-51bd16d AS studio
+FROM supabase/studio:2026.11.23-sha-4a73166 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
