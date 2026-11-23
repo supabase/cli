@@ -97,13 +97,11 @@ describe("loadStackConfig", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("runs Spark, sparkmeta and the named Studio instead of the Postgres services", () =>
+  it.effect("runs Spark and the named Studio on the Spark engine instead of Postgres", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-spark"
 [api]
 port = 55521
-[studio]
-api_url = "http://studio-api.localhost:55521"
 [experimental.spark]
 enabled = true
 executable = "/opt/spark/bin/spark"
@@ -112,20 +110,16 @@ studio_executable = "/opt/studio/bin/studio"
       const config = yield* load(root);
       const services = yield* config.creations("stack-spark");
 
-      expect(services.map(({ service }) => service)).toEqual(["spark", "sparkmeta", "studio"]);
+      expect(services.map(({ service }) => service)).toEqual(["spark", "studio"]);
       expect(byService(services).get("spark")).toEqual({
         service: "spark",
         config: { executable: "/opt/spark/bin/spark", projectRoot: root },
         endpoints: { http: { port: 55521 } },
       });
-      expect(byService(services).get("sparkmeta")?.config).toEqual({
-        projectRoot: root,
-        publicUrl: "http://studio-api.localhost:55521",
-      });
       const studio = byService(services).get("studio");
       expect(studio?.service === "studio" ? studio.config : undefined).toMatchObject({
         executable: "/opt/studio/bin/studio",
-        projectFromApi: true,
+        postgresEngine: "spark",
       });
     }).pipe(Effect.scoped),
   );
@@ -176,8 +170,7 @@ enabled = true
       expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
       for (const service of services)
-        if (service.service !== "spark" && service.service !== "sparkmeta")
-          expect(service.pin).toEqual(selection[service.service]);
+        if (service.service !== "spark") expect(service.pin).toEqual(selection[service.service]);
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
       ).toBeUndefined();

@@ -84,8 +84,6 @@ export const Description = Schema.Struct({
 });
 export interface Description extends Schema.Schema.Type<typeof Description> {}
 
-export const SchemaVersion = Schema.Struct({ schema_version: Schema.String });
-
 export const Migration = Schema.Struct({
   version: Schema.String,
   name: Schema.String,
@@ -105,17 +103,3 @@ const StatementStatus = Schema.Struct({
 });
 
 export const DryRunResult = Schema.Struct({ statuses: Schema.Array(StatementStatus) });
-
-export type Row = Record<string, unknown>;
-
-/** One statement of a script as Spark's parser sees it (`POST /_spark/v1/parse`). */
-export const ParsedStatement = Schema.Struct({
-  index: Schema.Finite,
-  kind: Schema.String,
-  category: Schema.Literals(["ddl", "dml", "query", "transaction", "session", "other"]),
-  statement: Schema.String,
-  line: Schema.Finite,
-});
-export interface ParsedStatement extends Schema.Schema.Type<typeof ParsedStatement> {}
-
-export const ParseResult = Schema.Struct({ statements: Schema.Array(ParsedStatement) });

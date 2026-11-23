@@ -3,7 +3,7 @@ import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, probeVacant, type PortError } from "./Ports.ts";
-import { bindTcp, serveTcp, type BackendAddress, ProxyError } from "./Proxy.ts";
+import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
@@ -32,11 +32,6 @@ export interface NetworkEndpoint {
    * claiming the shared port itself. Installed when the shared listener exists, queued otherwise.
    */
   readonly join?: ReadonlyArray<RouteContribution>;
-  /**
-   * Routes on a dedicated HTTP endpoint's own listener that go to the shared API listener instead
-   * of the endpoint's backend, so a service there answers some of this endpoint's paths.
-   */
-  readonly toShared?: ReadonlyArray<RouteContribution>;
   /** Sends each write to this endpoint, on every route, over a fresh upstream connection. */
   readonly freshWrites?: boolean;
   readonly enabled: Effect.Effect<boolean>;
@@ -134,14 +129,6 @@ const makeNetwork = (options: {
     const hostAddress = "127.0.0.1";
     const runtimeAddress = options.runtime === "native" ? "127.0.0.1" : DOCKER_HOST_ALIAS;
 
-    const sharedBackend: NetworkEndpoint["backend"] = Ref.get(shared).pipe(
-      Effect.flatMap((current) =>
-        current === undefined
-          ? Effect.fail(new ProxyError({ message: "the shared API listener is not bound" }))
-          : Effect.succeed({ host: hostAddress, port: current.claim }),
-      ),
-    );
-
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
     /** Maps one endpoint's route contributions to `HttpRoute`s; shared and joined ones are `gateway` routes. */
@@ -229,18 +216,9 @@ const makeNetwork = (options: {
                                 if (endpoint.protocol === "http") {
                                   yield* probe(key, host, port);
                                   const proxy = yield* makeHttpProxy({ host, port });
-                                  yield* proxy.setRoutes([
-                                    ...toHttpRoutes(id, [{ prefix: "/" }], endpoint, false),
-                                    ...toHttpRoutes(
-                                      id,
-                                      (endpoint.toShared ?? []).map((route) => ({
-                                        ...route,
-                                        target: sharedBackend,
-                                      })),
-                                      endpoint,
-                                      false,
-                                    ),
-                                  ]);
+                                  yield* proxy.setRoutes(
+                                    toHttpRoutes(id, [{ prefix: "/" }], endpoint, false),
+                                  );
                                   return { proxy };
                                 }
                                 yield* probe(key, host, port);

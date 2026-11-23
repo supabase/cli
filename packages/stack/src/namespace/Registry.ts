@@ -10,6 +10,9 @@ import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { holdLock } from "./Lock.ts";
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /** How long a destroyed stack's empty directories stay, so a same-id restart finds them. */
 const DESTROYED_RETENTION_MILLIS = 10 * 60 * 1000;
 
@@ -93,12 +96,48 @@ const checkId = (id: string): Effect.Effect<void, NamespaceError> =>
     ? Effect.void
     : Effect.fail(namespaceError("identity", `Invalid state id: ${id}`));
 
+/**
+ * A stack the previous CLI saved lists a `sparkmeta` service, a kind that no longer exists. Dropping it on read lets
+ * the stack stop and start again with its Spark database.
+ */
+const withoutRetiredServices = (state: unknown): unknown => {
+  if (!isRecord(state) || !Array.isArray(state.instances) || !isRecord(state.composition))
+    return state;
+  const retired = state.instances.flatMap((instance: unknown) =>
+    isRecord(instance) &&
+    isRecord(instance.creation) &&
+    instance.creation.service === "sparkmeta" &&
+    typeof instance.id === "string"
+      ? [instance.id]
+      : [],
+  );
+  if (retired.length === 0) return state;
+  const gone = new Set<unknown>(retired);
+  const kept = (items: unknown, ...keys: ReadonlyArray<string>) =>
+    Array.isArray(items)
+      ? items.filter(
+          (item: unknown) => !(isRecord(item) && keys.some((key) => gone.has(item[key]))),
+        )
+      : items;
+  return {
+    ...state,
+    instances: kept(state.instances, "id"),
+    composition: {
+      ...state.composition,
+      members: kept(state.composition.members, "id"),
+      dependencies: kept(state.composition.dependencies, "from", "to"),
+    },
+  };
+};
+
 const decodeState = (
   text: string,
   id: string,
   target: string,
 ): Effect.Effect<SavedStack, NamespaceError> =>
-  Schema.decodeEffect(Schema.fromJsonString(SavedStack))(text).pipe(
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
+    Effect.map(withoutRetiredServices),
+    Effect.flatMap(Schema.decodeUnknownEffect(SavedStack)),
     Effect.mapError((cause) =>
       namespaceError(
         "decode",

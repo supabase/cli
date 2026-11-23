@@ -22,7 +22,6 @@ import * as Pooler from "./Pooler.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Rest from "./Rest.ts";
 import * as Spark from "./spark/Spark.ts";
-import * as SparkMeta from "./spark/SparkMeta.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
 import {
@@ -54,7 +53,6 @@ const endpointSchemas = [
   ["analytics", Analytics.Endpoints],
   ["pooler", Pooler.Endpoints],
   ["spark", Spark.Endpoints],
-  ["sparkmeta", SparkMeta.Endpoints],
 ] as const;
 
 export const allowedEndpointNames = (kind: ServiceKind): ReadonlyArray<string> => {
@@ -95,7 +93,6 @@ export const ServiceCreation = Schema.Union([
   Analytics.Creation,
   Pooler.Creation,
   Spark.Creation,
-  SparkMeta.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
 
@@ -112,7 +109,6 @@ const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = 
   pgmeta: ["databaseUrl"],
   analytics: ["databaseUrl"],
   pooler: ["databaseUrl"],
-  sparkmeta: ["sparkUrl"],
 };
 
 /** Rejects a creation that lacks a required input before any lifecycle change. */
@@ -150,7 +146,6 @@ export const ServiceCreationInput = Schema.Union([
   Analytics.Creation,
   Pooler.Creation,
   Spark.Creation,
-  SparkMeta.Creation,
 ]);
 export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
 /** A restart candidate; a restart keeps the instance's saved pin. */
@@ -172,7 +167,6 @@ export const serviceSchemas = {
   analytics: Analytics.Config,
   pooler: Pooler.Config,
   spark: Spark.Config,
-  sparkmeta: SparkMeta.Config,
 } as const;
 
 const serviceError = (operation: string, cause: unknown) =>
@@ -457,12 +451,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
             creation,
             yield* makeProcessRecipe(options, deps, Spark.makeSpec()),
             Schema.is(Spark.Creation),
-          );
-        case "sparkmeta":
-          return catalogRecipe(
-            creation,
-            yield* SparkMeta.makeRecipe({ fs, path, client }),
-            Schema.is(SparkMeta.Creation),
           );
       }
     }),

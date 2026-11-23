@@ -135,7 +135,7 @@ const localSparkTarget = Effect.fn("SparkTarget.local")(function* () {
   const only = (schemas: ReadonlyArray<string>) => (schemas.length === 0 ? undefined : schemas);
   return SparkTarget.of({
     runQuery: (query, readOnly) =>
-      admin.queryText(query, readOnly).pipe(Effect.mapError(adminFailure("run query"))),
+      admin.queryText(query, [], readOnly).pipe(Effect.mapError(adminFailure("run query"))),
     listMigrations: admin.migrations.pipe(Effect.mapError(adminFailure("list migrations"))),
     applyMigration: (migration) =>
       admin

@@ -29,11 +29,8 @@ export const Config = Schema.Struct({
   cliVersion: Schema.optionalKey(Schema.String),
   /** A Studio launcher on the host to run instead of the pinned build, with the same environment. */
   executable: Schema.optionalKey(Schema.String),
-  /**
-   * Studio's own project detail route answered by the shared API listener's `/platform/projects`,
-   * the platform API's path, where a stand-in reports what the platform would (the database engine).
-   */
-  projectFromApi: Schema.optionalKey(Schema.Boolean),
+  /** The database engine Studio's project detail reports; Postgres when unset. */
+  postgresEngine: Schema.optionalKey(Schema.Literal("spark")),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -115,6 +112,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         values.EDGE_FUNCTIONS_URL = creation.config.functionsUrl;
       if (creation.config.cliVersion !== undefined)
         values.CURRENT_CLI_VERSION = creation.config.cliVersion;
+      if (creation.config.postgresEngine !== undefined)
+        values.POSTGRES_ENGINE = creation.config.postgresEngine;
       return values;
     }),
   args: () => Effect.succeed([]),

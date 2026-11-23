@@ -592,23 +592,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           message:
             "Studio on a Spark project needs a build with the Spark pg-meta fallbacks: set experimental.spark.studio_executable (or SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE), or set [studio] enabled = false",
         });
-      /** Spark serves the Data API and Auth itself; sparkmeta answers Studio and MCP. */
+      /** Spark serves the Data API, Auth and Studio's SQL itself. */
       const sparkCreations: ReadonlyArray<ServiceCreationType> = [
         {
           service: "spark",
           config: { executable: sparkExecutable, projectRoot },
           endpoints: { http: endpoint(apiPort) },
-        },
-        {
-          service: "sparkmeta",
-          // Studio's project detail comes from sparkmeta (D31), so its REST URL follows `[studio] api_url`.
-          config: {
-            projectRoot,
-            ...(studioCreation.config.publicApiUrl === undefined
-              ? {}
-              : { publicUrl: studioCreation.config.publicApiUrl }),
-          },
-          endpoints: { http: endpoint(undefined) },
         },
         ...(validatedConfig.studio.enabled
           ? [
@@ -619,7 +608,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: {
                       ...studioCreation.config,
                       executable: studioExecutable,
-                      projectFromApi: true,
+                      postgresEngine: "spark" as const,
                     },
                   },
             ]

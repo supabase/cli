@@ -4,6 +4,7 @@ import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeStandaloneService } from "../../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "../Catalog.ts";
+import { makeSparkAdmin } from "./Admin.ts";
 
 /** Spark has no published artifact, so the serving case runs only where a binary is named. */
 // oxlint-disable-next-line effecttsgo/process-env -- decides at collection time whether the case runs.
@@ -22,16 +23,7 @@ const options = (root: string, runtime: "native" | "docker" = "native") => ({
   claimNativePort: () => Effect.succeed(true),
 });
 
-/** A statement's status in a dry run; `code` is the SQLSTATE of a refusal when Spark gives one. */
-const DryRun = Schema.Struct({
-  statuses: Schema.Array(
-    Schema.Struct({
-      status: Schema.String,
-      code: Schema.optionalKey(Schema.NullOr(Schema.String)),
-      message: Schema.optionalKey(Schema.NullOr(Schema.String)),
-    }),
-  ),
-});
+const History = Schema.Array(Schema.Struct({ version: Schema.String }));
 
 const services = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp);
 
@@ -82,7 +74,7 @@ describe("spark recipe", () => {
   );
 
   it.live.runIf(sparkBinary !== undefined)(
-    "serves a project's migrated tables, and sparkmeta passes Studio's SQL and Spark's errors through",
+    "serves a project's migrated tables and runs Studio's pg-meta SQL, schema changes included, as sent",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -90,54 +82,51 @@ describe("spark recipe", () => {
           const path = yield* Path.Path;
           const client = yield* HttpClient.HttpClient;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-spark-serve-" });
-          yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
+          const migrationsDir = path.join(root, "supabase", "migrations");
+          yield* fs.makeDirectory(migrationsDir, { recursive: true });
           yield* fs.writeFileString(
             path.join(root, "supabase", "config.toml"),
             'project_id = "spark-test"\n',
           );
           yield* fs.writeFileString(
-            path.join(root, "supabase", "migrations", "20260101000000_notes.sql"),
+            path.join(migrationsDir, "20260101000000_notes.sql"),
             "create table public.notes (id bigint primary key, body text not null);\n",
           );
-          const sparkRecipe = yield* makeServiceRecipe(
+          const recipe = yield* makeServiceRecipe(
             { service: "spark", config: { executable: sparkBinary ?? "", projectRoot: root } },
             options(root),
           );
-          const spark = yield* makeStandaloneService(sparkRecipe.definition, {
+          const spark = yield* makeStandaloneService(recipe.definition, {
             id: "spark",
-            config: sparkRecipe.creation,
+            config: recipe.creation,
           });
           yield* spark.start;
           yield* spark.ready;
-          const sparkEndpoint = yield* sparkRecipe.endpoint("http");
-          const sparkUrl = `http://127.0.0.1:${sparkEndpoint.port}`;
+          const { port } = yield* recipe.endpoint("http");
+          const sparkUrl = `http://127.0.0.1:${port}`;
+          const serviceRole = {
+            apikey: SERVICE_ROLE_KEY,
+            authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+          };
 
           const rows = yield* client.get(`${sparkUrl}/rest/v1/notes?select=id`, {
-            headers: { apikey: SERVICE_ROLE_KEY, authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+            headers: serviceRole,
           });
           expect(rows.status).toBe(200);
           expect(yield* rows.json).toEqual([]);
 
-          const metaRecipe = yield* makeServiceRecipe(
-            {
-              service: "sparkmeta",
-              config: { sparkUrl, serviceRoleKey: SERVICE_ROLE_KEY, projectRoot: root },
-            },
-            { ...options(root), instanceId: "sparkmeta" },
-          );
-          const meta = yield* makeStandaloneService(metaRecipe.definition, {
-            id: "sparkmeta",
-            config: metaRecipe.creation,
-          });
-          yield* meta.start;
-          yield* meta.ready;
-          const metaEndpoint = yield* metaRecipe.endpoint("http");
-          const metaUrl = `http://127.0.0.1:${metaEndpoint.port}`;
-          const sql = (query: string, parameters: ReadonlyArray<unknown> = []) =>
+          // Studio's self-hosted pg-meta request, which the stack proxy sends from `/pg/query`.
+          const sql = (query: string, parameters?: ReadonlyArray<unknown>) =>
             client
               .execute(
-                HttpClientRequest.post(`${metaUrl}/pg/query`).pipe(
-                  HttpClientRequest.bodyJsonUnsafe({ query, parameters }),
+                HttpClientRequest.post(`${sparkUrl}/database/query`).pipe(
+                  HttpClientRequest.setHeaders({
+                    apiKey: SERVICE_ROLE_KEY,
+                    "x-connection-encrypted": "encrypted",
+                  }),
+                  HttpClientRequest.bodyJsonUnsafe(
+                    parameters === undefined ? { query } : { query, parameters },
+                  ),
                 ),
               )
               .pipe(
@@ -146,51 +135,43 @@ describe("spark recipe", () => {
                 ),
               );
 
-          const catalog = yield* sql("select * from pg_enum");
-          expect(catalog).toMatchObject({
+          expect(yield* sql("select * from pg_enum")).toMatchObject({
             status: 400,
-            body: { code: "42P01", message: "no such table: pg_enum", hint: null },
+            body: {
+              code: "42P01",
+              message: "no such table: pg_enum",
+              formattedError: expect.stringContaining("no such table: pg_enum"),
+            },
           });
-          const doBlock = yield* sql("do $$ begin end $$");
-          expect(doBlock).toMatchObject({
+          expect(yield* sql("do $$ begin end $$")).toMatchObject({
             status: 400,
             body: { code: "0A000", message: "DO is not supported" },
           });
 
-          const created = yield* sql("create table public.tags (id bigint primary key, name text)");
-          expect(created.status).toBe(201);
-          const migrations = yield* fs.readDirectory(path.join(root, "supabase", "migrations"));
-          expect(migrations.filter((file) => file.endsWith("_studio.sql"))).toHaveLength(1);
-
-          const inserted = yield* sql(
-            "insert into public.tags (id, name) values ($1, $2) returning name",
-            [1, "a"],
-          );
-          expect(inserted).toEqual({ status: 201, body: [{ name: "a" }] });
-
-          const fn =
-            "create function public.f() returns int language plpgsql as $$ begin return 1; end $$";
-          const [status] = yield* client
-            .execute(
-              HttpClientRequest.post(
-                `${metaUrl}/v1/projects/default/database/migrations?dry_run=true`,
-              ).pipe(HttpClientRequest.bodyJsonUnsafe({ query: fn })),
-            )
-            .pipe(
-              Effect.flatMap(HttpClientResponse.schemaBodyJson(DryRun)),
-              Effect.map(({ statuses }) => statuses),
-            );
-          const refused = yield* sql(fn);
-          expect(refused).toMatchObject({
-            status: 400,
-            body: {
-              code: status?.code ?? (status?.status === "unsupported" ? "0A000" : "42000"),
-              message: status?.message,
-              details: expect.stringContaining("CreateFunctionStmt"),
-            },
+          expect(
+            (yield* sql("create table public.tags (id bigint primary key, name text)")).status,
+          ).toBe(201);
+          expect(
+            yield* sql("insert into public.tags (id, name) values ($1, $2) returning name", [
+              1,
+              "a",
+            ]),
+          ).toEqual({ status: 201, body: [{ name: "a" }] });
+          const tags = yield* client.get(`${sparkUrl}/rest/v1/tags?select=name`, {
+            headers: serviceRole,
           });
+          expect(yield* tags.json).toEqual([{ name: "a" }]);
+          const admin = makeSparkAdmin(client, sparkUrl, SERVICE_ROLE_KEY);
+          const publicDump = yield* admin.dump(["public"]);
+          expect(publicDump).toContain("notes");
+          expect(publicDump).toContain("tags");
+          expect(yield* admin.dump(["other"])).not.toContain("notes");
+          expect(yield* fs.readDirectory(migrationsDir)).toEqual(["20260101000000_notes.sql"]);
+          const history = yield* client
+            .get(`${sparkUrl}/system/v1/migrations`, { headers: serviceRole })
+            .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(History)));
+          expect(history.map(({ version }) => version)).toEqual(["20260101000000"]);
 
-          yield* meta.stop;
           yield* spark.stop;
         }),
       ).pipe(Effect.provide(services)),

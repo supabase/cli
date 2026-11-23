@@ -49,8 +49,7 @@ service_role key:
   current time (`db diff`, `db push`).
 - `POST /system/v1/migrations` with `{version, name, sql}`, the file's version (`db push`).
 - `GET /_spark/v1/dump[?schemas=a,b]` (`db diff`, `db pull`): Spark renders the dump.
-- `GET /_spark/v1/schema` (`gen types`): the types are rendered in the CLI from the description, as the
-  stand-in Management API renders them.
+- `GET /_spark/v1/schema` (`gen types`): the types are rendered in the CLI from the description.
 
 Linked target, and `link`:
 
@@ -71,10 +70,8 @@ the same base URL and bearer token as the typed client.
 result event with `--output-format stream-json`), CSV with `-o csv`. A statement that returns no
 rows prints nothing. It runs the statement on the project's database, so it may write there: on a
 linked project, a statement without `--read-only` asks for confirmation (`--yes` or a shell
-`SUPABASE_YES` in JSON, piped and agent runs). On the stand-in Management API, a
-schema-changing statement is also recorded as a migration file under `supabase/migrations/`, and
-any other statement runs on Spark as sent, its error returned with Spark's own code and message;
-on the local target, Spark runs it as the query route runs it, without a migration.
+`SUPABASE_YES` in JSON, piped and agent runs). On either target, Spark runs it as its query route
+runs it, schema changes included, without recording a migration.
 
 ## Docker
 

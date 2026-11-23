@@ -116,13 +116,6 @@ const managedBindings: ReadonlyArray<{
   {
     sourceKind: "spark",
     sourceEndpoint: "http",
-    output: "url",
-    targetKind: "sparkmeta",
-    input: "sparkUrl",
-  },
-  {
-    sourceKind: "sparkmeta",
-    sourceEndpoint: "http",
     output: "pgmetaUrl",
     targetKind: "studio",
     input: "pgmetaUrl",
@@ -149,7 +142,6 @@ const derivedInputs: Partial<
     functionsRoot: "functions",
   },
   functions: { apiUrl: "api", databaseUrl: "database" },
-  sparkmeta: { publicUrl: "api" },
 };
 
 /** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */

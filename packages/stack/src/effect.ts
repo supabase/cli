@@ -695,8 +695,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return common(id, "pooler");
       case "spark":
         return common(id, "spark");
-      case "sparkmeta":
-        return common(id, "sparkmeta");
     }
   }
   function create<Input extends ServiceCreationInput>(

@@ -12,7 +12,7 @@ export class SparkTypegenError extends Data.TaggedError("SparkTypegenError")<{
 const host: Host = { cwd: ".", env: {}, format: (code) => Promise.resolve(code) };
 
 /** TypeScript types for `schemas`, from the generator `supabase gen types` and postgres-meta use. */
-export const typescript = Effect.fn("SparkMeta.typescript")(function* (
+export const typescript = Effect.fn("Spark.typescript")(function* (
   description: Description,
   schemas: ReadonlyArray<string>,
 ) {

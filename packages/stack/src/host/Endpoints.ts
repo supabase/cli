@@ -121,13 +121,22 @@ export const sharedRoutes = (
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
       ];
     case "spark":
-      /* Spark serves both data plane APIs and its admin routes under their own paths. */
-      return ["/rest/v1", "/auth/v1", "/database", "/system/v1", "/_spark"].map((prefix) => ({
-        prefix,
-        upstreamPrefix: prefix,
-        forwardedPrefix: prefix,
-        keyRewrite: { policy: "apikey" as const, keys },
-      }));
+      /* Spark serves both data plane APIs and its admin routes under their own paths. Studio's
+         pg-meta `POST /query` takes the same body and key as Spark's `/database/query`. */
+      return [
+        ...["/rest/v1", "/auth/v1", "/database", "/system/v1", "/_spark"].map((prefix) => ({
+          prefix,
+          upstreamPrefix: prefix,
+          forwardedPrefix: prefix,
+          keyRewrite: { policy: "apikey" as const, keys },
+        })),
+        {
+          prefix: "/pg/query",
+          upstreamPrefix: "/database/query",
+          exact: true,
+          keyRewrite: { policy: "apikey", keys },
+        },
+      ];
     case "functions":
       return [
         {
@@ -160,37 +169,10 @@ export const joinRoutes = (
       return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
     case "pooler":
       return [{ prefix: "/pooler/v2", upstreamPrefix: "/v2" }];
-    case "sparkmeta":
-      return ["/pg", "/v1/projects", "/v1/organizations", "/platform/projects"].map((prefix) => ({
-        prefix,
-        upstreamPrefix: prefix,
-        forwardedPrefix: prefix,
-      }));
     default:
       return undefined;
   }
 };
-
-/**
- * Routes a dedicated HTTP endpoint sends to the shared API listener. Studio's project detail goes to
- * the platform API's path there, so Studio reads the engine the way it does on the platform.
- */
-export const toSharedRoutes = (
-  creation: Pick<ServiceCreation, "service" | "config">,
-  name: string,
-): NetworkEndpoint["toShared"] =>
-  name === "http" &&
-  creation.service === "studio" &&
-  "projectFromApi" in creation.config &&
-  creation.config.projectFromApi === true
-    ? [
-        {
-          prefix: "/api/platform/projects/default",
-          upstreamPrefix: "/platform/projects/default",
-          exact: true,
-        },
-      ]
-    : undefined;
 
 /**
  * Whether an endpoint's writes each take a fresh upstream connection instead of the pool: only
@@ -247,7 +229,7 @@ export const outputsFor = <E>(
     );
     outputs.runtimeUrl = output("http");
   }
-  if (creation.service === "sparkmeta" && endpointNames(creation).includes("http"))
+  if (creation.service === "spark" && endpointNames(creation).includes("http"))
     outputs.pgmetaUrl = output("http").pipe(Effect.map((url) => `${url}/pg`));
   if (creation.service === "mail" && endpointNames(creation).includes("smtp"))
     outputs.smtpUrl = address("smtp", "runtime").pipe(

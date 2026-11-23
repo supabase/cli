@@ -326,6 +326,38 @@ describe("durable registry", () => {
     ),
   );
 
+  it.live("drops the retired sparkmeta service from a stack the previous CLI saved", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-retired-" });
+        const store = yield* makeTestState(root);
+        const mail = { service: "mail", pin: selection.mail, config: {} };
+        const member = (id: string) => ({ id, activation: "eager" });
+        yield* fs.makeDirectory(path.join(root, initial.id));
+        yield* fs.writeFileString(
+          path.join(root, initial.id, "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            ...initial,
+            instances: [
+              { id: "mail", creation: mail },
+              { id: "sparkmeta", creation: { service: "sparkmeta", config: {}, endpoints: {} } },
+            ],
+            composition: {
+              members: [member("mail"), member("sparkmeta")],
+              dependencies: [{ from: "sparkmeta", to: "mail" }],
+            },
+          }),
+        );
+
+        const state = yield* store.read(initial.id);
+        expect(state?.instances.map(({ id }) => id)).toEqual(["mail"]);
+        expect(state?.composition).toEqual({ members: [member("mail")], dependencies: [] });
+      }),
+    ),
+  );
+
   it.live("unregisters a stack and empties its data without deleting unowned data", () =>
     run(
       Effect.gen(function* () {

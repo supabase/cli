@@ -24,11 +24,8 @@ export type ServiceKind =
   | "pooler"
   | HostServiceKind;
 
-/**
- * Experimental service kinds with no published artifact: Spark runs a host binary the caller
- * names, and sparkmeta runs inside the stack owner.
- */
-export type HostServiceKind = "spark" | "sparkmeta";
+/** Experimental service kinds with no published artifact: Spark runs a host binary the caller names. */
+export type HostServiceKind = "spark";
 
 /** A stack service kind that runs a pinned slim-services artifact. */
 export type PinnedServiceKind = Exclude<ServiceKind, HostServiceKind>;
@@ -40,7 +37,7 @@ const isServiceKind = (kind: ArtifactKind): kind is PinnedServiceKind => kind !=
 
 /** Whether a stack service kind runs a pinned artifact rather than a host executable. */
 export const isPinnedServiceKind = (kind: ServiceKind): kind is PinnedServiceKind =>
-  kind !== "spark" && kind !== "sparkmeta";
+  kind !== "spark";
 
 export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly message: string;

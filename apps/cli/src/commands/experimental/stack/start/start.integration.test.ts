@@ -271,8 +271,6 @@ const instance = (
       return { ...base, service: "pooler" };
     case "spark":
       return { ...base, service: "spark" };
-    case "sparkmeta":
-      return { ...base, service: "sparkmeta" };
   }
 };
 

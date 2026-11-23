@@ -7,36 +7,28 @@ The root [`AGENTS.md`](../../../../../AGENTS.md) rules apply.
 ## What is here
 
 - `Spark.ts`: the `spark` service kind, a native host process started from `[experimental.spark] executable`.
-- `SparkMeta.ts`: the `sparkmeta` service kind, an HTTP server inside the stack owner.
 - `SparkClient.ts`, exported as `@supabase/stack/spark`: the admin client (`makeSparkAdmin`, which also fetches
-  Spark's dump), the TypeScript types and the dry-run statuses (`SparkDryRunStatus`, the one schema for them). sparkmeta and the CLI's local target both use it, so each exists once.
-- `meta/`: what sparkmeta answers. `Handler.ts` serves Studio's `POST /pg/query` and the stand-in Management API
-  (`database/query`, `database/dump`, `database/migrations?dry_run=true`, `types/typescript`). The dump comes from Spark
-  (`/_spark/v1/dump`) and `GET /rest/v1/` (the OpenAPI document) is Spark's own route, not sparkmeta's; `Typegen.ts` maps
-  Spark's schema description with `@supabase/typegen`'s `sparkGeneratorMetadata`, which comes from a git branch of
-  `supabase/sdk` until it is released.
-
-## How sparkmeta routes SQL
-
-Spark's parser (`POST /_spark/v1/parse`) classifies the script. A script with a DDL statement becomes a Spark migration
-after Spark's dry run of it on the project's database, and is written to `supabase/migrations`; a refused statement comes back with its own
-SQLSTATE and message, and the summary of every refusal in `details`. Everything else goes to Spark's
-`/database/query` as sent, with its parameters, and Spark's error comes back unchanged, with Spark's own `formattedError`; sparkmeta formats only the errors it raises itself. Studio answers its own catalog
-queries: its pg-meta fallbacks match Spark's SQLSTATE and message, so sparkmeta never rewrites either.
+  Spark's dump), the TypeScript types and the dry-run statuses (`SparkDryRunStatus`, the one schema for them). The
+  CLI's local target and the Spark end-to-end test's stand-in Management API both use it, so each exists once.
+- `Admin.ts`: the client for Spark's admin routes. `Description.ts`: Spark's schema description
+  (`GET /_spark/v1/schema`). `Typegen.ts` maps that description with `@supabase/typegen`'s `sparkGeneratorMetadata`,
+  which comes from a git branch of `supabase/sdk` until it is released.
 
 ## Who calls what
 
+- Studio posts its SQL to `STUDIO_PG_META_URL`, `<api url>/pg`. The proxy sends `POST /pg/query` to Spark's
+  `POST /database/query` unchanged (the `spark` routes in `host/Endpoints.ts`): Spark runs it, schema changes
+  included, and records no migration. Studio reads the engine from `POSTGRES_ENGINE=spark` in its environment.
 - The CLI's Spark commands on the local target (the default) call Spark's admin routes through the stack's API URL
-  with the stack's service_role key: `/database/query`, `/system/v1/migrations` (list, apply, `?dry_run=1`) ,
+  with the stack's service_role key: `/database/query`, `/system/v1/migrations` (list, apply, `?dry_run=1`),
   `/_spark/v1/dump` and `/_spark/v1/schema`.
-- On a linked target they call the Management API. Locally, sparkmeta's stand-in `/v1/projects/{ref}/...` routes
-  answer it: they are the test double of that path and what the standalone MCP server calls.
+- On a linked target they call the Management API. The stack serves none of it; the end-to-end test starts its own
+  stand-in (`apps/cli/tests/helpers/spark-management-api.ts`) for its `--remote` steps and the MCP server.
 
-## Global files that register these kinds
+## Global files that register this kind
 
-`services/Catalog.ts`, `host/Endpoints.ts` (proxy routes), `composition/Supabase.ts` (links to Studio) and
-`Artifacts.ts` (`HostServiceKind`) still name `spark` and `sparkmeta`. They stay with `@supabase/cli`; a change there is
-a global change.
+`services/Catalog.ts`, `host/Endpoints.ts` (proxy routes), `composition/Supabase.ts` (Studio's pg-meta URL) and
+`Artifacts.ts` (`HostServiceKind`) name `spark`. They stay with `@supabase/cli`; a change there is a global change.
 
 ## Checks
 

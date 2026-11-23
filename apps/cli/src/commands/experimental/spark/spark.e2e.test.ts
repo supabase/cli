@@ -6,15 +6,20 @@ import { BunServices } from "@effect/platform-bun";
 import {
   Config,
   Effect,
+  Exit,
   FileSystem,
   Layer,
   ManagedRuntime,
   Option,
   Path,
   Schema,
+  Scope,
   Stream,
 } from "effect";
+import { HttpClient } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { makeSparkAdmin } from "@supabase/stack/spark";
 import { afterAll, describe, expect, test } from "vitest";
 import {
   createTempHome,
@@ -26,6 +31,7 @@ import {
   stripAnsi,
   type TempHome,
 } from "../../../../tests/helpers/cli.ts";
+import { serveSparkManagementApi } from "../../../../tests/helpers/spark-management-api.ts";
 
 const STEP_TIMEOUT_MS = 600_000;
 const CLI_CANCEL_GRACE_MS = 20_000;
@@ -38,7 +44,7 @@ const CLEANUP_TIMEOUT_MS = STEP_CANCEL_TIMEOUT_MS + DESTROY_EXIT_TIMEOUT_MS + 60
 const API = "http://127.0.0.1:54321";
 const STUDIO = "http://127.0.0.1:54323";
 const STACK_PORTS = [54321, 54322, 54323];
-// The stand-in Management API accepts any token in the client's format and any 20-letter ref.
+// The test's stand-in Management API accepts any token in the client's format and any 20-letter ref.
 const PROJECT_REF = "sparkpocprojectlocal";
 const ACCESS_TOKEN = `sbp_${"0".repeat(40)}`;
 
@@ -198,6 +204,8 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   let serviceKey = "";
   let todosBefore = 0;
   let failedStep: string | undefined;
+  let managementApiScope: Scope.Closeable | undefined;
+  let managementApi = "";
 
   // The local target needs none of these; the linked-project step sets them.
   const baseEnv = (): Record<string, string | undefined> => ({
@@ -390,6 +398,8 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   afterAll(async () => {
     if (activeStep !== undefined) await cancelStep(activeStep);
     activeStep = undefined;
+    if (managementApiScope !== undefined)
+      await hostRuntime.runPromise(Scope.close(managementApiScope, Exit.void));
     const cliHome = home;
     if (cliHome === undefined) {
       if (workDir !== "") await removePath(workDir);
@@ -503,15 +513,12 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
     },
   );
 
-  step(
-    "supabase start: Spark, sparkmeta and Studio on the native stack (no Postgres)",
-    async () => {
-      const started = await run(["start"]);
-      expect(started.log).toContain("Stack is ready");
-      expect(started.log).toContain("spark");
-      await noPostgres();
-    },
-  );
+  step("supabase start: Spark and Studio on the native stack (no Postgres)", async () => {
+    const started = await run(["start"]);
+    expect(started.log).toContain("Stack is ready");
+    expect(started.log).toContain("spark");
+    await noPostgres();
+  });
 
   step("supabase status reports the Spark stack and its keys", async () => {
     const status = await run(["status"]);
@@ -529,13 +536,23 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   });
 
   step(
-    "Studio: table editor rows, create table and insert row from the UI, policies page, SQL editor",
+    "Studio: table editor rows, create table and insert row from the UI, policies page, SQL editor; the new table is on Spark, not in a migration",
     async () => {
       const response = await fetch(`${STUDIO}/api/platform/projects/default`);
       expect(response.ok, `Studio project detail: HTTP ${response.status}`).toBe(true);
       const detail = Schema.decodeSync(ProjectDetail)(await response.text());
       expect(detail.postgres_engine, "Studio's project detail engine").toBe("spark");
+      const historyBefore = (await run(["migration", "list"])).log;
       await check("studio.check.mjs");
+      expect(await restStatus("comments?select=id"), "Studio's table is not served").toBe(200);
+      expect(
+        await migrationFiles(".sql"),
+        "a change made in Studio wrote a migration file",
+      ).toEqual(["20260101000000_todos.sql"]);
+      expect(
+        (await run(["migration", "list"])).log,
+        "a change made in Studio was recorded in Spark's migration history",
+      ).toBe(historyBefore);
       await noPostgres();
     },
   );
@@ -543,15 +560,40 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   step(
     "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url",
     async () => {
-      expect(
-        await readText(join(exampleDir, "mcp.check.mjs")),
-        "the MCP check does not start the MCP server from MCP_CLI",
-      ).toContain("process.env.MCP_CLI");
-      await check("mcp.check.mjs", { MCP_CLI: mcpCli });
+      const mcpCheck = await readText(join(exampleDir, "mcp.check.mjs"));
+      expect(mcpCheck, "the MCP check does not start the MCP server from MCP_CLI").toContain(
+        "process.env.MCP_CLI",
+      );
+      expect(mcpCheck, "the MCP check does not take its --api-url from MCP_API_URL").toContain(
+        "process.env.MCP_API_URL",
+      );
+      const scope = await hostRuntime.runPromise(Scope.make());
+      managementApiScope = scope;
+      managementApi = await hostRuntime.runPromise(
+        serveSparkManagementApi({ sparkUrl: API, serviceRoleKey: serviceKey, anonKey }).pipe(
+          Scope.provide(scope),
+          Effect.provide(FetchHttpClient.layer),
+        ),
+      );
+      await check("mcp.check.mjs", { MCP_CLI: mcpCli, MCP_API_URL: managementApi });
       expect(
         await migrationFiles("_add_labels.sql"),
-        "apply_migration wrote no migration file",
-      ).toHaveLength(1);
+        "the Management API wrote a migration file",
+      ).toHaveLength(0);
+      // The Spark command tree has no `migration fetch`: the test writes the applied migration as it would.
+      const history = await hostRuntime.runPromise(
+        Effect.flatMap(
+          HttpClient.HttpClient,
+          (client) => makeSparkAdmin(client, API, serviceKey).migrations,
+        ).pipe(Effect.provide(FetchHttpClient.layer)),
+      );
+      const labels = history.find((migration) => migration.name === "add_labels");
+      if (labels?.statements === null || labels?.statements === undefined)
+        throw new Error("apply_migration recorded no add_labels migration in Spark's history");
+      await writeText(
+        join(projectDir, "supabase", "migrations", `${labels.version}_add_labels.sql`),
+        `${labels.statements.join(";\n")};\n`,
+      );
     },
   );
 
@@ -562,10 +604,14 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   });
 
   step(
-    "db pull: the project's dump in a shadow Postgres, exported by pg-delta to supabase/schemas, with the RLS policies and none of the image-only files",
+    "db pull: the project's dump in a shadow Postgres, exported by pg-delta to supabase/schemas, with the RLS policies, the table made in Studio and none of the image-only files",
     async () => {
       await run(["db", "pull"]);
       expect(await exists(join(projectDir, "supabase/schemas/public/tables/todos.sql"))).toBe(true);
+      expect(
+        await exists(join(projectDir, "supabase/schemas/public/tables/comments.sql")),
+        "db pull did not capture the table made in Studio",
+      ).toBe(true);
       const files = await schemaFiles();
       const texts = await Promise.all(
         files.map((file) => readText(join(projectDir, "supabase", "schemas", file))),
@@ -866,13 +912,30 @@ grant all on table "public"."projects" to "authenticated";
   });
 
   step(
+    "db reset drops the table made in Studio, which no migration records; db diff -f writes it from the pulled schema files and db push applies it",
+    async () => {
+      expect(await restStatus("comments?select=id"), "db reset kept the Studio table").not.toBe(
+        200,
+      );
+      const diff = await run(["db", "diff", "-f", "studio_comments"]);
+      expect(diff.log).toContain("Dry run on Spark: OK");
+      expect(
+        await migrationFiles("_studio_comments.sql"),
+        "no studio_comments migration file",
+      ).toHaveLength(1);
+      expect((await run(["db", "push"])).log).toContain("Finished supabase db push");
+      expect(await restStatus("comments?select=id"), "db push did not restore comments").toBe(200);
+    },
+  );
+
+  step(
     "linked project: link, db query --read-only (a write asks for --yes), migration list, gen types, db diff and a confirmed db push through the Management API; unreachable, only the local target answers",
     async () => {
-      // The linked project's path: the Management API, served locally by the stand-in routes.
+      // The linked project's path: the Management API, served by the test's stand-in.
       const profilePath = join(workDir, "spark-profile.yaml");
       await writeText(
         profilePath,
-        `name: spark-local\napi_url: ${API}\ndashboard_url: ${STUDIO}\nproject_host: localhost\n`,
+        `name: spark-local\napi_url: ${managementApi}\ndashboard_url: ${STUDIO}\nproject_host: localhost\n`,
       );
       cliEnv = { ...cliEnv, SUPABASE_PROFILE: profilePath, SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN };
 

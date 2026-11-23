@@ -9,7 +9,7 @@ import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { freshWrites, joinRoutes, sharedRoutes, toSharedRoutes } from "./host/Endpoints.ts";
+import { freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
@@ -684,7 +684,7 @@ it.live("serves legacy Kong's gateway routes while each service runs", () =>
 );
 
 it.live(
-  "sends the OpenAPI document path /rest/v1/ to Spark and the other stand-in routes to sparkmeta",
+  "sends the OpenAPI document path /rest/v1/ and Studio's POST /pg/query to Spark's own routes",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -693,7 +693,6 @@ it.live(
         const state = yield* makeTestState(root);
         yield* state.save(stack("stack"));
         const spark = yield* backendWith(echo("spark"));
-        const sparkmeta = yield* backendWith(echo("sparkmeta"));
         const keys = {
           publishableKey: "sb_publishable_example",
           secretKey: "sb_secret_example",
@@ -711,27 +710,27 @@ it.live(
           },
         });
         yield* sparkNamespace.bind;
-        const meta = yield* network.register({
-          id: "sparkmeta",
-          endpoints: {
-            http: {
-              ...endpoint(sparkmeta, Effect.succeed(true)),
-              join: joinRoutes({ service: "sparkmeta" }, "http"),
-            },
-          },
-        });
-        yield* meta.bind;
         const address = yield* sparkNamespace.address("http", "host");
-        const backendOf = (path: string) =>
+        const post = (path: string) =>
           Effect.gen(function* () {
             const client = yield* HttpClient.HttpClient;
-            const response = yield* client.get(`http://${address.host}:${address.port}${path}`);
-            return Reflect.get(Object(yield* response.json), "backend");
+            const response = yield* client.post(`http://${address.host}:${address.port}${path}`, {
+              headers: { apiKey: keys.serviceRoleKey },
+            });
+            return response.status === 404 ? 404 : yield* response.json;
           }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
 
-        expect(yield* backendOf("/rest/v1/")).toBe("spark");
-        expect(yield* backendOf("/rest/v1/todos")).toBe("spark");
-        expect(yield* backendOf("/pg/query")).toBe("sparkmeta");
+        expect(yield* post("/rest/v1/")).toEqual(
+          expect.objectContaining({ backend: "spark", url: "/rest/v1/" }),
+        );
+        expect(yield* post("/rest/v1/todos")).toEqual(
+          expect.objectContaining({ backend: "spark", url: "/rest/v1/todos" }),
+        );
+        expect(yield* post("/pg/query")).toEqual(
+          expect.objectContaining({ backend: "spark", url: "/database/query" }),
+        );
+        expect(yield* post("/pg/tables")).toBe(404);
+        expect(yield* post("/pg/query/extra")).toBe(404);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -768,55 +767,6 @@ it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's 
       );
       for (const name of ["x-forwarded-port", "x-forwarded-path", "x-forwarded-prefix"])
         expect(headers).not.toHaveProperty(name);
-    }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-);
-
-it.live("sends only Studio's project detail path from its listener to the API listener", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-to-shared-" });
-      const state = yield* makeTestState(root);
-      yield* state.save(stack("stack"));
-      const studioBackend = yield* backend;
-      const apiBackend = yield* backendWith((incoming, response) => {
-        response.end(`api:${incoming.url ?? "/"}`);
-      });
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
-      const api = yield* network.register({
-        id: "sparkmeta",
-        endpoints: {
-          api: {
-            ...endpoint(apiBackend, Effect.succeed(true)),
-            shared: [{ prefix: "/platform/projects" }],
-          },
-        },
-      });
-      yield* api.bind;
-      const toShared = toSharedRoutes(
-        { service: "studio", config: { projectFromApi: true } },
-        "http",
-      );
-      const studio = yield* network.register({
-        id: "studio",
-        endpoints: {
-          http: {
-            ...endpoint(studioBackend, Effect.succeed(true)),
-            ...(toShared === undefined ? {} : { toShared }),
-          },
-        },
-      });
-      yield* studio.bind;
-      const { host, port } = yield* studio.address("http", "host");
-
-      expect(yield* request(host, port, "/api/platform/projects/default")).toBe(
-        "api:/platform/projects/default",
-      );
-      expect(yield* request(host, port, "/api/platform/projects/default/settings")).toBe(
-        "backend:/api/platform/projects/default/settings",
-      );
-      expect(yield* request(host, port, "/project/default")).toBe("backend:/project/default");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

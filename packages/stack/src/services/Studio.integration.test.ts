@@ -57,7 +57,7 @@ describe("studio recipe", () => {
         yield* fs.writeFileString(
           launcher,
           `#!${process.execPath}\n` +
-            `require("node:http").createServer((_request, response) => response.end(process.env.STUDIO_PG_META_URL)).listen(Number(process.env.PORT), process.env.HOSTNAME);\n`,
+            `require("node:http").createServer((_request, response) => response.end(process.env.STUDIO_PG_META_URL + " " + process.env.POSTGRES_ENGINE)).listen(Number(process.env.PORT), process.env.HOSTNAME);\n`,
         );
         yield* fs.chmod(launcher, 0o755);
         const recipe = yield* makeServiceRecipe(
@@ -67,6 +67,7 @@ describe("studio recipe", () => {
             config: {
               executable: launcher,
               pgmetaUrl: "http://127.0.0.1:1/pg",
+              postgresEngine: "spark",
             },
           },
           options(root),
@@ -81,7 +82,7 @@ describe("studio recipe", () => {
         const { port } = yield* recipe.endpoint("http");
         const response = yield* client.get(`http://127.0.0.1:${port}/api/platform/profile`);
 
-        expect(yield* response.text).toBe("http://127.0.0.1:1/pg");
+        expect(yield* response.text).toBe("http://127.0.0.1:1/pg spark");
         yield* studio.stop;
       }),
     ).pipe(Effect.provide(services)),
