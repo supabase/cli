@@ -224,7 +224,6 @@ const handle = Effect.fn("api-command.run")(function* (
         yield* Effect.annotateCurrentSpan("run.outcome", "dry_run");
         return yield* writeDryRun(previewRequest(entry, decoded), format);
       }
-      const api = yield* (yield* CommandPlatformApiFactory).make;
       if (!entry.readOnly) {
         yield* requireHostedMutationConsent({
           action: summaryText(entry),
@@ -234,6 +233,7 @@ const handle = Effect.fn("api-command.run")(function* (
           ],
         });
       }
+      const api = yield* (yield* CommandPlatformApiFactory).make;
 
       if (waiting) {
         // A read that polls itself needs no change request: its own input is what gets polled.
@@ -279,7 +279,13 @@ const exampleFor = (entry: ApiCommandEntry): string => {
     .filter((flag) => flag.required)
     .map((flag) => `--${flag.name}${flag.type === "boolean" ? "" : ` <${flag.name}>`}`);
   const positional = entry.argument === undefined ? [] : [`<${entry.argument.name}>`];
-  const body = entry.body === undefined || required.length > 0 ? [] : ["--file <path>"];
+  const requiresBodyFlag = entry.bindings.some(
+    (binding) =>
+      binding.location === "body" &&
+      binding.source === "flag" &&
+      entry.flags.some((flag) => flag.required && flag.name === binding.flag),
+  );
+  const body = entry.body === undefined || requiresBodyFlag ? [] : ["--file <path>"];
   return ["supabase", ...entry.command, ...positional, ...required, ...body].join(" ");
 };
 

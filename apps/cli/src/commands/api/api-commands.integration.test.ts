@@ -525,15 +525,16 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("passes a non-JSON success body through untouched as json", () => {
-      const raw = "\u001b[31mred\nsecond\n";
+    it.effect("fails a non-JSON success body as json instead of writing it to stdout", () => {
       const { out, run } = setup(["warehouse", "status", "--output-format", "json"], {
-        route: ok(raw),
+        route: ok("\u001b[31mred\nsecond\n"),
         outputFormat: "json",
       });
       return Effect.gen(function* () {
-        yield* run;
-        expect(out.stdoutText).toBe(raw);
+        const exit = yield* Effect.exit(run);
+
+        expect(failureOf(exit)).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+        expect(out.stdoutText).toBe("");
       });
     });
 
@@ -1161,6 +1162,32 @@ describe("generated warehouse commands", () => {
       },
     );
 
+    it.effect.each([
+      {
+        name: "a table id that is not a positive integer",
+        argv: ["warehouse", "tables", "layout", "update", "abc", "--sort-by", "null"],
+        named: "<table-id>",
+        raw: '["table_id"]',
+      },
+      {
+        name: "a --partition-by value outside the field schema",
+        argv: [...argv, "--partition-by", '{"column":1}'],
+        named: "--partition-by",
+        raw: '["partition_by"]',
+      },
+    ])("names the flag or argument for $name, once", ({ argv: invalid, named, raw }) => {
+      const { sent, run } = setup(invalid, { yes: true, route: accepted });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandUsageError);
+        const { message } = failure as ApiCommandUsageError;
+        expect(message).toContain(`${named}: `);
+        expect(message.split(named).length - 1).toBe(1);
+        expect(message).not.toContain(raw);
+        expect(sent).toEqual([]);
+      });
+    });
+
     it.effect("rejects a non-boolean reset before making a hosted request", () => {
       const reset = {
         data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },
@@ -1702,6 +1729,19 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("asks for consent before it needs an access token", () => {
+      const { seen, run } = setup(["warehouse", "enable", "--schema", "public"], {
+        token: false,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(
+          HostedMutationConsentRequiredError,
+        );
+        expect(seen).toEqual([]);
+      });
+    });
+
     it.effect("refuses a non-interactive mutation without --yes", () => {
       const { sent, run } = setup(["warehouse", "enable", "--schema", "public"], {
         route: accepted,
@@ -1806,6 +1846,16 @@ describe("generated warehouse commands", () => {
           body: { message: "Expired", hint: "Rotate the token in the dashboard." },
         },
         hint: "Rotate the token in the dashboard.",
+      },
+      {
+        name: "a 401 whose hint is empty",
+        reply: { status: 401, body: { message: "Expired", hint: "" } },
+        hint: "Run `supabase login`",
+      },
+      {
+        name: "a 403 whose hint is only whitespace",
+        reply: { status: 403, body: { message: "Forbidden", hint: " \n\t" } },
+        hint: "Your token needs the permissions:",
       },
     ])("hints at the fix for $name", ({ reply, hint }) => {
       const { run } = setup(["warehouse", "enable", "--schema", "public"], {

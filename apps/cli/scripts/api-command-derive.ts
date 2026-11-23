@@ -413,6 +413,10 @@ const pointerAlwaysPresent = (spec: JsonObject, root: unknown, pointer: string):
 const jsonMediaType = (content: JsonObject): string | undefined =>
   Object.keys(content).find((type) => type === "application/json" || type.endsWith("+json"));
 
+const hasSeveralSuccessResponses = (operation: Operation): boolean =>
+  Object.keys(asRecord(operation.node.responses) ?? {}).filter((code) => code.startsWith("2"))
+    .length > 1;
+
 const successSchema = (spec: JsonObject, operation: Operation): unknown => {
   const responses = asRecord(operation.node.responses) ?? {};
   for (const code of Object.keys(responses).sort()) {
@@ -799,6 +803,14 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
           Object.keys(properties).length === 1 &&
           typeEnum.length === 1 &&
           envelopeType !== undefined;
+        const unboundDataKeys = Object.keys(dataProperties ?? {}).filter(
+          (key) => key !== "type" && key !== "attributes",
+        );
+        if (hasEnvelopeShape && unboundDataKeys.length > 0) {
+          fail(
+            `unsupported in this runtime: envelope data declares ${unboundDataKeys.map((key) => `"${key}"`).join(", ")}, but only data.type and data.attributes are bound`,
+          );
+        }
         const attributeFields = hasEnvelopeShape
           ? deriveAttributeFields(spec, attributes)
           : undefined;
@@ -1021,6 +1033,15 @@ function lintWait(input: {
   }
   if (readOperation.node.requestBody !== undefined) {
     fail(`wait.read "${wait.read}" must not require a request body`);
+  }
+
+  if (hasSeveralSuccessResponses(operation)) {
+    fail("unsupported in this runtime: a wait needs a single 2xx response to resolve its pointers");
+  }
+  if (readOperation !== operation && hasSeveralSuccessResponses(readOperation)) {
+    fail(
+      `unsupported in this runtime: wait.read "${wait.read}" has several 2xx responses, so its status pointers cannot be resolved`,
+    );
   }
 
   const readParameters = operationParameters(spec, readOperation);

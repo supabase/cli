@@ -103,6 +103,7 @@ const statusError = Effect.fnUntraced(function* (
   const body = Option.getOrUndefined(decodeJsonText(text));
   const fields = apiErrorFields(body);
   const { entitlement } = planGateFromResponse(response.status, text);
+  const ownHint = fields.hint === undefined ? undefined : sanitizeErrorBody(fields.hint);
   return yield* new ApiCommandStatusError({
     status: response.status,
     message:
@@ -111,11 +112,11 @@ const statusError = Effect.fnUntraced(function* (
         : sanitizeErrorBody(fields.message),
     apiCode: fields.apiCode,
     hint:
-      fields.hint === undefined
+      ownHint === undefined || ownHint.trim() === ""
         ? entitlement === undefined
           ? statusHint(operationId, response.status)
           : undefined
-        : sanitizeErrorBody(fields.hint),
+        : ownHint,
     ...(entitlement === undefined ? {} : { entitlement }),
   });
 });
@@ -152,8 +153,8 @@ const parseResponse = (response: ApiCommandResponse): unknown =>
   Option.getOrUndefined(decodeJsonText(textDecoder.decode(response.bytes)));
 
 /**
- * Writes a success response. JSON bytes pass through untouched in machine output; a 2xx without a
- * body prints as `null` there and as `Done.` for a person.
+ * Writes a success response. Valid JSON bytes pass through untouched in machine output and any
+ * other body fails there; a 2xx without a body prints as `null` there and as `Done.` for a person.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
   response: ApiCommandResponse,
@@ -163,7 +164,15 @@ export const writeApiResponse = Effect.fnUntraced(function* (
   if (response.bytes.length === 0) {
     return yield* output.raw(format === "text" ? "Done.\n" : "null\n");
   }
-  if (format === "json") return yield* output.rawBytes(response.bytes);
+  if (format === "json") {
+    if (parseResponse(response) === undefined) {
+      return yield* new ApiCommandUnexpectedResponseError({
+        message: "The API returned a success response that is not valid JSON.",
+        hint: "Retry the command; if it keeps failing, report it with the command you ran.",
+      });
+    }
+    return yield* output.rawBytes(response.bytes);
+  }
   const text = textDecoder.decode(response.bytes);
   const parsed = decodeJsonText(text);
   if (Option.isNone(parsed)) {

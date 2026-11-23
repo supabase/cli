@@ -219,6 +219,34 @@ describe("deriveApiCommands", () => {
     );
   });
 
+  it("rejects an envelope whose data declares fields beyond type and attributes", () => {
+    const body = envelope({});
+    const data = body.content["application/json"].schema.properties.data;
+    const result = derive({
+      "create-thing": operation({
+        ...create,
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  data: {
+                    ...data,
+                    properties: { ...data.properties, id: { type: "string" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.entries).toEqual([]);
+    expect(result.problems.join("\n")).toContain('envelope data declares "id"');
+  });
+
   it("rejects a JSON body that is not a data envelope", () => {
     const result = derive({
       "create-thing": operation({
@@ -1124,6 +1152,32 @@ describe("deriveApiCommands", () => {
       const result = derive({ "create-thing": changeThing(links), "get-thing": readThing });
 
       expect(result.problems.join("\n")).toContain(message);
+    });
+
+    it("rejects a linked wait on an operation with several 2xx responses", () => {
+      const responses = {
+        ...changeResponse(link({ thing_id: "$response.body#/data/id" })),
+        "200": { description: "done", content: { "application/json": { schema: requiredChain } } },
+      };
+      const result = derive({
+        "create-thing": operation({ ...create, responses }),
+        "get-thing": readThing,
+      });
+
+      expect(result.problems.join("\n")).toContain("a wait needs a single 2xx response");
+    });
+
+    it("rejects a poll-only read with several 2xx responses", () => {
+      const responses = {
+        ...jsonResponse(readSchema),
+        "201": { description: "created", content: { "application/json": { schema: readSchema } } },
+      };
+      const result = deriveHidden({
+        "create-thing": changeThing(link({ thing_id: "$response.body#/data/id" })),
+        "get-thing": hiddenWith(poll, responses),
+      });
+
+      expect(result.problems.join("\n")).toContain('wait.read "get-thing" has several 2xx');
     });
 
     it.each([

@@ -142,6 +142,22 @@ describe("errors.standard failure contract", { timeout: SUBPROCESS_TIMEOUT_MS },
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live.each(["pretty", "table"])(
+    "an -o %s run on a terminal still reports the JSON document",
+    (format) =>
+      Effect.gen(function* () {
+        const { exitCode, stdout, stderr } = yield* runFixture(["conflict", "-o", format], {
+          STANDARD_ERRORS_FIXTURE_TTY: "1",
+        });
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+        expect(yield* decodeJson(lastLine(stderr))).toMatchObject({
+          code: "conflict",
+          status: 409,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("a plan-gated denial carries its entitlement in the JSON document", () =>
     Effect.gen(function* () {
       const { exitCode, stderr } = yield* runFixture(["plan-gated", "-o", "json"]);

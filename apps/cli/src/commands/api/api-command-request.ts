@@ -1,5 +1,5 @@
 import { operationDefinitions } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Predicate, Schema, type SchemaIssue } from "effect";
+import { Effect, FileSystem, Option, Predicate, Schema, SchemaIssue } from "effect";
 
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import type { ApiFlagValue } from "./api-command-flags.ts";
@@ -220,6 +220,45 @@ const flagAt = (entry: ApiCommandEntry, path: Path) => {
   return undefined;
 };
 
+const pointerOf = (path: Path) => path.map((key) => `/${String(key)}`).join("");
+
+/** The CLI surface that supplies the input at `path`: a flag, a positional argument, or the JSON pointer. */
+const surfaceAt = (entry: ApiCommandEntry, path: Path): string => {
+  const pointer = pointerOf(path);
+  for (const binding of entry.bindings) {
+    if (binding.source === "argument" && path[0] === binding.name) return `<${binding.argument}>`;
+    if (binding.source !== "flag") continue;
+    if (binding.location === "query" && path[0] === binding.name) return `--${binding.flag}`;
+    if (
+      binding.location === "body" &&
+      (pointer === binding.pointer || pointer.startsWith(`${binding.pointer}/`))
+    ) {
+      return `--${binding.flag}`;
+    }
+  }
+  return pointer === "" ? "the request" : pointer;
+};
+
+const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+const missingKeyMessage = formatIssues(new SchemaIssue.MissingKey(undefined)).issues[0]?.message;
+
+/** One line per distinct failure, each naming the flag or argument that supplies the value. */
+const describeIssues = (entry: ApiCommandEntry, issue: SchemaIssue.Issue): string => {
+  const { issues } = formatIssues(issue);
+  const failures = issues.some((found) => found.message !== missingKeyMessage)
+    ? issues.filter((found) => found.message !== missingKeyMessage)
+    : issues;
+  const lines = new Set(
+    failures.map((found) => {
+      const path = (found.path ?? []).map((segment) =>
+        typeof segment === "object" ? segment.key : segment,
+      );
+      return `${surfaceAt(entry, path)}: ${found.message}`;
+    }),
+  );
+  return [...lines].join("; ");
+};
+
 const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
   const requirements = missingKeyPaths(error.issue, []);
   const alternatives = requirements?.length === 1 ? requirements[0]! : undefined;
@@ -251,7 +290,7 @@ const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
     });
   }
   return new ApiCommandUsageError({
-    message: `The request is not valid: ${error.message}`,
+    message: `The request is not valid: ${describeIssues(entry, error.issue)}`,
     hint: "Check the flags, or the --body/--file contents.",
   });
 };

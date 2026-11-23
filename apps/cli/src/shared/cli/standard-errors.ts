@@ -32,7 +32,6 @@ import {
   CliErrorCategory,
   CliErrorKind,
 } from "../telemetry/error-actionability.ts";
-import { isMachineResourceFormat } from "../output/resource-format.ts";
 import { readOutputFlag } from "./agent-output.ts";
 import {
   findCommand,
@@ -261,9 +260,12 @@ export const errorsContractForRun = (
   return node === undefined ? "legacy" : readCommandErrorsContract(node);
 };
 
-/** Whether failures render as the JSON document: a machine `-o` or output that is not interactive. */
+/**
+ * Whether failures render as the JSON document: output that is not interactive, or any `-o`, which
+ * a standard-errors command rejects with a usage error.
+ */
 export const isMachineFailureMode = (args: ReadonlyArray<string>, interactive: boolean): boolean =>
-  !interactive || isMachineResourceFormat(Option.fromNullishOr(readOutputFlag(args)));
+  !interactive || readOutputFlag(args) !== undefined;
 
 /** Renders the failure as the stderr text: a leading blank line plus JSON, or a human message and hint. */
 const renderStandardFailure = (pending: PendingStandardFailure): string => {
