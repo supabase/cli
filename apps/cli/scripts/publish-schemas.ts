@@ -185,7 +185,7 @@ const main = Effect.gen(function* () {
     repo,
     base,
     branch,
-    stagedPath: PUBLISHED_PATH,
+    stagedPaths: [PUBLISHED_PATH],
     write: (checkoutDir) => writeCurrentSchemas(repo, base, branch, schemas, checkoutDir),
     commitMessage: `chore: update cli config schemas to v${version}`,
     pullRequestTitle: "chore: update cli config schemas",
