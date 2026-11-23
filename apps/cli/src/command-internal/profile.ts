@@ -1,7 +1,6 @@
 /**
  * Built-in profile → environment endpoints, the single source of truth for `project_host`
- * (used to build `SUPABASE_URL = https://<ref>.<host>`) and `dashboard_url` (used to build the
- * billing URL).
+ * (used to build `SUPABASE_URL = https://<ref>.<host>`) and `dashboard_url`.
  *
  * YAML-mode profiles carry their own `project_host`/`dashboard_url` (loaded by `loadProfile`).
  * The `?? DEFAULT_ENDPOINTS` fallbacks below only serve callers keying a lookup on an
@@ -75,8 +74,4 @@ export function dashboardUrl(profile: string): string {
 
 export function poolerHost(profile: string): string {
   return (BUILT_IN[profile] ?? DEFAULT_ENDPOINTS).poolerHost;
-}
-
-export function billingUrl(profile: string, orgSlug: string): string {
-  return `${dashboardUrl(profile)}/org/${orgSlug}/billing`;
 }
