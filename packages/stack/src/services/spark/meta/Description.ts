@@ -104,7 +104,7 @@ const StatementStatus = Schema.Struct({
   statement: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
-export const ScratchResult = Schema.Struct({ statuses: Schema.Array(StatementStatus) });
+export const DryRunResult = Schema.Struct({ statuses: Schema.Array(StatementStatus) });
 
 export type Row = Record<string, unknown>;
 

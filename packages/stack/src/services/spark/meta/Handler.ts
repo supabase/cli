@@ -180,7 +180,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
     );
   });
 
-  /** Applies a schema change as a Spark migration after a dry run on a scratch copy. */
+  /** Applies a schema change as a Spark migration after Spark's dry run of it on the project's database. */
   const applySchemaChange = Effect.fn("SparkMeta.applySchemaChange")(function* (
     statements: ReadonlyArray<ParsedStatement>,
     name: string,
@@ -207,7 +207,7 @@ export const makeSparkMetaHandler = Effect.fn("SparkMeta.make")(function* (
       version = wanted;
     } else if (numericLatest && BigInt(version) <= BigInt(latest))
       version = (BigInt(latest) + 1n).toString();
-    const dry = yield* admin.scratch([{ name: `${version}_${name}.sql`, sql: migration }]);
+    const dry = yield* admin.dryRunMigration(version, name, migration);
     const bad = dry.statuses.filter((s) => s.status === "unsupported" || s.status === "error");
     const first = bad[0];
     if (first !== undefined) {

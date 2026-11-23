@@ -7,7 +7,7 @@ import {
   ParseResult,
   type Row,
   SchemaVersion,
-  ScratchResult,
+  DryRunResult,
 } from "./Description.ts";
 
 /** A Postgres-shaped error Spark returned, or one sparkmeta raises before Spark sees the SQL. */
@@ -117,7 +117,7 @@ export const makeSparkAdmin = (client: HttpClient.HttpClient, url: string, servi
     applyMigration: (version: string, name: string, sql: string) =>
       request(Schema.Unknown, "POST", "/system/v1/migrations", { version, name, sql }),
     dryRunMigration: (version: string, name: string, sql: string) =>
-      request(ScratchResult, "POST", "/system/v1/migrations?dry_run=1", { version, name, sql }),
+      request(DryRunResult, "POST", "/system/v1/migrations?dry_run=1", { version, name, sql }),
     /** Postgres DDL of the project's own schemas, or only of `schemas` when given. */
     dump: (schemas: ReadonlyArray<string> | undefined) =>
       requestText(
@@ -128,12 +128,6 @@ export const makeSparkAdmin = (client: HttpClient.HttpClient, url: string, servi
       ),
     schemaVersion: request(SchemaVersion, "GET", "/_spark/v1/schema/version"),
     schema: request(Description, "GET", "/_spark/v1/schema"),
-    scratch: (files: ReadonlyArray<{ readonly name: string; readonly sql: string }>) =>
-      request(ScratchResult, "POST", "/_spark/v1/scratch", {
-        base: "current",
-        files,
-        order: "as_given",
-      }),
   };
 };
 

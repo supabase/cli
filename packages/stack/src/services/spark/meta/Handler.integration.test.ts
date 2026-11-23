@@ -171,8 +171,6 @@ const fakeSpark = (
               ? reply({ dry_run: true, statuses: statusesOf(sqlOf(body)) })
               : reply({ ok: true }),
           );
-        case "/_spark/v1/scratch":
-          return respond(reply({ statuses: statusesOf(sqlOf(body)) }));
         case "/_spark/v1/parse":
           return respond(reply({ statements: parse(String(Reflect.get(Object(body), "sql"))) }));
         case "/database/query": {
@@ -350,9 +348,10 @@ it.live("refuses DDL Spark cannot run with that statement's own message, before 
       "Not supported on Spark (CreateFunctionStmt): create function public.f() returns int language plpgsql as $$ begin return 1; end $$ -- CREATE FUNCTION is not supported",
     );
     expect(yield* fs.exists(migrationsDir)).toBe(false);
-    expect(
-      spark.calls.some((call) => call.path === "/system/v1/migrations" && call.body !== undefined),
-    ).toBe(false);
+    const posts = spark.calls.filter(
+      (call) => call.path === "/system/v1/migrations" && call.body !== undefined,
+    );
+    expect(posts.map((call) => call.dryRun)).toEqual([true]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

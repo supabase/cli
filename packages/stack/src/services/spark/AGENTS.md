@@ -19,7 +19,7 @@ The root [`AGENTS.md`](../../../../../AGENTS.md) rules apply.
 ## How sparkmeta routes SQL
 
 Spark's parser (`POST /_spark/v1/parse`) classifies the script. A script with a DDL statement becomes a Spark migration
-after a dry run on a scratch copy, and is written to `supabase/migrations`; a refused statement comes back with its own
+after Spark's dry run of it on the project's database, and is written to `supabase/migrations`; a refused statement comes back with its own
 SQLSTATE and message, and the summary of every refusal in `details`. Everything else goes to Spark's
 `/database/query` as sent, with its parameters, and Spark's error comes back unchanged, with Spark's own `formattedError`; sparkmeta formats only the errors it raises itself. Studio answers its own catalog
 queries: its pg-meta fallbacks match Spark's SQLSTATE and message, so sparkmeta never rewrites either.
