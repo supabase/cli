@@ -1,5 +1,6 @@
-import { BunPath } from "@effect/platform-bun";
-import { Effect, Path } from "effect";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Effect, Path, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { it } from "@effect/vitest";
 import { describe, expect, test } from "vitest";
 
@@ -98,15 +99,43 @@ describe("buildKongEmailTemplateBind", () => {
 });
 
 describe("buildKongEntrypointScript", () => {
-  test("renders the nginx sizing exports and the custom_nginx.template heredoc, then execs docker-entrypoint.sh", () => {
+  test("writes the custom_nginx.template heredoc, then execs docker-entrypoint.sh", () => {
     const script = buildKongEntrypointScript("NGINX_TEMPLATE");
-    expect(script).toBe(
-      'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
-        "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
-        "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
+    expect(script.slice(script.indexOf("cat <<'EOF'"))).toBe(
+      "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
         "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n" +
         "NGINX_TEMPLATE\nEOF\n",
     );
+  });
+
+  describe.skipIf(process.platform === "win32")("nginx sizing", () => {
+    for (const [hardLimit, expected] of [
+      ["unlimited", "16384"],
+      ["16385", "16384"],
+      ["16383", "16383"],
+    ] as const) {
+      it.live(`exports ${expected} for a ${hardLimit} hard nofile limit`, () =>
+        Effect.gen(function* () {
+          const script = buildKongEntrypointScript("NGINX_TEMPLATE");
+          const sizing = script.slice(0, script.indexOf("cat <<'EOF'"));
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const child = yield* spawner.spawn(
+            ChildProcess.make("sh", [
+              "-c",
+              "unset KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE KONG_NGINX_EVENTS_WORKER_CONNECTIONS\n" +
+                `ulimit() { [ "$*" = -Hn ] && echo ${hardLimit}; }\n${sizing}` +
+                `sh -c 'echo "$KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE $KONG_NGINX_EVENTS_WORKER_CONNECTIONS"'`,
+            ]),
+          );
+          const [exitCode, output] = yield* Effect.all(
+            [child.exitCode, Stream.mkString(Stream.decodeText(child.stdout))],
+            { concurrency: "unbounded" },
+          );
+          expect(exitCode).toBe(0);
+          expect(output).toBe(`${expected} ${expected}\n`);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      );
+    }
   });
 
   test("no longer references kong.yml or the TLS cert/key paths at all", () => {
