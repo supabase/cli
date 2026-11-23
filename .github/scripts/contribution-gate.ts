@@ -29,7 +29,7 @@ export const GATE_LABEL = "open-for-contribution";
  * private member is reported as `CONTRIBUTOR`/`NONE`, so this set alone can't
  * identify every internal maintainer — see `isInternalAuthor`.
  */
-export const INTERNAL_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const INTERNAL_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /**
  * Effective repository permissions that mark an author as internal: anyone
@@ -74,7 +74,7 @@ export interface GateInput {
   linkedIssues: LinkedIssue[];
 }
 
-export type GateReason =
+type GateReason =
   | "bot"
   | "internal"
   | "ok"
