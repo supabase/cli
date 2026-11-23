@@ -480,4 +480,8 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-organizations-slug-webhooks-endpoints-id-test-post": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-get": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-retry-post": { fga: [] },
+  "v2-restart-warehouse-replication": {
+    fga: [["database_write", "project_admin_write"]],
+    oauthScope: "database:write",
+  },
 };

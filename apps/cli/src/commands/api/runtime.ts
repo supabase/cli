@@ -326,7 +326,10 @@ const leafOf = (entry: ApiCommandEntry) => {
   return Command.make(verb, config).pipe(
     Command.withDescription(entry.description ?? entry.summary),
     Command.withShortDescription(`${entry.summary} (experimental)`),
-    Command.withExamples([{ command: exampleFor(entry), description: entry.summary }]),
+    Command.withExamples([
+      { command: exampleFor(entry), description: entry.summary },
+      ...(entry.examples ?? []),
+    ]),
     withPermissions(permissionsOf(entry, resolved)),
     Command.withHandler((flags) => {
       const { api: _generated, argument: _argument, ...recorded } = flags;

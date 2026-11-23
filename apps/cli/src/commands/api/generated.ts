@@ -450,6 +450,24 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "replication", "restart"],
+    operationId: "v2-restart-warehouse-replication",
+    definition: "v2RestartWarehouseReplication",
+    summary: "Start or restart Warehouse replication",
+    description:
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.",
+    readOnly: false,
+    confirmDescription: true,
+    flags: [],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "replication", "resync"],
     operationId: "v2-resync-warehouse-replication",
     definition: "v2ResyncWarehouseReplication",
@@ -506,7 +524,7 @@ export const apiCommands = [
     definition: "v2GetWarehouseStatus",
     summary: "Get consolidated Warehouse status and capabilities",
     description:
-      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.",
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions. Runtime diagnostics classify current failures. Table errors and progress are explicitly current, last-known or unavailable; they do not establish completion of a particular restart or resync. Capabilities describe Management API operations: workload_metrics includes query-stats and capacity; query_explain does not describe SQL EXPLAIN through the Warehouse connection.",
     readOnly: true,
     flags: [],
     bindings: [
@@ -580,13 +598,36 @@ export const apiCommands = [
       "Updates saved sorting and partitioning rules for one source table object identifier (OID). Provide sort_by or partition_by; empty and reset-only patches are rejected. Omitted settings are preserved. Null makes a setting unmanaged. An empty partition list clears partitioning, and the none sort selector clears sorting. The backend validates the source schema and preserves other tables. When the layout changes, an active pipeline is restarted. A stopped pipeline stays stopped. reset_table defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never restarts the pipeline or resets the table. Acceptance and application_status report orchestration. Run warehouse tables layout get to compare the desired and observed rules. Run warehouse tables get to check table replication status. These reads do not establish completion of this specific update. There is no revision, idempotency, resolved preview, or durable operation contract. A failed update can leave partial effects, including a completed reset. Inspect the saved layout, pipeline, and table state before retrying.",
     readOnly: false,
     confirmDescription: true,
+    examples: [
+      {
+        command:
+          'supabase warehouse tables layout update <table-id> --partition-by \'[{"column":"event_at","transform":{"kind":"day"}}]\' --sort-by \'{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}\'',
+        description:
+          "Partition new files by event day and sort within files; preserve historical files.",
+      },
+      {
+        command:
+          'supabase warehouse tables layout update <table-id> --partition-by \'[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]\' --dry-run',
+        description: "Preview eight hash buckets locally without changing the Warehouse.",
+      },
+      {
+        command:
+          "supabase warehouse tables layout update <table-id> --partition-by '[]' --sort-by '{\"kind\":\"none\"}'",
+        description: "Clear partitioning and sorting for future writes.",
+      },
+      {
+        command:
+          "supabase warehouse tables layout update <table-id> --partition-by 'null' --sort-by 'null'",
+        description: "Stop managing both settings; omitted flags preserve their saved values.",
+      },
+    ],
     body: {
       contentType: "application/json",
       type: "warehouse_table_layout",
     },
     argument: {
       name: "table-id",
-      description: "Source Postgres table OID from the Warehouse tables list.",
+      description: "Source PostgreSQL table OID, as returned by the Warehouse tables list.",
     },
     flags: [
       {
@@ -595,7 +636,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+          'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
       },
       {
         name: "reset-table",
@@ -603,7 +644,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to false, preserving historical files and replication progress. When the layout changes, --reset-table resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+          "Defaults to false, preserving historical files and replication progress. When the layout changes, true resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
       },
       {
         name: "sort-by",
@@ -611,7 +652,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+          'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
       },
     ],
     bindings: [
