@@ -188,11 +188,12 @@ const LinkFile = Schema.fromJsonString(
   Schema.Struct({ project: Schema.Struct({ ref: Schema.String }) }),
 );
 const RestError = Schema.fromJsonString(Schema.Struct({ code: Schema.String }));
+const McpTypes = Schema.fromJsonString(Schema.Struct({ types: Schema.String }));
 const McpToolCall = Schema.fromJsonString(
   Schema.Struct({
     result: Schema.Struct({
       isError: Schema.optionalKey(Schema.Boolean),
-      content: Schema.Unknown,
+      content: Schema.Array(Schema.Struct({ text: Schema.optionalKey(Schema.String) })),
     }),
   }),
 );
@@ -397,7 +398,10 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
       }),
     });
     const { result } = Schema.decodeSync(McpToolCall)(await response.text());
-    return { isError: result.isError === true, text: JSON.stringify(result.content) };
+    return {
+      isError: result.isError === true,
+      text: result.content.map((part) => part.text ?? "").join(""),
+    };
   };
 
   // The step owns its timeout: vitest's own fires outside the body and would leave its commands
@@ -631,10 +635,8 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   );
 
   step(
-    "Studio's MCP server at /mcp: list_tables, list_extensions, apply_migration, list_migrations, execute_sql (refuses a write in read-only mode), get_project_url, get_publishable_keys",
+    "Studio's MCP server at /mcp: list_tables, list_extensions, apply_migration, list_migrations, execute_sql (refuses a write in read-only mode), generate_typescript_types (the same types as gen types), get_project_url, get_publishable_keys",
     async () => {
-      // Not called, it fails on Spark: generate_typescript_types, until a local stack has a source
-      // of types for Studio.
       const tables = await studioMcp("list_tables", { schemas: ["public"], verbose: true });
       expect(tables.isError, `list_tables: ${tables.text}`).toBe(false);
       expect(tables.text).toContain("public.todos");
@@ -667,6 +669,12 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
       expect(refused.isError, "execute_sql wrote a row in read-only mode").toBe(true);
       expect(refused.text).toContain("read-only transaction");
       expect(await restCount("tags?select=name"), "rows in the table the migration made").toBe(1);
+      const types = await studioMcp("generate_typescript_types");
+      expect(types.isError, `generate_typescript_types: ${types.text}`).toBe(false);
+      expect(
+        Schema.decodeSync(McpTypes)(types.text).types.trimEnd(),
+        "Studio's types differ from gen types typescript on the same project",
+      ).toBe((await run(["gen", "types", "typescript"])).stdout);
       const url = await studioMcp("get_project_url");
       expect(url.isError, `get_project_url: ${url.text}`).toBe(false);
       expect(url.text).toContain(API);
