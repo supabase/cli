@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -43,6 +44,7 @@ const config = {
 export type DbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbResetCommand = Command.make("reset", config).pipe(
+  withSidebar({ title: "Reset local database" }),
   Command.withDescription("Resets a database to current migrations."),
   Command.withShortDescription("Resets a database to current migrations"),
   Command.withExamples([

@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbBlocking } from "./blocking.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbBlockingCommand = Command.make("blocking", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show queries waiting and holding locks" }),
   Command.withDescription(
     "Show queries that are holding locks and the queries that are waiting for them to be released.",
   ),

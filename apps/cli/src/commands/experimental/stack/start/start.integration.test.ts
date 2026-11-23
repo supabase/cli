@@ -334,7 +334,10 @@ const credentialsFor = (
   };
 };
 
-const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
+const fakeStack = (
+  compositionStart?: Stack["composition"]["start"],
+  databaseStart?: Effect.Effect<void, StackError>,
+) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   const memberCreations = new Map<string, ServiceCreation>();
   let stopped = 0;
@@ -368,7 +371,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** Builds a member from a creation, tracking it for a later `reassignEndpoint`. */
   const buildMember = (id: string, creation: ServiceCreation) => {
     memberCreations.set(id, creation);
-    return instance(creation, id, () => memberView(id));
+    const member = instance(creation, id, () => memberView(id));
+    return databaseStart === undefined || member.service !== "database"
+      ? member
+      : { ...member, start: databaseStart };
   };
   const stack: Stack = {
     id: "a".repeat(64),
@@ -912,6 +918,51 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("names this project's stacks on other branches when creating one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-other-branch-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "other-branch"\n');
+      const fixture = fakeStack();
+      const output = mockOutput();
+      const api = Layer.succeed(StackApi, {
+        create: () => Effect.succeed(fixture.stack),
+        open: () => Effect.die("open must not run"),
+        discover: (options) =>
+          Effect.succeed(
+            options.owners === false
+              ? [
+                  {
+                    definition: {
+                      id: "b".repeat(64),
+                      identity: {
+                        projectRoot: root,
+                        branchContext: "ordinary-workspace",
+                        stackName: "default",
+                      },
+                      runtime: "native" as const,
+                      instances: [],
+                      composition: { members: [], dependencies: [] },
+                      lifetime: "detached" as const,
+                    },
+                    host: undefined,
+                  },
+                ]
+              : [],
+          ),
+        find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
+      });
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture, output, false), api)),
+      );
+      expect(infoMessages(output)).toContain(
+        "Creating a new stack for this branch. This project has stacks on other branches: --stack bbbbbbbb (ordinary-workspace).",
+      );
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1291,6 +1342,67 @@ describe("experimental stack start", () => {
         detail: "analytics (analytics-member-1): Service health timed out",
       });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      const fixture = fakeStack(
+        undefined,
+        Effect.fail(
+          new StackError({
+            operation: "start",
+            message:
+              "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+          }),
+        ),
+      );
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({
+        suggestion: expect.stringMatching(
+          /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+        ),
+      });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "points at running stacks when a relaunched PostgreSQL runs out of shared memory segments",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* lockProject();
+        const fixture = fakeStack(
+          Effect.fail(
+            new StackError({
+              operation: "composition.start",
+              message: "Composition start had failures",
+              outcomes: [
+                {
+                  id: "database-member-1",
+                  succeeded: false,
+                  error:
+                    "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+                },
+              ],
+            }),
+          ),
+        );
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        expect(error).toMatchObject({
+          message: "Composition start had failures",
+          suggestion: expect.stringMatching(
+            /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+          ),
+        });
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("loads Functions env only when Functions are selected", () =>

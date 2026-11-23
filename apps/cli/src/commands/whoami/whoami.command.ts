@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { Command } from "effect/cli";
 
@@ -22,6 +23,7 @@ export const whoamiHandler = (flags: WhoamiFlags) =>
   );
 
 export const whoamiCommand = Command.make("whoami", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Show information about the currently logged-in user."),
   Command.withShortDescription("Show the current user"),
   Command.withExamples([

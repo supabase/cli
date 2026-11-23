@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbLongRunningQueries } from "./long-running-queries.handler.ts";
@@ -15,6 +16,7 @@ export const inspectDbLongRunningQueriesCommand = Command.make(
   "long-running-queries",
   INSPECT_DB_FLAGS,
 ).pipe(
+  withSidebar({ title: "Show long running queries" }),
   Command.withDescription("Show currently running queries running for longer than 5 minutes."),
   Command.withShortDescription("Show long-running queries"),
   withPermissions(INSPECT_DB_PERMISSIONS),

@@ -247,8 +247,30 @@ const SMOKE_TEST_RUNTIME_DEPS = [
   "@effect/platform-node",
   "@standard-schema/spec",
   "dedent",
+  "jsonc-parser",
   "smol-toml",
 ] as const;
+
+const CONVERT_SMOKE_TEST_RUNTIME_DEPS = ["jsonc-parser", "smol-toml"] as const;
+
+function buildConvertSmokeTestScript(): string {
+  return [
+    'import assert from "node:assert/strict";',
+    "",
+    'const { convertCliConfigTomlToJsonc, CliConfigConvertError } = await import("@supabase/config/convert");',
+    'const converted = convertCliConfigTomlToJsonc("# the port\\n[api]\\nport = 54321\\n");',
+    'assert.equal(typeof converted.text, "string", "convert did not return text");',
+    'assert.ok(converted.text.includes("// the port"), "convert dropped the comment");',
+    'assert.ok(converted.text.includes("54321"), "convert dropped the value");',
+    "assert.throws(",
+    '  () => convertCliConfigTomlToJsonc("[api\\n"),',
+    '  (error) => error instanceof CliConfigConvertError && error.reason === "parse_error",',
+    '  "a bad document did not throw CliConfigConvertError",',
+    ");",
+    "",
+    'console.log("[build] pack-and-install smoke test: ./convert loaded with no effect resolvable");',
+  ].join("\n");
+}
 
 function buildSmokeTestScript(): string {
   return [
@@ -330,37 +352,70 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
     }
     const tarballPath = path.join(scratchDir, packEntry.filename);
 
-    const consumerDir = path.join(scratchDir, "consumer");
-    const consumerConfigDir = path.join(consumerDir, "node_modules", "@supabase", "config");
-    yield* fs.makeDirectory(consumerConfigDir, { recursive: true });
-    yield* runCommand([
-      tarPath,
-      "-xzf",
-      tarballPath,
-      "-C",
-      consumerConfigDir,
-      "--strip-components=1",
-    ]);
+    const installConsumer = Effect.fnUntraced(function* (
+      name: string,
+      deps: ReadonlyArray<string>,
+    ) {
+      const consumerDir = path.join(scratchDir, name);
+      const consumerConfigDir = path.join(consumerDir, "node_modules", "@supabase", "config");
+      yield* fs.makeDirectory(consumerConfigDir, { recursive: true });
+      yield* runCommand([
+        tarPath,
+        "-xzf",
+        tarballPath,
+        "-C",
+        consumerConfigDir,
+        "--strip-components=1",
+      ]);
 
-    yield* fs.writeFileString(
-      path.join(consumerDir, "package.json"),
-      `${yield* encodeIndentedJson({
-        name: "supabase-config-pack-smoke",
-        version: "0.0.0",
-        private: true,
-        type: "module",
-      })}\n`,
-    );
+      yield* fs.writeFileString(
+        path.join(consumerDir, "package.json"),
+        `${yield* encodeIndentedJson({
+          name: "supabase-config-pack-smoke",
+          version: "0.0.0",
+          private: true,
+          type: "module",
+        })}\n`,
+      );
 
-    const consumerNodeModules = path.join(consumerDir, "node_modules");
-    for (const name of SMOKE_TEST_RUNTIME_DEPS) {
-      const real = yield* fs.realPath(path.join(root, "node_modules", name));
-      const dest = path.join(consumerNodeModules, name);
-      yield* fs.makeDirectory(path.dirname(dest), { recursive: true });
-      yield* fs.symlink(real, dest);
-    }
+      const consumerNodeModules = path.join(consumerDir, "node_modules");
+      for (const dep of deps) {
+        const real = yield* fs.realPath(path.join(root, "node_modules", dep));
+        const dest = path.join(consumerNodeModules, dep);
+        yield* fs.makeDirectory(path.dirname(dest), { recursive: true });
+        yield* fs.symlink(real, dest);
+      }
+      return consumerDir;
+    });
 
+    const consumerDir = yield* installConsumer("consumer", SMOKE_TEST_RUNTIME_DEPS);
     yield* runCommand([nodePath, "--input-type=module", "-e", buildSmokeTestScript()], consumerDir);
+
+    const convertConsumerDir = yield* installConsumer(
+      "consumer-convert",
+      CONVERT_SMOKE_TEST_RUNTIME_DEPS,
+    );
+    const packedManifest = yield* decodePackageJson(
+      yield* fs.readFileString(
+        path.join(convertConsumerDir, "node_modules", "@supabase", "config", "package.json"),
+      ),
+    ).pipe(buildInputError("packed package.json"));
+    const declared = isRecord(packedManifest) ? packedManifest.dependencies : undefined;
+    const undeclared = CONVERT_SMOKE_TEST_RUNTIME_DEPS.filter(
+      (dep) => !isRecord(declared) || typeof declared[dep] !== "string",
+    );
+    if (undeclared.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          `the packed package.json does not list ${undeclared.join(", ")} under dependencies, ` +
+            "but ./convert imports them at runtime",
+        ),
+      );
+    }
+    yield* runCommand(
+      [nodePath, "--input-type=module", "-e", buildConvertSmokeTestScript()],
+      convertConsumerDir,
+    );
   });
 
   yield* withTempDirectory(

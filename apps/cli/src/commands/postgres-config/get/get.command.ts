@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -27,6 +28,7 @@ const config = {
 export type PostgresConfigGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve the current Postgres config overrides" }),
   Command.withDescription("Get the current Postgres database config overrides."),
   Command.withShortDescription("Get Postgres database config"),
   withPermissions(

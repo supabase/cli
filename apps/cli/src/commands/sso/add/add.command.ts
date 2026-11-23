@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -54,6 +55,12 @@ const config = {
     ),
     Flag.optional,
   ),
+  dedicatedScope: Flag.Boolean("dedicated-scope").pipe(
+    Flag.withDescription(
+      "Scope the SAML entity ID, metadata URL and ACS URL to this identity provider instead of the shared project-wide URLs.",
+    ),
+    Flag.withDefault(false),
+  ),
   nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
@@ -64,6 +71,7 @@ const config = {
 export type SsoAddFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoAddCommand = Command.make("add", config).pipe(
+  withSidebar({ title: "Add an identity provider" }),
   Command.withDescription(
     "Add and configure a new connection to a SSO identity provider to your Supabase project.",
   ),
@@ -87,6 +95,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
           "skip-url-validation",
           "attribute-mapping-file",
           "name-id-format",
+          "dedicated-scope",
         ],
       },
       upgradeSuggestion,

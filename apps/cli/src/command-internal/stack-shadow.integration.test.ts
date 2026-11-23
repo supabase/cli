@@ -51,6 +51,7 @@ const recordingApi = (
   handles: Stack[],
   restoreFailures = 0,
   warmReadyFailures = 0,
+  startFailure?: string,
 ) =>
   Layer.effect(
     StackApi,
@@ -72,6 +73,10 @@ const recordingApi = (
                 const restored = yield* Ref.make(false);
                 return {
                   ...instance,
+                  start:
+                    startFailure === undefined
+                      ? instance.start
+                      : Effect.fail(new StackError({ operation: "start", message: startFailure })),
                   ready: Effect.gen(function* () {
                     if (yield* Ref.get(restored)) {
                       const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
@@ -515,6 +520,44 @@ describe("stack shadow databases", () => {
         expect(output.stderrText).not.toContain("Failed to destroy");
         expect(roots).toHaveLength(1);
         for (const root of roots) expect(yield* fs.exists(root)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+    120_000,
+  );
+
+  it.live(
+    "points at running stacks when the shadow PostgreSQL runs out of shared memory segments",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-shm-" });
+        const error = yield* stackWithShadowDatabase(input(fs, path, root), () => Effect.void, {
+          runtime: "native",
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              recordingApi(
+                [],
+                [],
+                0,
+                0,
+                "database-primary failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+              ),
+              stackCatalogSetupLayer,
+              dbConnectionLayer,
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir: root, supabaseHome: root }),
+              mockOutput().layer,
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          suggestion: expect.stringMatching(
+            /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+          ),
+        });
       }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     120_000,
   );

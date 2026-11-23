@@ -1,5 +1,5 @@
 import { printParseErrorCode, visit, type ParseErrorCode } from "jsonc-parser";
-import { setOwnProperty } from "./sparse.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 
 /** A JSONC document failed to parse; `line` and `column` are 1-based and the message never quotes source text. */
 // oxlint-disable-next-line effecttsgo/extends-native-error -- only ever a thrown cause, never an Effect failure.

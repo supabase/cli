@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -34,6 +35,7 @@ const config = {
 } as const;
 
 export const migrationRepairCommand = Command.make("repair", config).pipe(
+  withSidebar({ title: "Repair migration history table" }),
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
   Command.withHandler((flags) =>

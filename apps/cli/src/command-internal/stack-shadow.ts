@@ -8,7 +8,7 @@ import { StackApi } from "./stack-api.ts";
 import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 import { selectStackRuntime, type StackRuntime } from "./stack-runtime.ts";
-import { StackEnvSelection } from "./stack-target.ts";
+import { sharedMemorySuggestion, StackEnvSelection } from "./stack-target.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -42,10 +42,15 @@ interface ShadowOptions {
   readonly bypassCache?: boolean;
 }
 
-const shadowError = (cause: { readonly message: string }) =>
-  cause instanceof ShadowDbError
-    ? cause
-    : new ShadowDbError({ message: cause.message, reason: "database" });
+const shadowError = (cause: { readonly message: string }) => {
+  if (cause instanceof ShadowDbError) return cause;
+  const suggestion = sharedMemorySuggestion(cause.message);
+  return new ShadowDbError({
+    message: cause.message,
+    reason: "database",
+    ...(suggestion === undefined ? {} : { suggestion }),
+  });
+};
 
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);

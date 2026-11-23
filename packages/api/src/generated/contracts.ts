@@ -12661,6 +12661,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "warehouse_lifecycle_conflict",
           "warehouse_setup_invalid",
           "warehouse_not_found",
+          "warehouse_metrics_unavailable",
           "warehouse_setup_unavailable",
           "agentic_credential_not_found",
           "backup_unsupported",

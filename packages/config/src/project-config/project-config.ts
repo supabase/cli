@@ -1,20 +1,15 @@
 import { Schema, SchemaIssue } from "effect";
 import type { CliConfig } from "../base.ts";
-import { isObject } from "../config-document.ts";
+import { isObject } from "../lib/document-value.ts";
 import {
   formatProjectConfigParseErrorMessage,
   PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
   ProjectConfigParseError,
 } from "../errors.ts";
 import { PROVIDER_SIGNUP_ALIASES } from "../lib/provider-signup.ts";
+import { setOwnProperty } from "../lib/own-property.ts";
 import { isSecretPath } from "../lib/secret-paths.ts";
-import {
-  deepFreeze,
-  setOwnProperty,
-  type DeepPartial,
-  type EffectiveConfig,
-  type OmitPaths,
-} from "../sparse.ts";
+import { deepFreeze, type DeepPartial, type EffectiveConfig, type OmitPaths } from "../sparse.ts";
 import {
   ProjectConfigApiAttributesSchema,
   type ProjectConfigApiAttributes,

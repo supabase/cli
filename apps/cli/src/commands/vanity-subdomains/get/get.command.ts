@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -26,6 +27,7 @@ const config = {
 export type VanitySubdomainsGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const vanitySubdomainsGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve vanity subdomain" }),
   Command.withDescription("Get the current vanity subdomain."),
   Command.withShortDescription("Get the current vanity subdomain"),
   withPermissions(

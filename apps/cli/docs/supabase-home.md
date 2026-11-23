@@ -53,6 +53,7 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
 <SUPABASE_HOME>/
   access-token
   cli-latest
+  stack-nudge.json
   telemetry.json
   bin/
   stacks/
@@ -139,6 +140,13 @@ project directory has a real `supabase/` directory and uses legacy project state
 subdirectory they use `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty file, which
 suppresses the notice and further fetches until it expires. The cache is skipped when the file,
 `supabase/.temp`, or `SUPABASE_HOME` is a symlink. `SUPABASE_NO_UPDATE_NOTIFIER=1` disables the check.
+
+## Local stack nudge
+
+On the legacy backend, `supabase start` suggests trying the experimental local stack at most once
+every seven days. It records the last time it showed the suggestion as `{"lastShownAt": <epoch ms>}`
+in `<SUPABASE_HOME>/stack-nudge.json`. A missing, unreadable, or future timestamp shows the
+suggestion again, and a failed write never fails `start`.
 
 ## Related docs
 

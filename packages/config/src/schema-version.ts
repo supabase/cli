@@ -1,4 +1,4 @@
-import { cliConfigSchemaKey, isObject } from "./config-document.ts";
+import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
 import type { ConfigFormat } from "./config-format.ts";
 
 export interface CliConfigSchemaDeclaration {
