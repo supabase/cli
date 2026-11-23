@@ -5,6 +5,35 @@ program is a `Model`, a `Message` union, an `update` function and a `view`. View
 tree instead of HTML. Layout is flexbox, computed by Yoga, in terminal cells. The package is private
 and lives in this workspace; import it as `@supabase/tui`.
 
+## Try it
+
+Set up the repository once, as [CONTRIBUTING.md](../../CONTRIBUTING.md#installing-mise) describes:
+`mise install` provides the pinned Node, Bun and pnpm, then run `pnpm install` from the root.
+
+Then, from `packages/tui`, in an interactive terminal:
+
+```sh
+bun examples/gallery.ts   # every block in its main states, then a live spinner demo and a select prompt
+bun examples/counter.ts   # the smallest interactive program: up/down or +/- change a count, q quits
+bun examples/counters.ts  # several counters composed into one program
+```
+
+On a pipe, the gallery prints its static screen and stops.
+
+To change how things look, edit one of these files and rerun the gallery:
+
+- [`src/supabase/theme.ts`](src/supabase/theme.ts) maps each tone (`muted`, `accent`, `success`,
+  `warning`, `danger`, `info`) to a color, with 256-color and 16-color fallbacks for terminals
+  without true color.
+- [`src/blocks/glyphs.ts`](src/blocks/glyphs.ts) holds the symbols the blocks draw, such as ticks,
+  pointers and radio buttons, each with an ASCII alternate.
+- [`src/examples/gallery/static.ts`](src/examples/gallery/static.ts) lays out the gallery screen;
+  add a `section(...)` to show a block in another state.
+
+Read [Theme and legibility](docs/building-blocks.md#theme-and-legibility) before changing colors:
+text that carries meaning stays in the terminal's default color, and color never carries meaning on
+its own.
+
 ## Layers
 
 The renderer (`src/terminal`, `src/runtime`, `src/view`, `src/theme`, `src/capabilities.ts`) has no
@@ -15,19 +44,6 @@ through those barrels, and the root `.oxlintrc.json` fails an import that crosse
 direction. Tests reach the renderer through the barrels plus the harness in
 [`src/terminal/testing.ts`](src/terminal/testing.ts) (exported as `@supabase/tui/testing`) and
 [`src/runtime/test-support.ts`](src/runtime/test-support.ts).
-
-## Run the examples
-
-From `packages/tui`:
-
-```sh
-bun examples/gallery.ts   # every block in its main states, then a live spinner demo and a select prompt
-bun examples/counter.ts   # the smallest interactive program: up/down or +/- change a count, q quits
-bun examples/counters.ts  # several counters composed into one program
-```
-
-Each example runs `Tui.run` on a program and prints the result. The gallery needs an interactive
-terminal for its live part; on a pipe it prints the static screen and stops.
 
 ## A first program
 
