@@ -167,7 +167,8 @@ const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDire
       operation: "launch",
       message: `${target} is not a directory; refusing to use it for the native runtime root`,
     });
-  if (info.uid !== uid && !(policy.allowRootOwner && info.uid === 0))
+  /* A user namespace shows unmapped host root as the overflow uid 65534. */
+  if (info.uid !== uid && !(policy.allowRootOwner && (info.uid === 0 || info.uid === 65_534)))
     return yield* new ServiceError({
       operation: "launch",
       message: `${target} belongs to uid ${String(info.uid)}, not the current user; refusing to use it for the native runtime root`,
