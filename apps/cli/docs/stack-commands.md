@@ -111,7 +111,7 @@ owner are unreachable. Plain `status` JSON `env` comes from saved bindings and c
 stopped or sleeping members, while `--env` requires a reachable owner and a running primary
 database.
 
-Starting a stopped stack whose `config.toml` moved an endpoint to a different port, or to and from
+Starting a stopped stack whose project config moved an endpoint to a different port, or to and from
 automatic, applies that change instead of failing: text output prints one line per changed endpoint,
 for example `api: 54321 → 26199`, and JSON/stream-json output add an `endpoint_changes` array (each
 entry naming the endpoint, the `endpoints` keys it moved in `keys`, and its `from`/`to` port) to the
@@ -195,19 +195,24 @@ that does not exist yet.
 The flag selects a local stack, so combining it with `--remote` (or its deprecated aliases) is an
 error, and so is passing it while the legacy backend is selected; the variable is ignored there.
 Migration files and configuration always come from the current project directory. To run several
-stacks of one project at once, leave their ports out of `supabase/config.toml`: a port set there is
+stacks of one project at once, leave their ports out of the project config: a port set there is
 claimed by every stack of the project.
 
 ## Selecting the top-level commands
 
 The top-level `supabase start`, `supabase stop`, and `supabase status` commands use the legacy
-backend by default. To make them aliases of the corresponding `supabase stack` commands, add this
-to `supabase/config.toml`:
+backend by default. To make them aliases of the corresponding `supabase stack` commands, set
+`experimental.stack` to `true` in `supabase/config.jsonc`:
 
-```toml
-[experimental]
-stack = true
+```jsonc
+{
+  "experimental": {
+    "stack": true,
+  },
+}
 ```
+
+In a project that uses `supabase/config.toml`, add `stack = true` under `[experimental]` instead.
 
 The selected backend determines accepted flags, help, and completion before the command is parsed.
 Set the flag to `false`, or remove it, to restore the legacy top-level commands. The explicit
@@ -240,7 +245,7 @@ pins and slim-image overrides do not apply in stack mode. Linked versions remain
 a mismatch warning recommends `supabase link`, which updates services set to `linked` (the
 default) in the lock, while services pinned in `[local.services]` keep their version.
 
-`SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
+`SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `"stack": true` under `experimental` in the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.
 Without the environment variable, `init` still writes the established template with those ports
 and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
@@ -250,7 +255,7 @@ When the flag is on, local targets of the `db`, `migration`, `test db`, `gen typ
 stack runtime. The shadow runs the project's resolved database version, the OrioleDB build when
 `db.orioledb_version` is set, and its baseline cache is keyed by that version. Top-level
 `supabase pull` uses the same stack shadow as `db pull`. Targets selected with `--remote` stay on the Management API for engine selection.
-A `--remote=<url>` database URL that matches `config.toml` host and port is still rewritten like a published
+A `--remote=<url>` database URL that matches the project config's host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
@@ -368,7 +373,7 @@ The backends own separate state and databases. Enabling the flag does not import
 or reuse the legacy database, and does not stop a running legacy stack. Normal project migrations
 and seed configuration are separate from importing legacy database data.
 
-The flag is local CLI configuration in `supabase/config.toml` or `supabase/config.json` and is
+The flag is local CLI configuration in `supabase/config.jsonc`, `supabase/config.json` or `supabase/config.toml` and is
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
@@ -516,7 +521,7 @@ observed HTTP binding plus `/storage/v1/...`, and the service-role JWT is the on
 with its credentials. The stack is located by the project root (workdir realpath) through the
 `@supabase/stack` API, which reads stack state under `SUPABASE_HOME`. A stack started with
 `[api.tls]` serves that endpoint over HTTPS, and Storage uses the certificate saved at start,
-not `config.toml`: a saved certificate with a self-signed root is the only trusted CA; a CA-issued
+not the project config: a saved certificate with a self-signed root is the only trusted CA; a CA-issued
 one is verified against Bun's default trust store and `NODE_EXTRA_CA_CERTS`.
 Neither `storage` nor `seed buckets` ever creates a stack; the legacy `[api]`
 port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
