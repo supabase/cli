@@ -358,6 +358,62 @@ describe("durable registry", () => {
     ),
   );
 
+  it.live("gives Studio the Spark engine in a Spark stack the previous CLI saved without it", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-registry-engine-" });
+        const store = yield* makeTestState(root);
+        const studio = (config: Record<string, unknown>) => ({
+          id: "studio",
+          creation: { service: "studio", pin: selection.studio, config },
+        });
+        const save = (id: string, instances: ReadonlyArray<{ readonly id: string }>) =>
+          Effect.gen(function* () {
+            yield* fs.makeDirectory(path.join(root, id));
+            yield* fs.writeFileString(
+              path.join(root, id, "state.json"),
+              yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                ...initial,
+                id,
+                instances,
+                composition: {
+                  members: instances.map(({ id }) => ({ id, activation: "eager" })),
+                  dependencies: [],
+                },
+              }),
+            );
+          });
+        const studioConfig = (id: string) =>
+          store.read(id).pipe(
+            Effect.map((state) => {
+              const creation = state?.instances.find(
+                (instance) => instance.id === "studio",
+              )?.creation;
+              return creation?.service === "studio" ? creation.config : undefined;
+            }),
+          );
+        const spark = {
+          id: "spark",
+          creation: {
+            service: "spark",
+            config: { executable: "/bin/spark", projectRoot: "/project" },
+            endpoints: { http: { port: "auto" } },
+          },
+        };
+        yield* save("spark-stack", [
+          spark,
+          studio({ executable: "/bin/studio", projectFromApi: true }),
+        ]);
+        yield* save("postgres-stack", [studio({})]);
+
+        expect(yield* studioConfig("spark-stack")).toMatchObject({ postgresEngine: "spark" });
+        expect(yield* studioConfig("postgres-stack")).not.toHaveProperty("postgresEngine");
+      }),
+    ),
+  );
+
   it.live("unregisters a stack and empties its data without deleting unowned data", () =>
     run(
       Effect.gen(function* () {

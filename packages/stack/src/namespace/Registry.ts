@@ -130,6 +130,32 @@ const withoutRetiredServices = (state: unknown): unknown => {
   };
 };
 
+/**
+ * The previous CLI told Studio the engine through sparkmeta, so the Studio it saved for a Spark stack has no
+ * `postgresEngine`. A stack with a Spark service is a Spark project: its Studio gets the engine on read, as
+ * `supabase start` gives it, so a restart from the saved state keeps Studio's Spark queries.
+ */
+const withSparkStudioEngine = (state: unknown): unknown => {
+  if (!isRecord(state) || !Array.isArray(state.instances)) return state;
+  const creationOf = (instance: unknown) =>
+    isRecord(instance) && isRecord(instance.creation) ? instance.creation : undefined;
+  if (!state.instances.some((instance: unknown) => creationOf(instance)?.service === "spark"))
+    return state;
+  return {
+    ...state,
+    instances: state.instances.map((instance: unknown) => {
+      const creation = creationOf(instance);
+      if (!isRecord(instance) || creation?.service !== "studio") return instance;
+      const config = isRecord(creation.config) ? creation.config : {};
+      if (config.postgresEngine !== undefined) return instance;
+      return {
+        ...instance,
+        creation: { ...creation, config: { ...config, postgresEngine: "spark" } },
+      };
+    }),
+  };
+};
+
 const decodeState = (
   text: string,
   id: string,
@@ -137,6 +163,7 @@ const decodeState = (
 ): Effect.Effect<SavedStack, NamespaceError> =>
   Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
     Effect.map(withoutRetiredServices),
+    Effect.map(withSparkStudioEngine),
     Effect.flatMap(Schema.decodeUnknownEffect(SavedStack)),
     Effect.mapError((cause) =>
       namespaceError(
