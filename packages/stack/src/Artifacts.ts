@@ -527,23 +527,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     {
-      upstreamVersion: "v2.174.5",
+      upstreamVersion: "v2.174.6",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/realtime:v2.174.5-r0@sha256:2fd154d982c7ee607eb2173af7e74fa875f266f79dd78dda468d967c3b89f3d0",
-      upstreamImage: "supabase/realtime:v2.174.5",
+        "ghcr.io/supabase/cli/realtime:v2.174.6-r0@sha256:9c7ea1f1e5ba2b30711ded35b70430396e2982741abee54a8ab76f2160fe5ece",
+      upstreamImage: "supabase/realtime:v2.174.6",
       natives: {
         "darwin-arm64": {
-          archive: "c97ca3d8e432be3047a8f4991aa7045707ac62c98e9364aae2de7e4c1e6a3e71",
-          manifest: "158dfd6bb9a551cf6448d3aa5a9fa5fe5ed71138744e76dc0bb0201be2e68ba3",
+          archive: "d2cee6acc24fec9db1bb42f7f942aaa431274f6be0ff76228285a5618780dc16",
+          manifest: "721cddf837da08c92640d3c5b0c92bc83846bbb82407136198d341f985e9f47a",
         },
         "linux-amd64": {
-          archive: "b29957eb81d14803507f80682bd80033e39d601e7ac182b4068c782ba2513d5c",
-          manifest: "82e7479861088f0aab5ca0b2dbf5a1ad363ee318e331f65e21e52383b6d81faa",
+          archive: "b5d03efc6498429da66f96c37ec45904474124304f03bf0c67f85c2ef848c15f",
+          manifest: "74b0725cc44444d46bae4c4e71c76b3b4d9ad04ef1a93fec9c8f98c3cb0186ae",
         },
         "linux-arm64": {
-          archive: "44e2fbbe9a1b01cd4fecaeee3d841c772e4ee3c9a496f88308621728e5fd512a",
-          manifest: "39b4c70e86b1bb608ee8c5916610d78bf74a09d58352ee52ba4fcba99179a1ea",
+          archive: "0c0f6f9c80db640d42d55490b7330e56fa69b455dcbcb572d74460ae32ec1838",
+          manifest: "ea2f743a2a3d616b52ec2cfa4f35c6b8aed3a616bb0e8e48e8f9de8a6e4f8f0e",
         },
       },
     },
