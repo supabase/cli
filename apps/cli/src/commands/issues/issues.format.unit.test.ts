@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { scanAdvisorLintRow } from "../../command-internal/advisors/advisors.format.ts";
-import { Effect } from "effect";
-import { groupIssues as group } from "./issues.format.ts";
+import { Effect, Schema } from "effect";
+import { Issue, groupIssues as group } from "./issues.format.ts";
 
 const groupIssues = (...args: Parameters<typeof group>) => Effect.runSync(group(...args));
 const lint = (values: Readonly<Record<string, unknown>> = {}) =>
@@ -41,6 +41,7 @@ describe("issue grouping", () => {
             detail: "Affected `resource`",
             severity: "info",
             docs_url: "https://example.com/check",
+            remediation: "https://example.com/check",
           },
           {
             id: "two",
@@ -48,6 +49,7 @@ describe("issue grouping", () => {
             detail: "Affected `resource`",
             severity: "critical",
             docs_url: "https://example.com/other",
+            remediation: "https://example.com/other",
           },
         ],
       },
@@ -81,6 +83,31 @@ describe("issue grouping", () => {
   ])("preserves resource identities from metadata %j", (metadata, resource) => {
     expect(groupIssues([lint({ metadata })], "info")[0]?.affected[0]?.resource).toEqual(resource);
   });
+  it("retains structured evidence through schema encoding", () => {
+    const metadata = {
+      name: "orders",
+      type: "table",
+      schema: "public",
+      fkey_columns: [1, 2],
+      fkey_name: "orders_customer_fkey",
+      nested: { evidence: ["customer_id"] },
+    };
+    const issues = groupIssues([lint({ metadata })], "info");
+    expect(Schema.encodeSync(Schema.Array(Issue))(issues)[0]?.affected[0]?.metadata).toEqual(
+      metadata,
+    );
+  });
+  it.each(["Enable RLS on the table", "", "javascript:alert(1)", "https://", "file:///tmp/docs"])(
+    "preserves remediation %j and supplies an HTTP documentation link",
+    (remediation) => {
+      const result = groupIssues([lint({ remediation })], "info")[0];
+      expect(result?.docs_url).toBe("https://supabase.com/docs/guides/database/database-linter");
+      expect(result?.affected[0]).toMatchObject({
+        remediation,
+        docs_url: "https://supabase.com/docs/guides/database/database-linter",
+      });
+    },
+  );
   it("sorts by severity then stable check id and excludes coverage diagnostics", () => {
     expect(
       groupIssues(

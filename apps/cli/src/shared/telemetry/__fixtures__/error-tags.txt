@@ -318,6 +318,7 @@ InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidServiceVersionTagError
+IssuesHealthAuthorizationError
 IssuesHealthUnsupportedError
 IssuesOutputFlagUnsupportedError
 KongReloadError

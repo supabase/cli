@@ -19,11 +19,41 @@ const issue: Issue = {
       detail: "",
       severity: "warning",
       docs_url: "https://example.com/check",
+      remediation: "https://example.com/check",
     },
   ],
 };
 
 describe("readable issue tables", () => {
+  it.each([20, 120])(
+    "counts distinct resources without counting duplicate findings at %s columns",
+    (width) => {
+      const affected = (id: string, type: string, schema: string, name: string) => ({
+        id,
+        resource: { type, schema, name },
+        detail: id,
+        severity: "warning" as const,
+        docs_url: "https://example.com/check",
+        remediation: "https://example.com/check",
+      });
+      const findings = [
+        affected("one", "table", "public", "orders"),
+        affected("two", "table", "public", "orders"),
+        affected("three", "view", "public", "orders"),
+        affected("four", "table", "private", "orders"),
+        affected("five", "table", "public", "customers"),
+      ];
+      const output = renderIssuesText(
+        [{ ...issue, title: "Check", affected: findings }],
+        [],
+        "info",
+        width,
+      );
+      expect(
+        width === 20 ? output : output.split("\n").find((line) => line.includes("Check")),
+      ).toMatch(width === 20 ? /Affected:\n  4/ : /│\s*4\s*│/);
+    },
+  );
   it.each([20, 40, 45, 49, 80, 120])(
     "preserves long Unicode titles and unavailable reasons within %s columns",
     (width) => {

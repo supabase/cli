@@ -3,12 +3,19 @@ import { escapeControlCharacters } from "../../shared/output/escape-control-char
 import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import type { CheckCoverage, Issue, IssueSeverity } from "./issues.format.ts";
 
+const affectedResourceCount = (issue: Issue): number =>
+  new Set(
+    issue.affected.map(({ resource }) =>
+      JSON.stringify([resource.type, resource.schema, resource.name]),
+    ),
+  ).size;
+
 function renderIssueFields(issue: Issue, width: number): string {
   const fields: ReadonlyArray<readonly [string, string]> = [
     ["Severity", issue.severity],
     ["Category", issue.category],
     ["Issue", issue.title || issue.id],
-    ["Affected", String(issue.affected.length)],
+    ["Affected", String(affectedResourceCount(issue))],
   ];
   return fields
     .map(([label, value]) => {
@@ -38,7 +45,7 @@ export function renderIssuesText(
   );
   const affectedWidth = Math.max(
     "Affected".length,
-    ...issues.map((issue) => String(issue.affected.length).length),
+    ...issues.map((issue) => String(affectedResourceCount(issue)).length),
   );
   const titleWidth = width - severityWidth - categoryWidth - affectedWidth - 13;
   const wrap = (text: string) => wrapTerminalText(escapeControlCharacters(text), width);
@@ -57,7 +64,7 @@ export function renderIssuesText(
               issue.severity,
               issue.category,
               wrapTerminalText(escapeControlCharacters(issue.title || issue.id), titleWidth),
-              String(issue.affected.length),
+              String(affectedResourceCount(issue)),
             ]),
             (value) => String(value),
           );

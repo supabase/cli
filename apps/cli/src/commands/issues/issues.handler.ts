@@ -7,20 +7,12 @@ import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
-import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { collectLocalAdvisorLints } from "../../command-internal/advisors/advisors.local.ts";
-import {
-  fetchPerformanceAdvisors,
-  fetchSecurityAdvisors,
-} from "../../command-internal/advisors/advisors.linked.ts";
-import {
-  apiLintsToAdvisorLints,
-  type AdvisorLint,
-} from "../../command-internal/advisors/advisors.format.ts";
+import type { AdvisorLint } from "../../command-internal/advisors/advisors.format.ts";
+import { collectRemoteIssues } from "./issues.remote.ts";
 import {
   groupIssues,
-  isUnavailableCheck,
-  unescapeIssueText,
+  issueCheckCoverage,
   severityAtLeast,
   type CheckCoverage,
   type IssueCategory,
@@ -29,31 +21,6 @@ import { unsupportedOutputFlagMessage } from "../../command-internal/output-form
 import { IssuesOutputFlagUnsupportedError, IssuesHealthUnsupportedError } from "./issues.errors.ts";
 import type { IssuesFlags } from "./issues.command.ts";
 
-const healthChecks = [
-  "log_data_api_error_rate_high",
-  "log_auth_error_rate_high",
-  "log_storage_error_rate_high",
-  "log_edge_function_error_rate_high",
-] as const;
-const fetchHealth = Effect.fn("issues.fetchHealth")(function* (ref: string) {
-  const api = yield* (yield* CommandPlatformApiFactory).make;
-  const result = yield* api.v2.runProjectAdvisors({
-    ref,
-    data: {
-      type: "project_advisors",
-      attributes: { lints: healthChecks.map((name) => ({ name })) },
-    },
-  });
-  return apiLintsToAdvisorLints(result.data.attributes.lints);
-});
-const fetchRemoteIssues = Effect.fn("issues.fetchRemote")(function* (
-  ref: string,
-  category: IssueCategory,
-) {
-  if (category === "health") return yield* fetchHealth(ref);
-  if (category === "security") return yield* fetchSecurityAdvisors(ref);
-  return yield* fetchPerformanceAdvisors(ref);
-});
 const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
   if (Option.isSome(yield* OutputFlag))
     return yield* new IssuesOutputFlagUnsupportedError({
@@ -77,10 +44,17 @@ const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
   const lints: AdvisorLint[] = [];
   const checks: CheckCoverage[] = [];
   const collect = Effect.gen(function* () {
+    const remote =
+      target.kind === "linked" ? yield* collectRemoteIssues(target.ref, categories) : undefined;
     const local =
       target.kind !== "linked" && type !== "health"
         ? yield* collectLocalAdvisorLints(target, dns)
         : [];
+    if (remote !== undefined) {
+      lints.push(...remote.lints);
+      checks.push(...remote.checks);
+      return;
+    }
     for (const category of categories) {
       if (category === "health" && target.kind !== "linked") {
         checks.push({
@@ -90,28 +64,18 @@ const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
         });
         continue;
       }
-      const found =
-        target.kind === "linked"
-          ? yield* fetchRemoteIssues(target.ref, category)
-          : local.filter((lint) => lint.categories?.includes(category.toUpperCase()));
-      const unavailable = found.filter(isUnavailableCheck);
-      checks.push(
-        unavailable.length === 0
-          ? { type: category, status: "complete" }
-          : {
-              type: category,
-              status: "unavailable",
-              reason: unavailable
-                .map((lint) => `${lint.name}: ${unescapeIssueText(lint.detail)}`)
-                .join("; "),
-            },
-      );
+      const found = local.filter((lint) => lint.categories?.includes(category.toUpperCase()));
+      checks.push(issueCheckCoverage(category, found));
       lints.push(...found.map((lint) => ({ ...lint, categories: [category.toUpperCase()] })));
     }
   });
   const task = yield* output.task("Checking project issues");
   const checked = collect.pipe(
-    Effect.tap(() => task.succeed()),
+    Effect.tap(() =>
+      target.kind === "linked" && checks.some((check) => check.status === "unavailable")
+        ? task.fail()
+        : task.succeed(),
+    ),
     Effect.tapError(() => task.fail()),
   );
   if (target.kind === "linked")

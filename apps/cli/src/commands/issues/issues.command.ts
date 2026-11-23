@@ -45,7 +45,9 @@ export type IssuesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const issuesCommand = Command.make("issues", config).pipe(
   withSidebar({ category: "projects", title: "Check project issues" }),
-  Command.withDescription("Checks security, performance, and health issues."),
+  Command.withDescription(
+    "Checks security, performance, and health issues. Remote health checks cover elevated error rates for the Data API, Auth, Storage, and Edge Functions. Remote category failures preserve available findings, report unavailable coverage, and exit with status 1. Authentication and authorization failures are fatal.",
+  ),
   Command.withShortDescription("Checks security, performance, and health issues"),
   Command.withHandler((flags) =>
     issues(flags).pipe(

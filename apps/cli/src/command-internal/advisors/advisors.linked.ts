@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { ApiClient } from "@supabase/api/effect";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { mapHttpError } from "../http-errors.ts";
@@ -26,8 +27,9 @@ const mapPerformanceError = mapHttpError({
 
 export const fetchSecurityAdvisors = Effect.fn("db.advisors.fetchSecurity")(function* (
   ref: string,
+  client?: ApiClient,
 ) {
-  const api = yield* (yield* CommandPlatformApiFactory).make;
+  const api = client ?? (yield* (yield* CommandPlatformApiFactory).make);
   const output = yield* api.v1.getSecurityAdvisors({ ref }).pipe(Effect.catch(mapSecurityError));
   const lints = apiLintsToAdvisorLints(output.lints);
   yield* Effect.annotateCurrentSpan("advisor.count", lints.length);
@@ -36,8 +38,9 @@ export const fetchSecurityAdvisors = Effect.fn("db.advisors.fetchSecurity")(func
 
 export const fetchPerformanceAdvisors = Effect.fn("db.advisors.fetchPerformance")(function* (
   ref: string,
+  client?: ApiClient,
 ) {
-  const api = yield* (yield* CommandPlatformApiFactory).make;
+  const api = client ?? (yield* (yield* CommandPlatformApiFactory).make);
   const output = yield* api.v1
     .getPerformanceAdvisors({ ref })
     .pipe(Effect.catch(mapPerformanceError));
