@@ -26,14 +26,14 @@ const parseBodyText = Effect.fnUntraced(function* (text: string, source: string)
       () =>
         new ApiCommandUsageError({
           message: `${source} is not valid JSON.`,
-          hint: "Pass the whole request body as one JSON object.",
+          suggestion: "Pass the whole request body as one JSON object.",
         }),
     ),
   );
   if (!isRecord(parsed)) {
     return yield* new ApiCommandUsageError({
       message: `${source} must be a JSON object.`,
-      hint: "Pass the whole request body as one JSON object.",
+      suggestion: "Pass the whole request body as one JSON object.",
     });
   }
   return parsed;
@@ -47,7 +47,7 @@ export const readBodyOverride = Effect.fn("api-command.read-body")(function* (in
   if (Option.isSome(input.body) && Option.isSome(input.file)) {
     return yield* new ApiCommandUsageError({
       message: "--body and --file cannot be used together.",
-      hint: "Pass the request body with one of them.",
+      suggestion: "Pass the request body with one of them.",
     });
   }
   if (Option.isSome(input.body)) {
@@ -61,7 +61,7 @@ export const readBodyOverride = Effect.fn("api-command.read-body")(function* (in
       if (Option.isNone(piped)) {
         return yield* new ApiCommandUsageError({
           message: "--file - found no body on stdin.",
-          hint: "Pipe the request body into the command, or pass --body.",
+          suggestion: "Pipe the request body into the command, or pass --body.",
         });
       }
       return Option.some(yield* parseBodyText(piped.value, "--file -"));
@@ -72,7 +72,7 @@ export const readBodyOverride = Effect.fn("api-command.read-body")(function* (in
         () =>
           new ApiCommandUsageError({
             message: `Cannot read the --file body at ${path}.`,
-            hint: "Check that the file exists and is readable.",
+            suggestion: "Check that the file exists and is readable.",
           }),
       ),
     );
@@ -92,7 +92,7 @@ const parseJsonFlag = (flag: string, text: ApiFlagValue) =>
       () =>
         new ApiCommandUsageError({
           message: `--${flag} is not valid JSON.`,
-          hint: `Pass a JSON value and quote it for the shell, e.g. --${flag} '{"key":"value"}'.`,
+          suggestion: `Pass a JSON value and quote it for the shell, e.g. --${flag} '{"key":"value"}'.`,
         }),
     ),
   );
@@ -118,7 +118,7 @@ export const assembleInput = Effect.fnUntraced(function* (
     if (unknown !== undefined) {
       return yield* new ApiCommandUsageError({
         message: `--body/--file has the field "${unknown}", which the request body does not take.`,
-        hint:
+        suggestion:
           declared.length === 0
             ? "This command takes no request body."
             : `Top-level fields: ${declared.join(", ")}.`,
@@ -137,7 +137,7 @@ export const assembleInput = Effect.fnUntraced(function* (
         if (argument === "" || argument === "." || argument === "..") {
           return yield* new ApiCommandUsageError({
             message: `<${binding.argument}> must not be empty, "." or "..".`,
-            hint: "Pass the identifier of the resource.",
+            suggestion: "Pass the identifier of the resource.",
           });
         }
         positional[binding.name] = argument;
@@ -268,7 +268,7 @@ const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
       const names = bindings.map((binding) => `--${binding.flag}`).join(", ");
       return new ApiCommandUsageError({
         message: `Pass at least one of ${names}`,
-        hint: bindings.every((binding) => binding.location === "body")
+        suggestion: bindings.every((binding) => binding.location === "body")
           ? "Pass one of the flags, or include one of the fields in --body/--file."
           : "Pass one of the flags.",
       });
@@ -284,14 +284,14 @@ const invalidRequest = (entry: ApiCommandEntry, error: Schema.SchemaError) => {
     const allBody = missing.every((binding) => binding.location === "body");
     return new ApiCommandUsageError({
       message: `Missing required flag${plural} ${names}`,
-      hint: allBody
+      suggestion: allBody
         ? `Pass the flag${plural}, or include the field${plural} in --body/--file.`
         : `Pass the flag${plural}.`,
     });
   }
   return new ApiCommandUsageError({
     message: `The request is not valid: ${describeIssues(entry, error.issue)}`,
-    hint: "Check the flags, or the --body/--file contents.",
+    suggestion: "Check the flags, or the --body/--file contents.",
   });
 };
 

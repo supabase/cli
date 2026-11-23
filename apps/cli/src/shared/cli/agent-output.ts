@@ -34,7 +34,7 @@ function readLongFlag(args: ReadonlyArray<string>, name: string): string | undef
   }
 }
 
-export function readOutputFlag(args: ReadonlyArray<string>): string | undefined {
+function readOutputFlag(args: ReadonlyArray<string>): string | undefined {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === undefined) {

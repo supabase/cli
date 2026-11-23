@@ -3,7 +3,6 @@ import { Argument, Command, Flag } from "effect/cli";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
-import { withStandardErrors } from "../../command-internal/command-errors/command-errors.annotation.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
   compose,
@@ -28,7 +27,6 @@ import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
-  type ApiOutputFormat,
   linkedReadInput,
   sendApiRequest,
   waitForOperation,
@@ -135,7 +133,7 @@ const parseTimeoutMillis = (value: string) =>
     catch: () =>
       new ApiCommandUsageError({
         message: `--timeout ${value} is not a valid duration.`,
-        hint: "Use a duration such as 90s or 10m.",
+        suggestion: "Use a duration such as 90s or 10m.",
       }),
   }).pipe(
     Effect.filterOrFail(
@@ -143,7 +141,7 @@ const parseTimeoutMillis = (value: string) =>
       () =>
         new ApiCommandUsageError({
           message: `--timeout ${value} must be greater than zero.`,
-          hint: "Use a duration such as 90s or 10m.",
+          suggestion: "Use a duration such as 90s or 10m.",
         }),
     ),
   );
@@ -152,16 +150,14 @@ const summaryText = (entry: Pick<ApiCommandEntry, "summary">): string =>
   entry.summary.replace(/\.$/, "");
 
 /**
- * Runs `use` under a progress task when `visible`, handing it the task's message updater; the
- * task is cleared on success and marked failed or cancelled otherwise.
+ * Runs `use` under an output task, handing it the task's message updater; the task is cleared on
+ * success and marked failed or cancelled otherwise.
  */
 const withTask = <A, E, R>(
-  visible: boolean,
   message: string,
   use: (update: (message: string) => Effect.Effect<void>) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
-    if (!visible) return yield* use(() => Effect.void);
     const output = yield* Output;
     const task = yield* output.task(message);
     return yield* use(task.message).pipe(
@@ -199,8 +195,7 @@ const handle = Effect.fn("api-command.run")(function* (
   const cache = yield* LinkedProjectCache;
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
-  const format: ApiOutputFormat = output.interactive ? "text" : "json";
-  const progress = format === "text";
+  const format = output.format;
   yield* Effect.annotateCurrentSpan("output.presentation", format);
   yield* Effect.gen(function* () {
     if (Option.isSome(outputFlag)) {
@@ -236,20 +231,23 @@ const handle = Effect.fn("api-command.run")(function* (
       const api = yield* (yield* CommandPlatformApiFactory).make;
 
       if (waiting) {
-        // A read that polls itself needs no change request: its own input is what gets polled.
+        // A read that polls itself already returns the shape it prints; any other wait prints
+        // the response the change was accepted with, once the polled operation has succeeded.
         const selfPolling = resolved.readEntry.operationId === entry.operationId;
-        const readInput = selfPolling
-          ? input
-          : yield* linkedReadInput({
-              wait: resolved.wait,
-              changedOperationId: entry.operationId,
-              ref,
-              changed: yield* withTask(progress, summaryText(entry), () =>
-                sendApiRequest(api, entry, decoded),
-              ),
-            });
+        const accepted = selfPolling
+          ? undefined
+          : yield* withTask(summaryText(entry), () => sendApiRequest(api, entry, decoded));
+        const readInput =
+          accepted === undefined
+            ? input
+            : yield* linkedReadInput({
+                wait: resolved.wait,
+                changedOperationId: entry.operationId,
+                ref,
+                changed: accepted,
+              });
         const polling = summaryText(resolved.readEntry);
-        const settled = yield* withTask(progress, polling, (update) =>
+        const settled = yield* withTask(polling, (update) =>
           waitForOperation({
             api,
             wait: resolved.wait,
@@ -263,9 +261,9 @@ const handle = Effect.fn("api-command.run")(function* (
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");
-        return yield* writeApiResponse(settled, format);
+        return yield* writeApiResponse(accepted ?? settled, format);
       }
-      const response = yield* withTask(progress, summaryText(entry), () =>
+      const response = yield* withTask(summaryText(entry), () =>
         sendApiRequest(api, entry, decoded),
       );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
@@ -330,7 +328,6 @@ const leafOf = (entry: ApiCommandEntry) => {
     Command.withShortDescription(`${entry.summary} (experimental)`),
     Command.withExamples([{ command: exampleFor(entry), description: entry.summary }]),
     withPermissions(permissionsOf(entry, resolved)),
-    withStandardErrors,
     Command.withHandler((flags) => {
       const { api: _generated, argument: _argument, ...recorded } = flags;
       return handle(entry, resolved, flags).pipe(

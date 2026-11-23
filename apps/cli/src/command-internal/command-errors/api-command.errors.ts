@@ -12,8 +12,7 @@ import {
 export class ApiCommandStatusError extends Data.TaggedError("ApiCommandStatusError")<{
   readonly status: number;
   readonly message: string;
-  readonly apiCode?: string | undefined;
-  readonly hint?: string | undefined;
+  readonly suggestion?: string | undefined;
   readonly entitlement?: PlanGateEntitlement | undefined;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -24,7 +23,7 @@ export class ApiCommandStatusError extends Data.TaggedError("ApiCommandStatusErr
 /** The invocation cannot form a valid request; nothing was sent. */
 export class ApiCommandUsageError extends Data.TaggedError("ApiCommandUsageError")<{
   readonly message: string;
-  readonly hint?: string | undefined;
+  readonly suggestion?: string | undefined;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
@@ -37,7 +36,7 @@ export class ApiCommandOperationFailedError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly status: string;
-  readonly hint: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.apiStatus;
@@ -49,7 +48,7 @@ export class ApiCommandUnexpectedResponseError extends Data.TaggedError(
   "ApiCommandUnexpectedResponseError",
 )<{
   readonly message: string;
-  readonly hint: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
@@ -59,9 +58,7 @@ export class ApiCommandUnexpectedResponseError extends Data.TaggedError(
 /** `--wait` reached its timeout before the operation settled. */
 export class ApiCommandWaitTimeoutError extends Data.TaggedError("ApiCommandWaitTimeoutError")<{
   readonly message: string;
-  readonly timeoutMillis: number;
-  readonly lastStatus?: string | null;
-  readonly hint: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return { ...actionability.apiStatus, fingerprint_suffix: "operation_timeout" };

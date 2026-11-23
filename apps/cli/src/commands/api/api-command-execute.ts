@@ -1,12 +1,13 @@
 import type { ApiClient, OperationId, OperationInput } from "@supabase/api/effect";
 import { operationPermissions } from "@supabase/api/permissions";
-import { Duration, Effect, Option, Predicate, Ref, Schedule, Schema } from "effect";
+import { DateTime, Duration, Effect, Option, Predicate, Ref, Schedule, Schema } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as Headers from "effect/http/Headers";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { planGateFromResponse, sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
+import type { OutputFormat } from "../../shared/output/types.ts";
 import { readPointer } from "./api-command-pointer.ts";
 import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
 import { renderDryRunText, renderResponseText, singleLine } from "./api-command.format.ts";
@@ -26,18 +27,33 @@ const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.U
 const textDecoder = new TextDecoder();
 const encodeJsonValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-/** How a generated command prints its result: the API's JSON untouched, or a human-readable rendering. */
-export type ApiOutputFormat = "text" | "json";
+/**
+ * Emits the `{type:"result"}` frame of a stream-json run. `Output.result` would merge the announced
+ * target into object data, which the json document never carries.
+ */
+const writeResultFrame = Effect.fnUntraced(function* (data: unknown) {
+  const output = yield* Output;
+  return yield* output.event({
+    type: "result",
+    data,
+    timestamp: DateTime.formatIso(yield* DateTime.now),
+  });
+});
 
-/** Writes the request a dry run would send, as text or as a JSON document. */
+/** Writes the request a dry run would send: a text preview, the JSON document, or a result frame. */
 export const writeDryRun = Effect.fnUntraced(function* (
   preview: ApiRequestPreview,
-  format: ApiOutputFormat,
+  format: OutputFormat,
 ) {
   const output = yield* Output;
-  return yield* output.raw(
-    format === "text" ? renderDryRunText(preview) : `${encodeJsonValue(preview)}\n`,
-  );
+  switch (format) {
+    case "text":
+      return yield* output.raw(renderDryRunText(preview));
+    case "json":
+      return yield* output.raw(`${encodeJsonValue(preview)}\n`);
+    case "stream-json":
+      return yield* writeResultFrame(preview);
+  }
 });
 
 const stringField = (source: unknown, key: string): string | undefined => {
@@ -88,7 +104,6 @@ const apiErrorFields = (body: unknown) => {
         : description === undefined || description === ""
           ? message
           : `${message}: ${description}`,
-    apiCode: stringField(source, "code"),
     hint: stringField(source, "hint"),
   };
 };
@@ -109,9 +124,8 @@ const statusError = Effect.fnUntraced(function* (
     message:
       fields.message === undefined || fields.message === ""
         ? `Unexpected status ${response.status}`
-        : sanitizeErrorBody(fields.message),
-    apiCode: fields.apiCode,
-    hint:
+        : `${sanitizeErrorBody(fields.message)} (HTTP ${response.status})`,
+    suggestion:
       ownHint === undefined || ownHint.trim() === ""
         ? entitlement === undefined
           ? statusHint(operationId, response.status)
@@ -130,7 +144,7 @@ export interface ApiCommandResponse {
 
 /**
  * Sends the decoded input of `entry` through `api` and returns the 2xx response; any other status
- * fails with the API's own message, code and hint.
+ * fails with the API's own message and hint.
  */
 export const sendApiRequest = Effect.fnUntraced(function* (
   api: ApiClient,
@@ -152,34 +166,45 @@ export const sendApiRequest = Effect.fnUntraced(function* (
 const parseResponse = (response: ApiCommandResponse): unknown =>
   Option.getOrUndefined(decodeJsonText(textDecoder.decode(response.bytes)));
 
+const invalidJsonResponse = () =>
+  new ApiCommandUnexpectedResponseError({
+    message: "The API returned a success response that is not valid JSON.",
+    suggestion: "Retry the command; if it keeps failing, report it with the command you ran.",
+  });
+
 /**
- * Writes a success response. Valid JSON bytes pass through untouched in machine output and any
- * other body fails there; a 2xx without a body prints as `null` there and as `Done.` for a person.
+ * Writes a success response. Machine output requires valid JSON: json passes the bytes through
+ * untouched and stream-json wraps the parsed value in a result frame; a 2xx without a body is
+ * `null` there and `Done.` for a person.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
   response: ApiCommandResponse,
-  format: ApiOutputFormat,
+  format: OutputFormat,
 ) {
   const output = yield* Output;
   if (response.bytes.length === 0) {
-    return yield* output.raw(format === "text" ? "Done.\n" : "null\n");
-  }
-  if (format === "json") {
-    if (parseResponse(response) === undefined) {
-      return yield* new ApiCommandUnexpectedResponseError({
-        message: "The API returned a success response that is not valid JSON.",
-        hint: "Retry the command; if it keeps failing, report it with the command you ran.",
-      });
+    switch (format) {
+      case "text":
+        return yield* output.raw("Done.\n");
+      case "json":
+        return yield* output.raw("null\n");
+      case "stream-json":
+        return yield* writeResultFrame(null);
     }
-    return yield* output.rawBytes(response.bytes);
   }
   const text = textDecoder.decode(response.bytes);
   const parsed = decodeJsonText(text);
-  if (Option.isNone(parsed)) {
-    const lines = text.endsWith("\n") ? text.slice(0, -1) : text;
-    return yield* output.raw(`${lines.split("\n").map(singleLine).join("\n")}\n`);
+  if (format === "text") {
+    if (Option.isNone(parsed)) {
+      const lines = text.endsWith("\n") ? text.slice(0, -1) : text;
+      return yield* output.raw(`${lines.split("\n").map(singleLine).join("\n")}\n`);
+    }
+    return yield* output.raw(renderResponseText(parsed.value));
   }
-  return yield* output.raw(renderResponseText(parsed.value));
+  if (Option.isNone(parsed)) return yield* invalidJsonResponse();
+  return format === "json"
+    ? yield* output.rawBytes(response.bytes)
+    : yield* writeResultFrame(parsed.value);
 });
 
 interface WaitInput {
@@ -187,7 +212,7 @@ interface WaitInput {
   readonly wait: ApiCommandWait;
   /** The operation the wait polls; its decoded input is `readInput`. */
   readonly readEntry: ApiPollRead;
-  /** The command to name in a failure hint: the read's own, or the one that inspects a poll-only read. */
+  /** The command to name in a failure suggestion: the read's own, or the one that inspects a poll-only read. */
   readonly statusEntry: ApiCommandEntry;
   /** The flat input of the read operation, as assembled from flags or the change response. */
   readonly readInput: Readonly<Record<string, unknown>>;
@@ -255,7 +280,7 @@ const classify = (
     return Effect.fail(
       new ApiCommandUnexpectedResponseError({
         message: `${wait.read} returned no status at ${wait.status}.`,
-        hint: statusHint,
+        suggestion: statusHint,
       }),
     );
   }
@@ -266,7 +291,7 @@ const classify = (
       new ApiCommandOperationFailedError({
         status,
         message: reason ?? `The operation failed with status "${status}".`,
-        hint: statusHint,
+        suggestion: statusHint,
       }),
     );
   }
@@ -333,7 +358,7 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     onExcessProperty: "error",
   })(readInput).pipe(Effect.orDie);
   const statusInput = input.statusEntry.operationId === readEntry.operationId ? readInput : {};
-  const hint = `Check it with \`${statusCommand(input.statusEntry, input.ref, statusInput)}\`.`;
+  const suggestion = `Check it with \`${statusCommand(input.statusEntry, input.ref, statusInput)}\`.`;
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 
@@ -342,7 +367,7 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     Effect.flatMap((response) => {
       const read = readPoll(wait, response);
       return Ref.set(lastStatus, read.status ?? null).pipe(
-        Effect.andThen(classify(wait, read, hint)),
+        Effect.andThen(classify(wait, read, suggestion)),
         Effect.tap(() => input.onPoll?.(read.status) ?? Effect.void),
       );
     }),
@@ -359,9 +384,7 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
             Effect.fail(
               new ApiCommandWaitTimeoutError({
                 message: `Timed out waiting for ${wait.read} to report ${wait.succeeded.join(" or ")}. Last observed status: ${status === null ? "unavailable" : sanitizeErrorBody(status)}.`,
-                timeoutMillis: input.timeoutMillis,
-                lastStatus: status,
-                hint,
+                suggestion,
               }),
             ),
           ),

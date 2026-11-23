@@ -74,13 +74,6 @@ import {
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
-  errorsContractForRun,
-  isMachineFailureMode,
-  standardFailureFor,
-  writeStandardFailure,
-  type PendingStandardFailure,
-} from "./standard-errors.ts";
-import {
   flagAliasesFor,
   isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
@@ -718,16 +711,7 @@ export function cliProgramFor<
 class CliNonZeroExit {
   readonly _tag = "CliNonZeroExit";
   readonly name = "CliNonZeroExit";
-  constructor(
-    readonly code: number,
-    readonly pending?: PendingStandardFailure,
-  ) {}
-}
-
-/** How a run ends: its exit code, plus a standard failure still to be written before exit. */
-interface RunOutcome {
-  readonly exitCode: number;
-  readonly pending?: PendingStandardFailure;
+  constructor(readonly code: number) {}
 }
 
 export const runCli = Effect.fnUntraced(function* <
@@ -752,8 +736,6 @@ export const runCli = Effect.fnUntraced(function* <
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = suggestionContextFor(rootCommand, args, options.stackRootCommand);
-  const usesStandardErrors =
-    errorsContractForRun(rootCommand, extractCommandPath(args)) === "standard";
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const { outputFormat, agentMode } = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
@@ -863,62 +845,41 @@ export const runCli = Effect.fnUntraced(function* <
         const cause = failureBesideClosedStdout(exit.cause);
         if (cause === undefined) {
           // The reader is gone, so there is nobody left for a report, a notice, or a trailer.
-          return { exitCode: (yield* processControl.getExitCode) ?? 0 } satisfies RunOutcome;
+          return (yield* processControl.getExitCode) ?? 0;
         }
         const exitCode = exitCodeForFailure(cause);
-        if (usesStandardErrors && exitCode !== 0) {
-          const mapped = standardFailureFor(cause, suggestionContext);
-          return {
-            exitCode: mapped.exitCode,
-            pending: {
-              ...mapped,
-              machine: isMachineFailureMode(args, output.interactive),
-            },
-          } satisfies RunOutcome;
-        }
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
         if (shouldReportFailure(exitCode)) {
           yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
         }
         yield* afterSuccess(exitCode, true);
-        return { exitCode } satisfies RunOutcome;
+        return exitCode;
       }
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
-      return { exitCode: exitCode ?? 0 } satisfies RunOutcome;
+      return exitCode ?? 0;
     }).pipe(Effect.provide(runToExitCodeLayer));
 
   // The exit code is resolved inside the traced scope so its flush completes before
-  // `processControl.exit`, which skips finalizers. A standard failure is written after that scope
-  // closes, so its document is the last thing on stderr.
+  // `processControl.exit`, which skips finalizers.
   const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      const outcome: RunOutcome = yield* resolveTraceSettings.pipe(
+      const exitCode = yield* resolveTraceSettings.pipe(
         Effect.flatMap((settings) =>
           withTraceExport(settings, { "process.boot_ms": bootMs })(
             runToExitCode(program).pipe(
-              Effect.tap((result) =>
-                Effect.annotateCurrentSpan("process.exit_code", result.exitCode),
-              ),
-              Effect.flatMap((result) =>
-                result.exitCode === 0
-                  ? Effect.succeed(result)
-                  : Effect.fail(new CliNonZeroExit(result.exitCode, result.pending)),
+              Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+              Effect.flatMap((code) =>
+                code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
               ),
             ),
           ),
         ),
-        Effect.catchTag("CliNonZeroExit", (failure) =>
-          Effect.succeed<RunOutcome>({
-            exitCode: failure.code,
-            ...(failure.pending === undefined ? {} : { pending: failure.pending }),
-          }),
-        ),
+        Effect.catchTag("CliNonZeroExit", (failure) => Effect.succeed(failure.code)),
       );
-      if (outcome.pending !== undefined) yield* writeStandardFailure(outcome.pending);
-      return yield* processControl.exit(outcome.exitCode);
+      return yield* processControl.exit(exitCode);
     }).pipe(
       Effect.withTracerEnabled(false),
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
