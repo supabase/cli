@@ -74,13 +74,7 @@ export interface GateInput {
   linkedIssues: LinkedIssue[];
 }
 
-type GateReason =
-  | "bot"
-  | "internal"
-  | "ok"
-  | "no-linked-issue"
-  | "missing-label"
-  | "issue-closed";
+type GateReason = "bot" | "internal" | "ok" | "no-linked-issue" | "missing-label" | "issue-closed";
 
 export interface GateResult {
   pass: boolean;
