@@ -26,6 +26,7 @@ import {
 } from "../shared/telemetry/event-catalog.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { BranchesCreateUnexpectedStatusError } from "../commands/branches/branches.errors.ts";
+import type { PlanGateEntitlement } from "../shared/output/normalize-error.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { CliConfigValueError } from "../config/cli-config.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
@@ -1451,18 +1452,20 @@ describe("withCommandTelemetry", () => {
   });
 
   describe("plan-gated denials", () => {
-    const gatedFailure = new BranchesCreateUnexpectedStatusError({
-      status: 402,
-      body: "{}",
-      message: "unexpected create branch status 402",
-      entitlement: {
-        feature: "branching_limit",
-        upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
-      },
+    const gatedFailureWith = (entitlement: PlanGateEntitlement) =>
+      new BranchesCreateUnexpectedStatusError({
+        status: 402,
+        body: "{}",
+        message: "unexpected create branch status 402",
+        entitlement,
+      });
+    const gatedFailure = gatedFailureWith({
+      feature: "branching_limit",
+      upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
     });
-    const runGated = () => {
+    const runGated = (failure = gatedFailure) => {
       const analytics = mockContextualAnalytics();
-      return Effect.fail(gatedFailure).pipe(
+      return Effect.fail(failure).pipe(
         withCommandTelemetry(),
         Effect.provide(
           Layer.mergeAll(
@@ -1494,6 +1497,20 @@ describe("withCommandTelemetry", () => {
               exit_code: 1,
               error_category: "plan_limit",
             });
+          }),
+        ),
+      ),
+    );
+
+    it.live("classifies a gate without an upgrade URL as plan_limit with an empty org_slug", () =>
+      runGated(gatedFailureWith({ feature: "branching_limit" })).pipe(
+        Effect.tap((captured) =>
+          Effect.sync(() => {
+            expect(captured[0]?.properties).toMatchObject({
+              feature_key: "branching_limit",
+              org_slug: "",
+            });
+            expect(captured[1]?.properties).toMatchObject({ error_category: "plan_limit" });
           }),
         ),
       ),

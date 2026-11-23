@@ -147,11 +147,14 @@ describe("classifyCliErrorActionability", () => {
     expect(statusCodeActionability(undefined).error_category).toBe("network");
   });
 
-  it("classifies a status error carrying a plan-gate entitlement as plan_limit", () => {
+  it.each([
+    { case: "with an upgrade URL", upgrade_url: "https://supabase.com/dashboard/org/acme/billing" },
+    { case: "without an upgrade URL", upgrade_url: undefined },
+  ])("classifies a status error carrying a plan-gate entitlement $case as plan_limit", (gate) => {
     const gated = Object.assign(new DeclaredStatusError({ status: 402 }), {
       entitlement: {
         feature: "project_restore_size",
-        upgrade_url: "https://supabase.com/dashboard/org/acme/billing",
+        ...(gate.upgrade_url === undefined ? {} : { upgrade_url: gate.upgrade_url }),
       },
     });
     expect(classifyCliErrorActionability(gated)).toMatchObject({

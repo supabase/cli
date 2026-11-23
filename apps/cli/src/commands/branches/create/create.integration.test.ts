@@ -465,6 +465,31 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "carries a URL-less entitlement on the JSON-mode failure when the envelope has no upgrade_url",
+    () => {
+      const { layer, out } = setup({
+        format: "json",
+        status: 402,
+        response: {
+          message: "Branching is supported only on the Pro plan or above",
+          error: { code: "entitlement_required", feature: "branching_limit" },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") }).pipe(
+          withJsonErrorHandling,
+        );
+        expect(out.failures).toHaveLength(1);
+        expect(out.failures[0]).toMatchObject({
+          code: "BranchesCreateUnexpectedStatusError",
+          entitlement: { feature: "branching_limit" },
+        });
+        expect(out.failures[0]?.entitlement).not.toHaveProperty("upgrade_url");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("does NOT fire upgrade suggested on 500", () => {
     const { layer, analytics } = setup({ status: 500 });
     return Effect.gen(function* () {

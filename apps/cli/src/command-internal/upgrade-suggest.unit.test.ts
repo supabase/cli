@@ -378,10 +378,10 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("envelope without upgrade_url falls back to the entitlements round-trip", () => {
+  it.live("envelope without upgrade_url counts as gated without an entitlements round-trip", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* suggestUpgrade({
+      const gated = yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
@@ -390,8 +390,9 @@ describe("suggestUpgrade", () => {
           error: { code: "entitlement_required", feature: "branching_limit" },
         }),
       });
-      expect(api.requests).toHaveLength(2);
-      expect(out.stderrText).toContain("/org/test-org/billing");
+      expect(gated).toBe(true);
+      expect(api.requests).toHaveLength(0);
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

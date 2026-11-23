@@ -250,7 +250,8 @@ text layer. Therefore stdout is payload-only for either machine flag. Do not cha
 layer to move spinners; that would change text output globally. Handlers check `--output` first and
 use established encoders before the `output.format` branch.
 
-Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the error.
+Plan-gated denials carry an optional `entitlement: { feature, upgrade_url? }` on the error;
+`upgrade_url` is present only when the API sends a safe web URL.
 `mapHttpError` attaches it from the Management API's `entitlement_required` body, and an
 `executeRaw` caller that builds its own status error attaches it with `planGateFromResponse`. The
 json and stream-json error object carries it, the text layer's `fail` prints the upgrade hint from

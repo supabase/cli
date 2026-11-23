@@ -122,7 +122,8 @@ function normalizeUpgradeUrl(raw: string): string | undefined {
 
 /**
  * Reads the Management API's plan-gate error body,
- * `{ error: { code: "entitlement_required", feature, upgrade_url } }`.
+ * `{ error: { code: "entitlement_required", feature, upgrade_url? } }`.
+ * A gate with a valid `feature` is returned without `upgrade_url` when the URL is absent or unsafe to print.
  * Hand-validated: the packages/api codegen emits no non-2xx schemas.
  */
 export function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | undefined {
@@ -130,9 +131,9 @@ export function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | unde
   const error = (body as { readonly error?: unknown }).error;
   if (readString(error, "code") !== "entitlement_required") return undefined;
   const feature = readString(error, "feature");
+  if (!FEATURE_KEY_PATTERN.test(feature)) return undefined;
   const upgradeUrl = normalizeUpgradeUrl(readString(error, "upgrade_url"));
-  if (!FEATURE_KEY_PATTERN.test(feature) || upgradeUrl === undefined) return undefined;
-  return { feature, upgrade_url: upgradeUrl };
+  return upgradeUrl === undefined ? { feature } : { feature, upgrade_url: upgradeUrl };
 }
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));

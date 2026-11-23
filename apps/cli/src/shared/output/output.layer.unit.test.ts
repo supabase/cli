@@ -327,6 +327,31 @@ describe("Output", () => {
       },
     );
 
+    it.effect("fail prints the URL-less upgrade hint for a plan-gated denial without a URL", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "E_TEST",
+          message: "boom",
+          entitlement: { feature: "project_restore_size" },
+        });
+        expect(writes[0]).toBe("Your organization's plan does not include this feature.\n");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+          }),
+        ),
+      );
+    });
+
     it.effect("fail omits the --debug suggestion when --debug is set", () => {
       const writes: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);

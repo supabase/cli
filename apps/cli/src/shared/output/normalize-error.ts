@@ -11,12 +11,14 @@ import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts
 /** The plan-gate signal machine-mode errors carry, mirroring the Management API's `entitlement_required` body. */
 export type PlanGateEntitlement = {
   readonly feature: string;
-  readonly upgrade_url: string;
+  readonly upgrade_url?: string;
 };
 
-/** The text-mode stderr line that points the user at the billing page for a plan-gated feature. */
-export const upgradeHint = (upgradeUrl: string): string =>
-  `Your organization's plan does not include this feature. Plans and add-ons: ${styleText("bold", upgradeUrl)}`;
+/** The text-mode stderr line for a plan-gated denial, linking the billing page when the API provides one. */
+export const upgradeHint = (upgradeUrl: string | undefined): string =>
+  upgradeUrl === undefined
+    ? "Your organization's plan does not include this feature."
+    : `Your organization's plan does not include this feature. Plans and add-ons: ${styleText("bold", upgradeUrl)}`;
 
 type NormalizedCliError = {
   readonly code: string;
@@ -50,7 +52,8 @@ const readEntitlement = (error: ErrorRecord): PlanGateEntitlement | undefined =>
   if (!isErrorRecord(entitlement)) return undefined;
   const feature = readString(entitlement, "feature");
   const upgradeUrl = readString(entitlement, "upgrade_url");
-  return feature && upgradeUrl ? { feature, upgrade_url: upgradeUrl } : undefined;
+  if (!feature) return undefined;
+  return upgradeUrl ? { feature, upgrade_url: upgradeUrl } : { feature };
 };
 
 /** A config parse failure's reason and position, without the source text it quotes, which can hold secrets. */
