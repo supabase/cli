@@ -12,11 +12,19 @@ import { parseJsonc } from "./jsonc.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 
 function converted(source: string) {
-  return Effect.runSync(convertCliConfigTomlToJsonc(source));
+  return convertCliConfigTomlToJsonc(source);
 }
 
 function refusal(source: string): CliConfigConvertError {
-  return Effect.runSync(Effect.flip(convertCliConfigTomlToJsonc(source)));
+  try {
+    convertCliConfigTomlToJsonc(source);
+  } catch (error) {
+    if (error instanceof CliConfigConvertError) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error("expected the converter to refuse the document");
 }
 
 function uncommented(text: string): unknown {

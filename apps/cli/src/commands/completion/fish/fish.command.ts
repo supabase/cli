@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -14,6 +15,7 @@ const config = {
 export type CompletionFishFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const completionFishCommand = Command.make("fish", config).pipe(
+  withSidebar({ title: "Generate fish script" }),
   Command.withDescription(
     "Generate the autocompletion script for the fish shell.\n\n" +
       "To load completions in your current shell session:\n\n" +

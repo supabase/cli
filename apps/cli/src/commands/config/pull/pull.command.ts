@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
@@ -53,6 +54,7 @@ const configPullHandler = (flags: ConfigPullFlags) =>
   );
 
 export const configPullCommand = Command.make("pull", config).pipe(
+  withSidebar({ title: "Pull remote config into supabase/config.toml" }),
   Command.withDescription(
     "Writes configuration from a remote project or branch into the project config file. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
   ),

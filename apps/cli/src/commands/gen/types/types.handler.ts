@@ -73,6 +73,7 @@ import {
 } from "./types.errors.ts";
 import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { STACK_SELECTOR_FLAG_NAMES } from "../../../command-internal/stack-target.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
   defaultSchemas,
@@ -135,6 +136,7 @@ const GEN_TYPES_SCAN_SPEC = {
     "schema",
     ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
     "query-timeout",
+    ...STACK_SELECTOR_FLAG_NAMES,
     ...PERSISTENT_VALUE_FLAG_NAMES,
   ]),
   valueFlagShorthands: new Map([["s", "schema"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
@@ -162,6 +164,7 @@ const LONG_FLAGS_WITH_VALUES = new Set([
   "schema",
   ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "query-timeout",
+  ...STACK_SELECTOR_FLAG_NAMES,
   "profile",
   "workdir",
   "network-id",

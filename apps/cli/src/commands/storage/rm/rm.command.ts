@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
@@ -7,7 +8,7 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageRm } from "./rm.handler.ts";
@@ -27,6 +28,7 @@ const config = {
 } as const;
 
 export const storageRmCommand = Command.make("rm", config).pipe(
+  withSidebar({ title: "Delete objects from Storage" }),
   Command.withDescription("Remove objects by file path."),
   Command.withShortDescription("Remove objects by file path"),
   Command.withExamples([
@@ -42,7 +44,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
   withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       const telemetryFlags = {
         recursive: flags.recursive,
       };
@@ -59,5 +61,6 @@ export const storageRmCommand = Command.make("rm", config).pipe(
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "selectable", consent: "no" }),
 );

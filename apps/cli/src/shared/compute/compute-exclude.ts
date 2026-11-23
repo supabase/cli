@@ -7,8 +7,10 @@ import { InvalidComputeExcludeError } from "./compute.errors.ts";
  * context, read the way `.gitignore` reads them, with one segment matched by the CLI's own
  * glob matcher ({@link pathMatch}).
  *
- * @see `../../commands/experimental/compute/push/SIDE_EFFECTS.md` — full semantics, the
- * refusals, and why re-inclusion (`!`) is not offered.
+ * Re-inclusion (`!`) is refused because an excluded directory is never walked, so nothing
+ * beneath it could be re-admitted.
+ *
+ * @see `apps/cli/docs/compute-commands.md` for the user-facing semantics.
  */
 
 interface ExcludePattern {

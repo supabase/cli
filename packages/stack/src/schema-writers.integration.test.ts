@@ -77,7 +77,7 @@ it.live(
             const instanceRoot = path.join(stateRoot, current.id, "data", databaseId);
             const recorded = readSchemaWriters(fs, path, instanceRoot);
             const downgrade = { reuseIds: [databaseId, authId], eager: true };
-            const recreate = `supabase stack destroy --stack-id ${current.id}`;
+            const recreate = `supabase stack destroy --stack ${current.id}`;
 
             yield* current.composition.start;
             expect(yield* recorded).toEqual(migrated);
@@ -374,7 +374,7 @@ for (const window of ["before-data", "before-record"] as const) {
               reopened.composition.supabase([database, olderAuth], reuse),
             );
             expect(refused.message).toContain("auth v0.0.1 is older than");
-            expect(refused.message).toContain(`supabase stack destroy --stack-id ${stack.id}`);
+            expect(refused.message).toContain(`supabase stack destroy --stack ${stack.id}`);
 
             yield* reopened.composition.supabase([database, auth], reuse);
           }),

@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
 import { StackError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -18,8 +18,7 @@ import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const flags = (id?: string) => ({
   all: Option.none<boolean>(),
-  stack: Option.none<string>(),
-  stackId: Option.fromUndefinedOr(id),
+  stack: Option.fromUndefinedOr(id),
 });
 const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 const fixture = Effect.fn("StackStopTest.fixture")(function* () {
@@ -42,6 +41,32 @@ const fixture = Effect.fn("StackStopTest.fixture")(function* () {
 });
 
 describe("stack stop", () => {
+  it.effect("fails naming the stack SUPABASE_STACK selects when it does not exist", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const error = yield* stackStop(flags()).pipe(
+        Effect.provide(f.layer),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ SUPABASE_STACK: "typo" }),
+        ),
+        Effect.flip,
+      );
+      expect(error.message).toBe('No managed stack named "typo" was found for this project.');
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.effect("points an ID-shaped --stack that matches nothing at stack list", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const error = yield* stackStop(flags("deadbeef")).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(error).toMatchObject({
+        message: 'No managed stack is named "deadbeef" in this project or has that ID.',
+        suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
   it.live("stops an owner while preserving standalone definitions", () =>
     Effect.gen(function* () {
       const f = yield* fixture();

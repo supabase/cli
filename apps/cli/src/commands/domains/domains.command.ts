@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { domainsActivateCommand } from "./activate/activate.command.ts";
 import { domainsCreateCommand } from "./create/create.command.ts";
@@ -6,6 +7,7 @@ import { domainsGetCommand } from "./get/get.command.ts";
 import { domainsReverifyCommand } from "./reverify/reverify.command.ts";
 
 export const domainsCommand = Command.make("domains").pipe(
+  withSidebar({ category: "custom-domains", title: "Manage custom domains" }),
   Command.withDescription(
     "Manage custom domain names for Supabase projects. Use of custom domains and vanity subdomains is mutually exclusive.",
   ),

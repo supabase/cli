@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -10,7 +11,7 @@ import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
@@ -35,7 +36,7 @@ const config = {
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
-      "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
+      "Replace all existing overrides with the ones provided. Omit this flag to merge overrides instead.",
     ),
     Flag.withDefault(false),
   ),
@@ -48,6 +49,7 @@ const config = {
 export type PostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
+  withSidebar({ title: "Update Postgres configurations" }),
   Command.withDescription("Update Postgres database config."),
   Command.withShortDescription("Update Postgres database config"),
   withPermissions(
@@ -68,12 +70,13 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
       // (after the gate) rather than via Command.provide, which would build it — and fail
       // on a missing token — before this generator's first yield* runs.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       return yield* postgresConfigUpdate(flags).pipe(
         withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["postgres-config", "update"])),
       );
     }).pipe(withJsonErrorHandling),
   ),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

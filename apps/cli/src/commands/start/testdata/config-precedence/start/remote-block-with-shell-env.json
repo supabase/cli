@@ -151,6 +151,7 @@
         "KONG_DNS_VALID_TTL": "5",
         "KONG_NGINX_PROXY_PROXY_BUFFERS": "64 160k",
         "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE": "160k",
+        "KONG_NGINX_USER": "nobody",
         "KONG_NGINX_WORKER_PROCESSES": "1",
         "KONG_PLUGINS": "request-transformer,cors,pre-function,post-function",
         "KONG_PORT_MAPS": "56321:8000",

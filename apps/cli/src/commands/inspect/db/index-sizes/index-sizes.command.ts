@@ -1,4 +1,5 @@
 import { Command } from "effect/cli";
+import { withDeprecated } from "../../../../command-internal/command-access-policy.ts";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbIndexSizes } from "./index-sizes.handler.ts";
 import {
@@ -15,11 +16,12 @@ export const inspectDbIndexSizesCommand = Command.make("index-sizes", INSPECT_DB
   Command.withDescription(
     'Show index sizes of individual indexes. Deprecated: use "index-stats" instead.',
   ),
-  Command.withShortDescription("Show individual index sizes (deprecated)"),
+  Command.withShortDescription("Show individual index sizes"),
   withPermissions(INSPECT_DB_PERMISSIONS),
   Command.withHandler(inspectDbCommandHandler(inspectDbIndexSizes)),
   Command.provide(inspectDbRuntimeLayer("index-sizes")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
   withInspectDbTargetPolicy,
+  withDeprecated,
 );

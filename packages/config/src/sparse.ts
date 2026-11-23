@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 
 /**
  * A deeply partial `T` used for sparse config overlays; arrays are kept as whole units
@@ -99,20 +100,6 @@ function deepFreezeVisiting<T>(value: T, visited: WeakSet<object>): T {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Defines `key` as an own data property. Guards against a `__proto__` key from user config
- * (a valid function name or remote label) being treated as the prototype setter by a plain
- * assignment, which would silently drop the entry or swap the target's prototype.
- */
-export function setOwnProperty(target: Record<string, unknown>, key: string, value: unknown): void {
-  Object.defineProperty(target, key, {
-    value,
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  });
 }
 
 function isEqualValue(left: unknown, right: unknown): boolean {

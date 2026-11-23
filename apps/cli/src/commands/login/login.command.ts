@@ -1,3 +1,5 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
+import { FlagDocumentation } from "../../command-internal/flag-documentation.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -17,6 +19,10 @@ const config = {
   ),
   name: Flag.String("name").pipe(
     Flag.withDescription("Name that will be used to store token in your settings."),
+    Flag.annotate(FlagDocumentation, {
+      defaultValue: "built-in token name generator",
+      helpDefault: "generated when omitted",
+    }),
     Flag.optional,
   ),
   noBrowser: Flag.Boolean("no-browser").pipe(
@@ -28,6 +34,7 @@ const config = {
 export type LoginFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const loginCommand = Command.make("login", config).pipe(
+  withSidebar({ category: "general", title: "Log in to a Supabase account" }),
   Command.withDescription("Authenticate using an access token."),
   Command.withShortDescription("Authenticate using an access token"),
   withPermissions(

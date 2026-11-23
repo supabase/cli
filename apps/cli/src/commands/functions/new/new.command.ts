@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -40,6 +41,7 @@ const functionsNewRuntimeLayer = Layer.mergeAll(
 );
 
 export const functionsNewCommand = Command.make("new", config).pipe(
+  withSidebar({ title: "Create a function" }),
   Command.withDescription("Create a new Function locally."),
   Command.withShortDescription("Create a new Function locally"),
   withPermissions({ operations: [], noApiEffectFlags: ["auth"] }),

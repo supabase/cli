@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -23,6 +24,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { noStackSelectorFlags } from "../../command-internal/stack-target.ts";
 
 /**
  * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
@@ -89,6 +91,7 @@ const startRuntimeLayer = Layer.mergeAll(
 );
 
 export const startCommand = Command.make("start", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
   withPermissions({
@@ -99,6 +102,7 @@ export const startCommand = Command.make("start", config).pipe(
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(noStackSelectorFlags),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "local-only", consent: "none" }),

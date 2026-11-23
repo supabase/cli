@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "../../../../../command-internal/flag-documentation.ts";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -12,7 +13,9 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAG_NAMES } from "../../../../../command-internal/stack-target.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -29,6 +32,7 @@ const config = {
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Saves schema diff to a new migration file."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "declarative_sync" }),
     Flag.optional,
   ),
   name: Flag.String("name").pipe(
@@ -46,6 +50,12 @@ const config = {
       "Generate the migration file without prompting or applying it to the local database.",
     ),
     Flag.optional,
+  ),
+  failOnDestructive: Flag.Boolean("fail-on-destructive").pipe(
+    Flag.withDescription(
+      "Exit non-zero without writing a migration when sync warns about destructive changes, like DROP TABLE or DROP COLUMN.",
+    ),
+    Flag.withDefault(false),
   ),
 } as const;
 
@@ -70,8 +80,10 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
         "name",
         "apply",
         "no-apply",
+        "fail-on-destructive",
         "no-cache",
         "strict-coverage",
+        ...STACK_SELECTOR_FLAG_NAMES,
       ],
     }),
   ),
@@ -94,6 +106,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             name: merged.name,
             apply: merged.apply,
             "no-apply": merged.noApply,
+            "fail-on-destructive": merged.failOnDestructive,
           },
           // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
           // -s public -f out.sql` must log `schema`/`file`.
@@ -106,5 +119,6 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  pgDeltaAccess.annotate,
   withTargetPolicy({ group: "local-only", consent: "none" }),
 );

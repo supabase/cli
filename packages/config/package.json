@@ -38,6 +38,11 @@
       "types": "./dist/internal.d.ts",
       "default": "./dist/internal.js"
     },
+    "./convert": {
+      "bun": "./src/convert.ts",
+      "types": "./dist/convert.d.ts",
+      "default": "./dist/convert.js"
+    },
     "./io": {
       "bun": "./src/bun.ts",
       "node": {

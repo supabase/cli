@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 
@@ -19,6 +20,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 export type BucketsFlags = TargetFlagValues;
 
 export const bucketsCommand = Command.make("buckets").pipe(
+  withSidebar({ title: "Seed storage buckets from config file" }),
   Command.withDescription("Seed buckets declared in storage.buckets."),
   Command.withShortDescription("Seed buckets declared in storage.buckets"),
   withPermissions(storagePermissions([])),

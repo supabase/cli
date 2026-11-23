@@ -44,9 +44,9 @@ const genSigningKeyRuntimeLayer = Layer.mergeAll(
 export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
   Command.withDescription(
     "Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.\n\n" +
-      "Supported algorithms:\n" +
-      "  ES256 - ECDSA with P-256 curve and SHA-256 (recommended)\n" +
-      "  RS256 - RSA with SHA-256",
+      "Supported algorithms:\n\n" +
+      "ES256 - ECDSA with P-256 curve and SHA-256 (recommended)\n\n" +
+      "RS256 - RSA with SHA-256",
   ),
   Command.withShortDescription("Generate a JWT signing key"),
   Command.withExamples([

@@ -101,10 +101,120 @@ jobs:
         id: models
         run: jq -r '"claude_model=\(.claude.opus)", "codex_model=\(.codex.sol)"' .github/ai-models.json >> "$GITHUB_OUTPUT"
 
-  claude-review:
-    name: Claude review
+  docs-guidance:
+    name: Prepare reference guidance
     needs: resolve
     if: needs.resolve.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    # Dependency setup, Git selection and six bounded requests are isolated from authorization.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      artifact_id: ${{ steps.guidance-artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The PR workflow may precede these files on the trusted default branch during rollout.
+      - name: Initialize unavailable guidance
+        run: &guidance-fallback |
+          if [ "${GUIDANCE_DOWNLOAD_OK:-false}" != true ]; then
+            directory="${GUIDANCE_DIRECTORY:-/tmp/ai-review}"
+            mkdir -p "$directory"
+            rm -rf "$directory/docs-guidance"
+            printf '%s\n' '{"status":"unavailable","sha":null,"files":[]}' > "$directory/docs-guidance.json"
+            printf '%s\n' 'CLI reference guidance is unavailable. Continue ordinary code review without claiming a style pass.' > "$directory/cli-reference-procedure.md"
+          fi
+
+      - name: Check trusted guidance support
+        id: guidance-support
+        run: |
+          if [ -f .github/scripts/ai-review/docs-guidance.ts ] &&
+             [ -f .github/scripts/ai-review/docs-guidance-status.ts ] &&
+             [ -f .agents/skills/cli-reference/review-procedure.md ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install trusted toolchains
+        id: guidance-tools
+        if: steps.guidance-support.outputs.available == 'true'
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          version: 2026.11.6
+          install_args: node bun pnpm
+
+      - name: Install locked collector dependencies
+        id: guidance-deps
+        if: steps.guidance-tools.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          DEPENDENCY_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
+        run: |
+          if [ -z "$DEPENDENCY_FIREWALL_TOKEN" ]; then
+            pnpm install --filter @supabase/root --frozen-lockfile --ignore-scripts
+          else
+            npmrc="${RUNNER_TEMP}/dependency-firewall.npmrc"
+            {
+              echo 'registry=https://firewall.depthfirst.com/npm/'
+              echo "//firewall.depthfirst.com/npm/:_authToken=${DEPENDENCY_FIREWALL_TOKEN}"
+            } > "$npmrc"
+            NPM_CONFIG_USERCONFIG="$npmrc" pnpm install --filter @supabase/root --frozen-lockfile --ignore-scripts
+          fi
+
+      - name: Select reference sources at the resolved PR head
+        id: guidance-sources
+        if: steps.guidance-deps.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+        run: |
+          base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
+          bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref" "$HEAD_SHA"
+
+      - name: Collect optional reference guidance
+        id: guidance-collect
+        if: steps.guidance-sources.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun .github/scripts/ai-review/docs-guidance.ts
+
+      - name: Restore unavailable guidance after collector failure
+        if: steps.guidance-collect.outcome != 'success'
+        run: *guidance-fallback
+
+      - name: Upload reference guidance snapshot
+        id: guidance-artifact
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-guidance
+          path: |
+            /tmp/ai-review/docs-guidance.json
+            /tmp/ai-review/docs-guidance/
+            /tmp/ai-review/cli-reference-procedure.md
+          if-no-files-found: error
+          retention-days: 3
+
+  claude-review:
+    name: Claude review
+    needs: [resolve, docs-guidance]
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' }}
+    outputs:
+      guidance_received: ${{ steps.guidance-download.outcome == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Security-critical: this job checks out the PR's own head commit as untrusted review subject
@@ -142,6 +252,22 @@ jobs:
           # This run's cache scope is the default branch; an untrusted run
           # must never be able to write to it.
           no-cache: true
+
+      - name: Download reference guidance snapshot
+        id: guidance-download
+        if: needs.docs-guidance.outputs.artifact_id != ''
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.docs-guidance.outputs.artifact_id }}
+          merge-multiple: true
+          path: /tmp/ai-review
+
+      - name: Handle unavailable guidance
+        env:
+          GUIDANCE_DOWNLOAD_OK: ${{ steps.guidance-download.outcome == 'success' }}
+        run: *guidance-fallback
 
       - name: Generate PR diff and fetch metadata
         working-directory: trusted
@@ -266,8 +392,10 @@ jobs:
 
   codex-review:
     name: Codex review
-    needs: resolve
-    if: needs.resolve.outputs.should_run == 'true'
+    needs: [resolve, docs-guidance]
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' }}
+    outputs:
+      guidance_received: ${{ steps.guidance-download.outcome == 'success' }}
     # Codex's independent review doesn't depend on claude-review, so it runs in parallel. It
     # works purely from /tmp/ai-review/pr.diff, so it needs only the trusted default-branch
     # checkout — no PR-head checkout. The verify-by-reading step (which needs the PR's files) is
@@ -305,6 +433,22 @@ jobs:
             bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
           fi
 
+      - name: Download reference guidance snapshot
+        id: guidance-download
+        if: needs.docs-guidance.outputs.artifact_id != ''
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.docs-guidance.outputs.artifact_id }}
+          merge-multiple: true
+          path: /tmp/ai-review
+
+      - name: Handle unavailable guidance
+        env:
+          GUIDANCE_DOWNLOAD_OK: ${{ steps.guidance-download.outcome == 'success' }}
+        run: *guidance-fallback
+
       - name: Prepare findings output schema
         run: |
           mkdir -p /tmp/ai-review
@@ -330,8 +474,8 @@ jobs:
           effort: high
           output-schema-file: /tmp/ai-review/findings.schema.json
           output-file: /tmp/ai-review/codex-findings.json
-          # 0.159.1 is the first stable CLI whose model catalog carries gpt-6.1-sol.
-          codex-version: &codex-cli-version "0.159.2"
+          # 0.169.1 is the first stable CLI whose model catalog carries gpt-6.2-sol.
+          codex-version: &codex-cli-version "0.169.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
@@ -365,8 +509,11 @@ jobs:
 
   adjudicate:
     name: Adjudicate reviews
+    outputs:
+      guidance_received: ${{ steps.guidance-download.outcome == 'success' }}
     needs:
       - resolve
+      - docs-guidance
       - claude-review
       - codex-review
     # Runs when at least one independent review succeeded — a single flaky model job must not
@@ -423,6 +570,22 @@ jobs:
         with:
           name: codex-findings
           path: ${{ runner.temp }}/codex-in
+
+      - name: Download reference guidance snapshot
+        id: guidance-download
+        if: needs.docs-guidance.outputs.artifact_id != ''
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.docs-guidance.outputs.artifact_id }}
+          merge-multiple: true
+          path: /tmp/ai-review
+
+      - name: Handle unavailable guidance
+        env:
+          GUIDANCE_DOWNLOAD_OK: ${{ steps.guidance-download.outcome == 'success' }}
+        run: *guidance-fallback
 
       - name: Stage findings
         run: |
@@ -533,6 +696,7 @@ jobs:
     name: Post review
     needs:
       - resolve
+      - docs-guidance
       - claude-review
       - codex-review
       - adjudicate
@@ -564,6 +728,22 @@ jobs:
         with:
           bun-version-file: ".bun-version"
 
+      - name: Download reference guidance snapshot
+        id: guidance-download
+        if: needs.docs-guidance.outputs.artifact_id != ''
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.docs-guidance.outputs.artifact_id }}
+          merge-multiple: true
+          path: /tmp/ai-review
+
+      - name: Handle unavailable guidance
+        env:
+          GUIDANCE_DOWNLOAD_OK: ${{ steps.guidance-download.outcome == 'success' && needs.claude-review.outputs.guidance_received == 'true' && needs.codex-review.outputs.guidance_received == 'true' && needs.adjudicate.outputs.guidance_received == 'true' }}
+        run: *guidance-fallback
+
       - name: Download merged review
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -576,6 +756,15 @@ jobs:
           name: pr-diff
           path: /tmp/ai-review
 
+      - name: Report guidance status before trusted poster rollout
+        run: |
+          if [ ! -f .github/scripts/ai-review/docs-guidance-status.ts ]; then
+            directory="${GUIDANCE_DIRECTORY:-/tmp/ai-review}"
+            jq '.summary = "CLI reference prose guidance: unavailable during trusted workflow rollout. Ordinary code review continued; no style pass is claimed.\n\n" + .summary' \
+              "$directory/merged-review.json" > "$directory/merged-review-status.json"
+            mv "$directory/merged-review-status.json" "$directory/merged-review.json"
+          fi
+
       - name: Post review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -583,6 +772,7 @@ jobs:
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           MERGED_REVIEW_PATH: /tmp/ai-review/merged-review.json
           PR_DIFF_PATH: /tmp/ai-review/pr.diff
+          DOCS_GUIDANCE_PATH: /tmp/ai-review/docs-guidance.json
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           REVIEWS_COMPLETE: ${{ needs.claude-review.result == 'success' && needs.codex-review.result == 'success' }}

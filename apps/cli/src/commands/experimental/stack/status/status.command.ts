@@ -10,9 +10,10 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
-  stackId: Flag.String("stack-id").pipe(
-    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
+  stack: Flag.String("stack").pipe(
+    Flag.withDescription(
+      "Inspect a stack by name, else by ID or unique ID prefix (defaults to SUPABASE_STACK, else the current project stack).",
+    ),
     Flag.optional,
   ),
   env: Flag.Boolean("env").pipe(
@@ -46,7 +47,7 @@ export const stackStatusCommand = Command.make("status", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["stack", "stack-id", "env", "override-name"],
+    noApiEffectFlags: ["stack", "env", "override-name"],
   }),
   Command.withHandler((flags) =>
     stackStatus(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),

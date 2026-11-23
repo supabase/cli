@@ -7,7 +7,17 @@ import {
 import { CliConfigSchema } from "@supabase/config";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Ref,
+  Schema,
+} from "effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
@@ -21,6 +31,7 @@ import { parseConnectionString } from "./db-config.parse.ts";
 import {
   stackAcquireShadowDatabase,
   stackMigrateShadow,
+  stackShadowRuntime,
   stackWithShadowDatabase,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
@@ -40,6 +51,7 @@ const recordingApi = (
   handles: Stack[],
   restoreFailures = 0,
   warmReadyFailures = 0,
+  startFailure?: string,
 ) =>
   Layer.effect(
     StackApi,
@@ -61,6 +73,10 @@ const recordingApi = (
                 const restored = yield* Ref.make(false);
                 return {
                   ...instance,
+                  start:
+                    startFailure === undefined
+                      ? instance.start
+                      : Effect.fail(new StackError({ operation: "start", message: startFailure })),
                   ready: Effect.gen(function* () {
                     if (yield* Ref.get(restored)) {
                       const remaining = yield* Ref.getAndUpdate(readyFailures, (value) =>
@@ -167,6 +183,43 @@ const query = Effect.fn("ShadowTest.query")(function* (url: string, sql: string)
 });
 
 describe("stack shadow databases", () => {
+  it.effect("takes the shadow runtime from --stack, never from SUPABASE_STACK", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-runtime-" }),
+      );
+      const api = yield* StackApi;
+      const register = (name: string | undefined, runtime: "native" | "docker") =>
+        api
+          .create({
+            projectRoot: root,
+            ...(name === undefined ? {} : { name }),
+            stateRoot: path.join(root, "stacks"),
+            cacheRoot: path.join(root, "cache", "stack"),
+            runtime,
+          })
+          .pipe(Effect.scoped);
+      yield* register(undefined, "native");
+      yield* register("feature", "docker");
+      const runtime = (stack?: string) =>
+        stackShadowRuntime.pipe(
+          Effect.provide(mockCommandSettings({ workdir: root, supabaseHome: root, stack })),
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromEnvRecord({ SUPABASE_STACK: "feature" }),
+          ),
+        );
+
+      expect(yield* runtime()).toBe("native");
+      expect(yield* runtime("feature")).toBe("docker");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(stackApiLayer, runtimeInfoLayer)),
+      Effect.provide([BunServices.layer, BunCrypto.layer]),
+    ),
+  );
+
   it.live(
     "publishes and restores a baseline while keeping migrations and ownership isolated",
     () =>
@@ -467,6 +520,44 @@ describe("stack shadow databases", () => {
         expect(output.stderrText).not.toContain("Failed to destroy");
         expect(roots).toHaveLength(1);
         for (const root of roots) expect(yield* fs.exists(root)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+    120_000,
+  );
+
+  it.live(
+    "points at running stacks when the shadow PostgreSQL runs out of shared memory segments",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-shm-" });
+        const error = yield* stackWithShadowDatabase(input(fs, path, root), () => Effect.void, {
+          runtime: "native",
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              recordingApi(
+                [],
+                [],
+                0,
+                0,
+                "database-primary failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+              ),
+              stackCatalogSetupLayer,
+              dbConnectionLayer,
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir: root, supabaseHome: root }),
+              mockOutput().layer,
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          suggestion: expect.stringMatching(
+            /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+          ),
+        });
       }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
     120_000,
   );

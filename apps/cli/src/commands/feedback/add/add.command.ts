@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -42,6 +43,7 @@ export const feedbackAddHandler = (args: FeedbackAddArgs) =>
   );
 
 export const feedbackAddCommand = Command.make("add", config).pipe(
+  withSidebar({ title: "Send feedback" }),
   Command.withDescription("Send quick feedback about the Supabase CLI to the Supabase team."),
   Command.withShortDescription("Send feedback to the Supabase team"),
   Command.withExamples([

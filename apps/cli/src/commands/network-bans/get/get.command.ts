@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -9,7 +10,7 @@ import { projectTargetFlags } from "../../../command-internal/target/target-flag
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import {
@@ -26,6 +27,7 @@ const config = {
 export type NetworkBansGetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const networkBansGetCommand = Command.make("get", config).pipe(
+  withSidebar({ title: "Retrieve network bans" }),
   Command.withDescription("Get the current network bans."),
   Command.withShortDescription("Get the current network bans"),
   withPermissions(
@@ -46,12 +48,13 @@ export const networkBansGetCommand = Command.make("get", config).pipe(
       // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
       // (after the gate) rather than via Command.provide, which would build it — and fail
       // on a missing token — before this generator's first yield* runs.
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       return yield* networkBansGet(flags).pipe(
         withCommandTelemetry({ flags }),
         Effect.provide(managementApiRuntimeLayer(["network-bans", "get"])),
       );
     }).pipe(withJsonErrorHandling),
   ),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "hosted", consent: "none" }),
 );

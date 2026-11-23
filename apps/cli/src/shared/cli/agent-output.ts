@@ -1,4 +1,5 @@
 import { Option } from "effect";
+import { resolveAgentMode } from "../../command-internal/agent-mode.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 
@@ -203,14 +204,21 @@ export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFor
   const outputFlagFormat = options.outputFlagFormat ?? Option.none<OutputFlagFormat>();
   const detectedAgentName = options.detectedAgentName ?? Option.none<string>();
   const agentOverride = options.agentOverride ?? "auto";
-  const isCodingAgent =
-    agentOverride === "yes" || (agentOverride === "auto" && Option.isSome(detectedAgentName));
+  const isCodingAgent = resolveAgentMode(agentOverride, detectedAgentName);
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
     isCodingAgent && Option.isNone(outputFlagFormat) && !options.isBuiltInTextRequest
       ? (options.agentDefaultOutputFormat ?? "json")
       : "text",
   );
+}
+
+/** Resolves the agent override before built-in help actions are parsed. */
+export function resolveAgentModeFromArgs(
+  args: ReadonlyArray<string>,
+  detectedAgentName: Option.Option<string>,
+): boolean {
+  return resolveAgentMode(agentOverrideFromArg(readLongFlag(args, "--agent")), detectedAgentName);
 }
 
 export function resolveAgentOutputFormatFromArgs(

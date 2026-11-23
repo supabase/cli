@@ -356,9 +356,7 @@ jobs:
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
       channel: ${{ needs.plan.outputs.channel }}
     secrets:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
@@ -471,28 +469,6 @@ jobs:
     with:
       package: Supabase CLI
       status: success
-      version: ${{ needs.plan.outputs.version }}
-      channel: ${{ needs.plan.outputs.channel }}
-      setup_cli_npm_fallback: ${{ needs.release.outputs.setup_cli_npm_fallback == 'true' }}
-    secrets:
-      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
-
-  # notify-slack posts no success message for beta and next, so a setup-cli npm fallback on those
-  # channels gets a notice of its own.
-  notify-slack-npm-fallback:
-    name: Notify Slack (setup-cli npm fallback)
-    needs: [plan, release]
-    if: >-
-      ${{ !cancelled() &&
-      needs.release.result == 'success' &&
-      needs.plan.outputs.dry_run != 'true' &&
-      needs.release.outputs.setup_cli_npm_fallback == 'true' &&
-      needs.plan.outputs.channel != 'stable' &&
-      needs.plan.outputs.channel != 'maintenance' }}
-    uses: ./.github/workflows/slack-notify.yml
-    with:
-      package: Supabase CLI
-      status: setup-cli-npm-fallback
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
     secrets:
