@@ -1995,7 +1995,7 @@ describe("start integration", () => {
           const { layer, out } = yield* setup({ skipConfig: true, interactive: true });
           yield* start(flags()).pipe(Effect.provide(Layer.mergeAll(layer, noShellEnv)));
           expect(out.stderrText).toContain(
-            "remove the fixed ports from supabase/config.json, then set `experimental.stack` to `true`",
+            "run `supabase stop`, remove the fixed ports from supabase/config.json, then set `experimental.stack` to `true`",
           );
         }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
       );

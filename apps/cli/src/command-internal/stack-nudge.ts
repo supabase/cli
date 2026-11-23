@@ -12,7 +12,7 @@ const DOCS_URL =
 
 const startStackNudgeMessage = (configFile: ConfigFileRef): string =>
   `Try the new local stack: faster, lighter, and one project per worktree in parallel.
-To switch: remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental", "stack", "true")}.
+To switch: run \`supabase stop\`, remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental", "stack", "true")}.
 Steps and limitations: ${DOCS_URL}`;
 
 const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 before your next \`supabase init\`.
