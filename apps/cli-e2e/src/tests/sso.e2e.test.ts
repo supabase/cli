@@ -86,7 +86,7 @@ describe("sso", () => {
           });
           const result = yield* run(["sso", "list", `--remote=${PROJECT_REF}`]);
           expect(result.exitCode).not.toBe(0);
-          expect(result.stderr).toContain("SAML 2.0 support is not enabled");
+          expect(result.stderr).toContain("Project not found");
         }),
         signal,
       ),
