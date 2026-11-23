@@ -106,9 +106,9 @@ function latestImagesToPull(): ReadonlyArray<string> {
 
 function readSectionPort(config: string, section: string): number {
   const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^\\[${escaped}\\][\\s\\S]*?^port = (\\d+)`, "m").exec(config);
+  const match = new RegExp(`^  "${escaped}": \\{[\\s\\S]*?^    "port": (\\d+)`, "m").exec(config);
   if (match?.[1] === undefined) {
-    throw new Error(`missing [${section}] port`);
+    throw new Error(`missing ${section} port`);
   }
   return Number(match[1]);
 }
@@ -370,7 +370,7 @@ describe("supabase start slim images (e2e)", () => {
           'Deno.serve(async (req) => Response.json({ message: "Hello " + (await req.json()).name + "!" }));\n',
         );
         yield* overridePorts(projectDir);
-        const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.toml"));
+        const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.jsonc"));
         const apiPort = readSectionPort(config, "api");
 
         const start = yield* runSupabaseEffect(START_ARGS, {

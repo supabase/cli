@@ -10,7 +10,7 @@ import {
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
-  renderCliConfigTemplate,
+  renderCliConfigJsoncTemplate,
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
 
@@ -160,6 +160,31 @@ export const trustSupabaseSchemaDomain = Effect.fnUntraced(function* (
   return true;
 });
 
+const trustSchemaDomainAfterInit = Effect.fnUntraced(function* (cwd: string) {
+  const output = yield* Output;
+  const result = yield* trustSupabaseSchemaDomain(cwd).pipe(
+    Effect.match({
+      onSuccess: (updated) => ({ updated, failure: undefined }),
+      onFailure: (error) => ({
+        updated: false,
+        failure: error instanceof InitParseSettingsError ? error.detail : error.message,
+      }),
+    }),
+  );
+  if (output.format !== "text") {
+    return;
+  }
+  if (result.updated) {
+    yield* output.raw(`Updated .vscode/settings.json (trusts ${SCHEMA_TRUST_DOMAIN}).\n`);
+  }
+  if (result.failure !== undefined) {
+    yield* output.raw(
+      `Warning: Could not update .vscode/settings.json: ${result.failure}. Add "${SCHEMA_TRUST_DOMAIN}": true under "${SCHEMA_TRUST_KEY}" to trust the config schema.\n`,
+      "stderr",
+    );
+  }
+});
+
 export const writeVscodeConfig = Effect.fnUntraced(function* (
   cwd: string,
   options?: { readonly announce?: boolean },
@@ -262,14 +287,14 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
 });
 
 /**
- * Scaffolds the local project files (config.toml, .gitignore, optional IDE
+ * Scaffolds the local project files (config.jsonc, .gitignore, optional IDE
  * settings). This owns the mechanical filesystem work only — it does not
  * decide how an already-initialized project is reported. When a
  * `config.json`, `config.jsonc` or `config.toml` already exists and `force` is
  * not set it short-circuits with `created: false` and the existing file's path,
  * leaving the caller free to treat that as a hard error or a graceful no-op.
- * With `force`, the JSON files are removed once the fresh `config.toml` is
- * written, so it is the one the loader reads.
+ * With `force`, `config.json` and `config.toml` are removed once the fresh
+ * `config.jsonc` is written, so it is the one the loader reads.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -278,13 +303,12 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   const output = yield* Output;
 
   const supabaseDir = path.join(options.cwd, "supabase");
+  const configJsoncPath = path.join(supabaseDir, "config.jsonc");
+  const configJsonPath = path.join(supabaseDir, "config.json");
   const configTomlPath = path.join(supabaseDir, "config.toml");
-  const jsonConfigPaths = ["config.json", "config.jsonc"].map((name) =>
-    path.join(supabaseDir, name),
-  );
 
   if (!options.force) {
-    for (const candidate of [...jsonConfigPaths, configTomlPath]) {
+    for (const candidate of [configJsonPath, configJsoncPath, configTomlPath]) {
       if (yield* fs.exists(candidate)) {
         return { created: false, configPath: candidate };
       }
@@ -295,12 +319,16 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
 
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
-    configTomlPath,
-    renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
+    configJsoncPath,
+    yield* renderCliConfigJsoncTemplate(
+      projectId,
+      options.useOrioledb,
+      options.experimentalStack === true,
+    ),
     { mode: INIT_FILE_MODE },
   );
-  for (const jsonConfigPath of jsonConfigPaths) {
-    yield* fs.remove(jsonConfigPath, { force: true });
+  for (const staleConfigPath of [configJsonPath, configTomlPath]) {
+    yield* fs.remove(staleConfigPath, { force: true });
   }
   yield* ensureSupabaseGitignore(options.cwd);
 
@@ -323,6 +351,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   if (options.withIntellijSettings) {
     yield* writeIntelliJConfig(options.cwd);
   }
+  yield* trustSchemaDomainAfterInit(options.cwd);
 
-  return { created: true, configPath: configTomlPath };
+  return { created: true, configPath: configJsoncPath };
 });

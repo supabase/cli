@@ -2,7 +2,7 @@
 
 Starts the Supabase local development stack.
 
-Requires `supabase/config.toml` to be created in your current working directory by running `supabase init`.
+Requires a `supabase/config.jsonc` (or `config.toml`) to be created in your current working directory by running `supabase init`.
 
 All service containers are started by default. The `-x` flag accepts comma-separated service names or repeated occurrences.
 

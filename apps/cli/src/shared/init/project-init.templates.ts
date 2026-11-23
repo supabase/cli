@@ -1,4 +1,6 @@
 import { CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
+import { convertCliConfigTomlToJsonc } from "@supabase/config/internal";
+import { Effect } from "effect";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 
@@ -552,3 +554,16 @@ export function renderCliConfigTemplate(
   );
   return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }
+
+/** Renders the init config as JSONC, converted from the TOML template so the two cannot drift. */
+export const renderCliConfigJsoncTemplate = (
+  projectId: string,
+  useOrioledb: boolean,
+  experimentalStack = false,
+): Effect.Effect<string> =>
+  convertCliConfigTomlToJsonc(
+    renderCliConfigTemplate(projectId, useOrioledb, experimentalStack),
+  ).pipe(
+    Effect.map((converted) => converted.text),
+    Effect.orDie,
+  );

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import * as SmolToml from "smol-toml";
 import { parseJsonc } from "@supabase/config/internal";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
@@ -52,6 +51,7 @@ function setup(
     experimental?: boolean;
     workdir?: Option.Option<string>;
     interactive?: boolean;
+    format?: "text" | "json";
     stdinIsTty?: boolean;
     yes?: boolean;
     /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
@@ -60,7 +60,7 @@ function setup(
     env?: Readonly<Record<string, string | undefined>>;
   } = {},
 ) {
-  const out = mockOutput({ format: "text", interactive: opts.interactive ?? false });
+  const out = mockOutput({ format: opts.format ?? "text", interactive: opts.interactive ?? false });
   return {
     out,
     layer: Layer.mergeAll(
@@ -131,7 +131,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 }
 
 describe("init", () => {
-  it.effect("creates config.toml natively", () => {
+  it.effect("creates config.jsonc natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -146,11 +146,16 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      expect(content.split("\n")[0]).toBe("#:schema https://supabase.com/schemas/config/v1.json");
-      expect(content).toContain("major_version = 17");
-      expect(content).toContain("port = 54321");
-      expect(content).not.toContain("stack = true");
+      const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
+      expect(parseJsonc(content)).toMatchObject({
+        $schema: "https://supabase.com/schemas/config/v1.json",
+        db: { major_version: 17 },
+      });
+      expect(content).toContain('"port": 54321');
+      expect(content).not.toContain('"stack": true');
+      expect(
+        Exit.isFailure(yield* Effect.exit(readTextFile(tempDir, "supabase", "config.toml"))),
+      ).toBe(true);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
@@ -173,15 +178,15 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      const { db } = yield* decodeOrioleDbConfig(SmolToml.parse(content));
+      const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
+      const { db } = yield* decodeOrioleDbConfig(parseJsonc(content));
       expect(db.major_version).toBe(17);
       expect(orioledbVersions()).toContain(db.orioledb_version);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
 
-  it.effect("fails with the exact error when config.toml already exists", () => {
+  it.effect("fails with the exact error when config.jsonc already exists", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -202,12 +207,12 @@ describe("init", () => {
       const error = findFailure(exit);
       expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
       expect(error).toMatchObject({
-        message: "failed to create config file: open supabase/config.toml: file exists",
+        message: "failed to create config file: open supabase/config.jsonc: file exists",
         suggestion: "Run supabase init --force to overwrite existing config file.",
       });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
-        "failed to create config file: open supabase/config.toml: file exists\n",
+        "failed to create config file: open supabase/config.jsonc: file exists\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
     });
@@ -217,6 +222,7 @@ describe("init", () => {
     { existing: ["config.json", "config.jsonc", "config.toml"], named: "config.json" },
     { existing: ["config.jsonc", "config.toml"], named: "config.jsonc" },
     { existing: ["config.jsonc"], named: "config.jsonc" },
+    { existing: ["config.toml"], named: "config.toml" },
   ])("names $named when $existing already exist", ({ existing, named }) => {
     const tempDir = tempRoot.current;
 
@@ -247,7 +253,7 @@ describe("init", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("--force writes config.toml and removes config.json and config.jsonc", () => {
+  it.effect("--force writes config.jsonc and removes config.json and config.toml", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -256,6 +262,7 @@ describe("init", () => {
       yield* fs.makeDirectory(path.join(tempDir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(tempDir, "supabase", "config.json"), "{}\n");
       yield* fs.writeFileString(path.join(tempDir, "supabase", "config.jsonc"), "{}\n");
+      yield* fs.writeFileString(path.join(tempDir, "supabase", "config.toml"), "");
       const { layer } = setup(tempDir);
 
       yield* init({
@@ -268,12 +275,12 @@ describe("init", () => {
       }).pipe(Effect.provide(layer));
 
       expect(yield* fs.exists(path.join(tempDir, "supabase", "config.json"))).toBe(false);
-      expect(yield* fs.exists(path.join(tempDir, "supabase", "config.jsonc"))).toBe(false);
-      expect(yield* readTextFile(tempDir, "supabase", "config.toml")).toContain("major_version");
+      expect(yield* fs.exists(path.join(tempDir, "supabase", "config.toml"))).toBe(false);
+      expect(yield* readTextFile(tempDir, "supabase", "config.jsonc")).toContain("major_version");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("--force keeps config.json when config.toml cannot be written", () => {
+  it.effect("--force keeps config.json when config.jsonc cannot be written", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -282,8 +289,8 @@ describe("init", () => {
       const supabaseDir = path.join(tempDir, "supabase");
       yield* fs.makeDirectory(supabaseDir, { recursive: true });
       yield* fs.writeFileString(path.join(supabaseDir, "config.json"), "{}\n");
-      yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), "");
-      yield* fs.chmod(path.join(supabaseDir, "config.toml"), 0o444);
+      yield* fs.writeFileString(path.join(supabaseDir, "config.jsonc"), "");
+      yield* fs.chmod(path.join(supabaseDir, "config.jsonc"), 0o444);
       const { layer } = setup(tempDir);
 
       const exit = yield* Effect.exit(
@@ -323,12 +330,12 @@ describe("init", () => {
       const error = findFailure(exit);
       expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
       expect(error).toMatchObject({
-        message: "failed to create config file: open supabase\\config.toml: The file exists.",
+        message: "failed to create config file: open supabase\\config.jsonc: The file exists.",
         suggestion: "Run supabase init --force to overwrite existing config file.",
       });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
-        "failed to create config file: open supabase\\config.toml: The file exists.\n",
+        "failed to create config file: open supabase\\config.jsonc: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
     });
@@ -378,8 +385,8 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* readTextFile(tempDir, "nested", "supabase", "config.toml");
-      expect(content).toContain("major_version = 17");
+      const content = yield* readTextFile(tempDir, "nested", "supabase", "config.jsonc");
+      expect(content).toContain('"major_version": 17');
     });
   });
 
@@ -515,6 +522,103 @@ describe("init", () => {
     },
   );
 
+  describe("VS Code schema trust", () => {
+    const TRUST_KEY = "json.schemaDownload.trustedDomains";
+    const SETTINGS_WITH_COMMENT = `{
+  // keep me
+  "editor.fontSize": 14,
+}
+`;
+
+    const writeSettings = (tempDir: string, contents: string) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const settingsPath = path.join(tempDir, ".vscode", "settings.json");
+        yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
+        yield* fs.writeFileString(settingsPath, contents);
+        return settingsPath;
+      }).pipe(Effect.provide(BunServices.layer));
+
+    it.effect("trusts the schema domain in an existing settings.json and keeps its content", () => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const settingsPath = yield* writeSettings(tempDir, SETTINGS_WITH_COMMENT);
+        const { layer, out } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        const updated = yield* readTextFile(settingsPath);
+        expect(updated).toContain("// keep me");
+        expect(parseJsonc(updated)).toMatchObject({
+          "editor.fontSize": 14,
+          [TRUST_KEY]: { "https://supabase.com/schemas/": true },
+        });
+        expect(out.stdoutText).toContain(
+          "Updated .vscode/settings.json (trusts https://supabase.com/schemas/).",
+        );
+      });
+    });
+
+    it.effect("does not create .vscode when the project has none", () => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { layer, out } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        expect(yield* fs.exists(path.join(tempDir, ".vscode"))).toBe(false);
+        expect(out.stdoutText).not.toContain(".vscode/settings.json");
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect("warns and leaves an unparseable settings.json untouched while init succeeds", () => {
+      const tempDir = tempRoot.current;
+      const broken = `{ "a": }`;
+
+      return Effect.gen(function* () {
+        const settingsPath = yield* writeSettings(tempDir, broken);
+        const { layer, out } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        expect(yield* readTextFile(settingsPath)).toBe(broken);
+        expect(yield* readTextFile(tempDir, "supabase", "config.jsonc")).toContain("major_version");
+        expect(out.stderrText).toContain("Warning: Could not update .vscode/settings.json:");
+        expect(out.stderrText).toContain(
+          'Add "https://supabase.com/schemas/": true under "json.schemaDownload.trustedDomains"',
+        );
+        expect(out.stdoutText).not.toContain("Updated .vscode/settings.json");
+      });
+    });
+
+    it.effect("prints neither the update line nor the warning in json output mode", () => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const settingsPath = yield* writeSettings(tempDir, SETTINGS_WITH_COMMENT);
+        const { layer, out } = setup(tempDir, { format: "json" });
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        expect(parseJsonc(yield* readTextFile(settingsPath))).toMatchObject({
+          [TRUST_KEY]: { "https://supabase.com/schemas/": true },
+        });
+        expect(out.stdoutText).not.toContain("Updated .vscode/settings.json");
+
+        yield* writeSettings(tempDir, `{ "a": }`);
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false, force: true }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.stderrText).not.toContain("Warning");
+      });
+    });
+  });
+
   it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 
@@ -523,11 +627,11 @@ describe("init", () => {
 
       yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
-      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      expect(content).toContain("stack = true");
-      expect(content).not.toMatch(/^shadow_port = 54320$/m);
-      expect(content).not.toMatch(/^port = 54321$/m);
-      expect(content).not.toMatch(/^inspector_port = 8083$/m);
+      const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
+      expect(content).toContain('"stack": true');
+      expect(content).not.toMatch(/^\s*"shadow_port": 54320,?$/m);
+      expect(content).not.toMatch(/^\s*"port": 54321,?$/m);
+      expect(content).not.toMatch(/^\s*"inspector_port": 8083,?$/m);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
@@ -541,7 +645,7 @@ describe("init", () => {
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
       interactive: true,
-      expected: "Experimental local stack enabled in supabase/config.toml",
+      expected: "Experimental local stack enabled in supabase/config.jsonc",
     },
     { env: {}, interactive: false, expected: undefined },
     { env: { SUPABASE_EXPERIMENTAL_STACK: "0" }, interactive: true, expected: undefined },
@@ -550,7 +654,7 @@ describe("init", () => {
       interactive: false,
       agent: true,
       expected:
-        "Coding agents: offer this to the user and ask before changing supabase/config.toml",
+        "Coding agents: offer this to the user and ask before changing supabase/config.jsonc",
     },
   ])(
     "stack note (interactive=$interactive, agent=$agent, env=$env)",
@@ -592,9 +696,9 @@ describe("init", () => {
 
       yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
-      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      expect(content).not.toContain("stack = true");
-      expect(content).toContain("port = 54321");
+      const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
+      expect(content).not.toContain('"stack": true');
+      expect(content).toContain('"port": 54321');
     });
   });
 

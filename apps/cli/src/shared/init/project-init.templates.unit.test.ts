@@ -6,6 +6,7 @@ import {
   applyConfigEdits,
   findUnknownCliConfigKeys,
   loadCliConfig,
+  parseJsonc,
   type ConfigEdit,
 } from "@supabase/config/internal";
 import * as SmolToml from "smol-toml";
@@ -18,6 +19,7 @@ import {
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
+  renderCliConfigJsoncTemplate,
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 
@@ -140,6 +142,26 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
 );
 
 describe("project init templates", () => {
+  it.effect.each([
+    { label: "default", useOrioledb: false, experimentalStack: false },
+    { label: "orioledb", useOrioledb: true, experimentalStack: false },
+    { label: "experimental stack", useOrioledb: false, experimentalStack: true },
+    { label: "experimental stack with orioledb", useOrioledb: true, experimentalStack: true },
+  ])(
+    "renders the $label JSONC scaffold with the same values as the TOML scaffold",
+    ({ useOrioledb, experimentalStack }) =>
+      Effect.gen(function* () {
+        const jsonc = yield* renderCliConfigJsoncTemplate("demo", useOrioledb, experimentalStack);
+
+        expect(jsonc.startsWith(`{\n  "$schema": "${CLI_CONFIG_SCHEMA_URL}",`)).toBe(true);
+        const { $schema, ...values } = parseJsonc(jsonc) as Record<string, unknown>;
+        expect($schema).toBe(CLI_CONFIG_SCHEMA_URL);
+        expect(values).toEqual(
+          SmolToml.parse(renderCliConfigTemplate("demo", useOrioledb, experimentalStack)),
+        );
+      }),
+  );
+
   it.effect("renders config.toml with the native notification content_path base", () =>
     Effect.gen(function* () {
       expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(

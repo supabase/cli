@@ -91,18 +91,18 @@ export const setUpProject = (projectDir: string) =>
         new SyncE2eSetupError({ message: `failed to override ports in ${projectDir}`, cause }),
     });
 
-    const configPath = path.join(projectDir, "supabase", "config.toml");
+    const configPath = path.join(projectDir, "supabase", "config.jsonc");
     const config = yield* fs.readFileString(configPath);
-    if (!config.includes("[experimental.pgdelta]\nenabled = true")) {
+    if (!/"pgdelta": \{\s*"enabled": true/.test(config)) {
       return yield* new SyncE2eSetupError({
-        message: "init setup did not enable experimental pg-delta in config.toml",
+        message: "init setup did not enable experimental pg-delta in config.jsonc",
       });
     }
     yield* fs.writeFileString(
       configPath,
       config.replace(
-        '# declarative_schema_path = "./schemas"',
-        'declarative_schema_path = "./schemas"',
+        '// "declarative_schema_path": "./schemas"',
+        '"declarative_schema_path": "./schemas"',
       ),
     );
 
