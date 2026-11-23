@@ -188,6 +188,14 @@ const LinkFile = Schema.fromJsonString(
   Schema.Struct({ project: Schema.Struct({ ref: Schema.String }) }),
 );
 const RestError = Schema.fromJsonString(Schema.Struct({ code: Schema.String }));
+const McpToolCall = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.Struct({
+      isError: Schema.optionalKey(Schema.Boolean),
+      content: Schema.Unknown,
+    }),
+  }),
+);
 
 describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   let workDir = "";
@@ -366,6 +374,31 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
     (await listDir(join(projectDir, "supabase", "migrations"))).filter((entry) =>
       entry.endsWith(suffix),
     );
+
+  /** Calls a tool of the MCP server built into Studio, which the stack proxy serves at `/mcp`. */
+  const studioMcp = async (
+    name: string,
+    args: Record<string, unknown> = {},
+    options: { readonly readOnly?: boolean } = {},
+  ) => {
+    const query = `features=database,development${options.readOnly === true ? "&read_only=true" : ""}`;
+    const response = await fetch(`${API}/mcp?${query}`, {
+      method: "POST",
+      signal: activeStep?.controller.signal ?? null,
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    const { result } = Schema.decodeSync(McpToolCall)(await response.text());
+    return { isError: result.isError === true, text: JSON.stringify(result.content) };
+  };
 
   // The step owns its timeout: vitest's own fires outside the body and would leave its commands
   // running into the next step.
@@ -594,6 +627,57 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
         "migration fetch changed a migration that was pushed from its local file",
       ).toBe(await readText(join(exampleDir, "todos.sql")));
       expect((await run(["db", "push"])).log).toContain("Remote database is up to date");
+    },
+  );
+
+  step(
+    "Studio's MCP server at /mcp: list_tables, list_extensions, apply_migration, list_migrations, execute_sql (refuses a write in read-only mode), get_project_url, get_publishable_keys",
+    async () => {
+      // Not called, it fails on Spark: generate_typescript_types, until a local stack has a source
+      // of types for Studio.
+      const tables = await studioMcp("list_tables", { schemas: ["public"], verbose: true });
+      expect(tables.isError, `list_tables: ${tables.text}`).toBe(false);
+      expect(tables.text).toContain("public.todos");
+      expect(tables.text).toContain("rls_enabled");
+      const extensions = await studioMcp("list_extensions");
+      expect(extensions.isError, `list_extensions: ${extensions.text}`).toBe(false);
+      // TEMPORARY: Spark's migration route assigns a version to the second, and the step before
+      // this one applied a migration: a second one in the same second fails on the history's key
+      // (23505). Delete once Spark assigns a version that is free.
+      await owned(Effect.sleep("1100 millis"));
+      const applied = await studioMcp("apply_migration", {
+        name: "add_tags",
+        query:
+          "create table public.tags (id bigint generated always as identity primary key, name text not null unique); grant all on public.tags to anon, authenticated, service_role;",
+      });
+      expect(applied.isError, `apply_migration: ${applied.text}`).toBe(false);
+      const listed = await studioMcp("list_migrations");
+      expect(listed.isError, `list_migrations: ${listed.text}`).toBe(false);
+      expect(listed.text, "list_migrations does not show the new migration").toContain("add_tags");
+      const written = await studioMcp("execute_sql", {
+        query: "insert into public.tags (name) values ('urgent') returning name",
+      });
+      expect(written.isError, `execute_sql: ${written.text}`).toBe(false);
+      expect(written.text).toContain("urgent");
+      const refused = await studioMcp(
+        "execute_sql",
+        { query: "insert into public.tags (name) values ('written in read-only mode')" },
+        { readOnly: true },
+      );
+      expect(refused.isError, "execute_sql wrote a row in read-only mode").toBe(true);
+      expect(refused.text).toContain("read-only transaction");
+      expect(await restCount("tags?select=name"), "rows in the table the migration made").toBe(1);
+      const url = await studioMcp("get_project_url");
+      expect(url.isError, `get_project_url: ${url.text}`).toBe(false);
+      expect(url.text).toContain(API);
+      const keys = await studioMcp("get_publishable_keys");
+      expect(keys.isError, `get_publishable_keys: ${keys.text}`).toBe(false);
+      expect(keys.text).toContain("api_key");
+      await run(["migration", "fetch", "--yes"]);
+      expect(
+        await migrationFiles("_add_tags.sql"),
+        "migration fetch wrote no add_tags migration",
+      ).toHaveLength(1);
     },
   );
 
