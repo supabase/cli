@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -7,7 +8,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { requiredExperimentalAccess } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
@@ -27,6 +28,7 @@ const config = {
 export type StorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const storageMvCommand = Command.make("mv", config).pipe(
+  withSidebar({ title: "Move objects within a bucket" }),
   Command.withDescription("Move objects from src to dst path."),
   Command.withShortDescription("Move objects from src to dst path"),
   Command.withExamples([
@@ -38,7 +40,7 @@ export const storageMvCommand = Command.make("mv", config).pipe(
   withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      yield* requireExperimental;
+      yield* requiredExperimentalAccess.check;
       const telemetryFlags = {
         recursive: flags.recursive,
       };
@@ -48,5 +50,6 @@ export const storageMvCommand = Command.make("mv", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "mv"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  requiredExperimentalAccess.annotate,
   withTargetPolicy({ group: "selectable", consent: "no" }),
 );

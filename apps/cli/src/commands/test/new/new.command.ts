@@ -1,3 +1,5 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
+import { FlagDocumentation } from "../../../command-internal/flag-documentation.ts";
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -19,6 +21,7 @@ const config = {
   template: Flag.Literals("template", TEMPLATE_VALUES).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Template framework to generate."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "pgtap" }),
     Flag.optional,
   ),
 } as const;
@@ -37,6 +40,7 @@ const testNewRuntimeLayer = Layer.mergeAll(
 );
 
 export const testNewCommand = Command.make("new", config).pipe(
+  withSidebar({ title: "Create a new test" }),
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
   withPermissions({ operations: [], noApiEffectFlags: ["template"] }),

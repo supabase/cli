@@ -11,7 +11,10 @@ import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CliConfigValues } from "../../../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
-import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
+import {
+  stackLocalDatabaseConn,
+  stackRequireSelected,
+} from "../../../../../command-internal/stack-local-database.ts";
 import { currentStackBackend } from "../../../../../command-internal/stack-backend.ts";
 import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
@@ -40,6 +43,7 @@ import {
 import {
   DeclarativeApplyError,
   DeclarativeCompatibilityError,
+  DeclarativeDestructiveChangesError,
   DeclarativeMutuallyExclusiveFlagsError,
   DeclarativeNoFilesGeneratedError,
   DeclarativeNonInteractiveError,
@@ -55,9 +59,10 @@ import {
   resolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
 import { currentShellPlatform } from "../../../../../command-internal/shell-quote.ts";
+import { rejectStackSelectorOnLegacy } from "../../../../../command-internal/stack-target.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { appendExtensionDeclarations } from "../declarative.extension-repair.ts";
-import { requirePgDelta } from "../declarative.gate.ts";
+import { pgDeltaAccess } from "../declarative.gate.ts";
 import {
   type DeclarativeRunContext,
   type DeclarativeSyncResult,
@@ -98,10 +103,12 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
   const seam = yield* DeclarativeSeam;
 
   yield* Effect.gen(function* () {
+    yield* rejectStackSelectorOnLegacy;
+    if ((yield* currentStackBackend).kind === "stack") yield* stackRequireSelected;
     const toml = yield* readDbConfig(fs, path, cliSettings.workdir);
     // Gate before the mutex check below — order matters; see
-    // requirePgDelta's doc comment for why.
-    yield* requirePgDelta({
+    // pgDeltaAccess's doc comment for why.
+    yield* pgDeltaAccess.check({
       experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       configPath: toml.configFile.path,
@@ -453,6 +460,14 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     }
     yield* output.raw("Generated migration SQL:\n", "stderr");
     yield* output.raw(`${result.diffSQL}\n`, "stderr");
+    if (flags.failOnDestructive && result.dropWarnings.length > 0) {
+      return yield* new DeclarativeDestructiveChangesError({
+        message: "Found destructive changes in schema diff; no migration was written.",
+        detail: result.dropWarnings.join("\n"),
+        suggestion:
+          "Check that these destructive changes are expected, then rerun without --fail-on-destructive to write the migration.",
+      });
+    }
 
     // Step 4: resolve migration name (prompt in TTY when --name unset).
     const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);
@@ -529,7 +544,12 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         ? yield* stackLocalDatabaseConn.pipe(
             Effect.mapError(
               (error) =>
-                new DeclarativeApplyError({ message: error.message, connect: true, cause: error }),
+                new DeclarativeApplyError({
+                  message: error.message,
+                  connect: true,
+                  ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
+                  cause: error,
+                }),
             ),
           )
         : {

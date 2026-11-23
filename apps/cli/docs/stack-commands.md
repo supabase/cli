@@ -18,6 +18,7 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 | ------------------------- | --------------------------------------------------------------------------------- |
 | `supabase stack destroy`  | Permanently delete stacks and their data.                                         |
 | `supabase stack list`     | List persisted managed local stacks.                                              |
+| `supabase stack prune`    | Destroy stacks whose project directory no longer exists.                          |
 | `supabase stack install`  | Resolve and lock service versions, then download artifacts without a stack.       |
 | `supabase stack update`   | Re-resolve locked service versions and rewrite `supabase/supabase.lock`.          |
 | `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
@@ -156,13 +157,46 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
 are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
 directory itself fails discovery.
-The text table shortens readable IDs for scanning; every `--stack-id` accepts that short ID, or any
+The text table shortens readable IDs for scanning; every `--stack` accepts that short ID, or any
 unique prefix of at least 4 characters. Use `--output-format json` or `--output-format stream-json`
 for the complete structured inventory with full IDs.
 
 Listing is global and has no checkout filter. Owner availability is not service lifecycle or health;
 use `supabase stack status` for live state. Registry directories without a state file are ignored
 as remnants.
+
+## Targeting a named stack from other commands
+
+Every command that reaches the project's local stack accepts `--stack <name or id>` and acts on that
+stack instead of the default one: the `db`, `migration`, `inspect` and `storage` commands, `gen
+types`, `test db`, `seed buckets` and `functions serve`. Commands that never reach a stack, such as
+`migration new` or `functions deploy`, reject the flag.
+
+```sh
+supabase start --stack feature-a
+supabase migration up --stack feature-a
+supabase db reset --stack 3f9a
+```
+
+`--stack` first matches a stack name under the current project root and branch, as `stack start`
+does, then a full ID or a unique ID prefix of at least 4 hex characters from any checkout, so a name
+always wins. Without the flag, `SUPABASE_STACK` selects the stack the same way, so one export per
+worktree or shell covers every command, including `stack start`, `status`, `stop` and `destroy`.
+Because an export outlives `cd`, `SUPABASE_STACK` as an ID only selects a stack of the current
+project; pass `--stack <id>` to reach another checkout's stack. The flag overrides the variable.
+
+A selected stack never falls back to the default stack. A value that matches no stack fails with an
+error that names it and suggests the `supabase start` flag that creates a stack of that name, or
+`supabase stack list` when the value looks like an ID. A command that needs the database of a
+stopped stack fails the same way; `db start` starts it instead, and so does `db schema declarative`
+when it generates or exports the schema. Among these commands, only `db start` creates a named stack
+that does not exist yet.
+
+The flag selects a local stack, so combining it with `--remote` (or its deprecated aliases) is an
+error, and so is passing it while the legacy backend is selected; the variable is ignored there.
+Migration files and configuration always come from the current project directory. To run several
+stacks of one project at once, leave their ports out of `supabase/config.toml`: a port set there is
+claimed by every stack of the project.
 
 ## Selecting the top-level commands
 
@@ -259,8 +293,7 @@ primary database without changing other services (webhooks setup only, creating 
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 A local `db reset` and declarative resets rebuild the existing database while retaining stack
-identity, ports, and composition. See
-[`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
+identity, ports, and composition.
 
 A local `gen types` and `inspect db …` resolve the project stack through the same
 local database target as `db dump`. They do not start a stack.
@@ -284,7 +317,7 @@ lint transaction (always rolled back). It does not launch a client binary.
 request lines from the shared API port. Interactive terminals open a browser; press `L`
 to load more records. Pipes and machine output perform one finite read and exit.
 
-Select `--stack <name>` or `--stack-id <id>`. Repeat `--service <kind>` to select
+Select a stack with `--stack <name or id>`. Repeat `--service <kind>` to select
 services, use `--service postgres` for the database, or `--resource <instance-id>`
 for one instance. `--service gateway` reads only request lines. Reads work while
 the stack is stopped and never start an owner or service.
@@ -307,7 +340,7 @@ behavior until removal in v4.
 
 `supabase stack logs` prints the retained stdout/stderr of composition members, plus
 the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
-streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+streams new lines until interrupted. Select a stack with `--stack <name or id>`; the
 repeatable `--service <kind-or-instance-id>` can include standalone services too, and
 `--service gateway` reads only the request lines. History is read from the persisted
 log files, so it works while the stack is stopped; `--follow` requires a running owner
@@ -350,8 +383,7 @@ bucket seeding and stack `storage` commands then also need
 `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`), and
 containers must reach the host from loopback: on macOS, Docker Desktop, colima and Podman machine
 do; on Linux, rootful Docker, rootful Podman and rootless Podman on pasta don't, so a start that
-serves the API over TLS fails there with `api.tls: unsupported networking`. The `stack start` side
-effects list its errors.
+serves the API over TLS fails there with `api.tls: unsupported networking`.
 
 Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
 uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
@@ -402,9 +434,23 @@ release line or major) is refused. The refusal offers to keep the data by pinnin
 `local.services.database.version` in your config file, setting `db.major_version` back when the major differs and removing any
 `db.orioledb_version` when an OrioleDB build is requested, or to run `supabase stack destroy` and recreate it. `supabase link`
 and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
-data. A database that never initialized adopts the change. See the [`start` side
-effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
-details.
+data. A database that never initialized adopts the change.
+
+The project lease is `supabase/.supabase.lock.lease`. Before taking it, the CLI adds it and the
+lock's staged writes (`.supabase.lock.*.tmp`) to `supabase/.gitignore` when they are missing. A
+frozen start reads the lock without the lease and leaves `supabase/.gitignore` untouched; lock
+writes are atomic renames, so it never sees a partial file.
+When a `linked` service's observed release cannot be fetched because the release host is
+unreachable, the start keeps going with the bundled version, recorded as `unobserved`, and warns;
+any other failed resolution fails the start without writing the lock.
+
+`supabase db reset`, the shadow database of `supabase db diff`, and the temporary Functions instance
+of `supabase functions serve` read the lock without the lease and never resolve. Without a lock
+they use the versions this CLI bundles, and an explicit service version it does not bundle fails
+with `supabase/supabase.lock not found; run supabase start to create it`. A stale lock fails with
+`is stale for: <service> (<reason>)`, except for a shadow database of a remote with a
+`[remotes.<ref>]` block, which takes the bundled version of each stale service and fails only when
+one of them has none.
 
 ## Port intents
 
@@ -425,14 +471,13 @@ with `destroy`.
 
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and
 starts the same stack identity, preserving its data. Normal startup may still download missing
-artifacts using its current preparation policy. Select a stack with `--stack <name>` or
-`--stack-id <id>`. The restart handler does not reload project configuration. Set
-`SUPABASE_EXPERIMENTAL_STACK=1` when restarting by ID outside the project or with invalid project
-configuration, so feature routing does not depend on that configuration. Start selection and
-activation flags such as `--exclude` and `--eager` remain in the saved stack configuration;
-`--preparation` applies only to that invocation. A later normal `start` reloads the project
-configuration and current flags.
-An unconfigured stack must be initialized with `supabase stack start` before it can be restarted.
+artifacts using its current preparation policy. Select a stack with `--stack <name or id>`. The
+restart handler does not reload project configuration. Set `SUPABASE_EXPERIMENTAL_STACK=1` when
+restarting by ID outside the project or with invalid project configuration, so feature routing does
+not depend on that configuration. Start selection and activation flags such as `--exclude` and
+`--eager` remain in the saved stack configuration; `--preparation` applies only to that invocation.
+A later normal `start` reloads the project configuration and current flags. An unconfigured stack
+must be initialized with `supabase stack start` before it can be restarted.
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
@@ -448,9 +493,13 @@ failures make the command fail and identify the affected stack IDs with their er
 success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack, its data and its Storage
-uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
-after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
+uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack` to destroy several stacks
+after one confirmation; every value must resolve before anything is destroyed, and a stack that fails
 to be destroyed does not stop the rest, though the command still fails.
+
+`supabase stack prune` destroys, after one confirmation, the stacks whose project directory no
+longer exists, such as those of deleted worktrees or moved directories; `--dry-run` only lists
+them. A directory on an unmounted drive counts as missing, so check with `--dry-run` first.
 
 ## Storage and bucket seeding
 
@@ -511,9 +560,7 @@ core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is
 safe here since a first-start stack has no pre-existing buckets. Any other unusable Storage state,
 a missing capability/endpoint, a gateway activation failure, or an invalid bucket entry fails the
-`start` command; startup does not silently skip the configured seed. See
-[`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
+`start` command; startup does not silently skip the configured seed.
 
 **A local `db reset` and declarative reset** reapply the catalog, migrations, and seeds before
 resuming the saved composition. Bucket-seeding failures warn after the database reset succeeds.
-See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).

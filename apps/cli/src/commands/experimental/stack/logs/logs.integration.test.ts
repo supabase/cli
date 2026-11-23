@@ -100,8 +100,7 @@ const lost = (millis: number, count: number, launchId = 1) =>
   `${iso(millis)} lost ${launchId} | ${count} output`;
 
 const baseFlags = (stackId: string): StackLogsFlags => ({
-  stack: Option.none(),
-  stackId: Option.some(stackId),
+  stack: Option.some(stackId),
   service: [],
   follow: false,
   tail: 200,
@@ -252,7 +251,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         projectStateModeLayer("stack"),
         Layer.provideMerge(stackTargetResolverLayer, Layer.merge(settings, fakeApi)),
       );
-      const legacyArgs = ["logs", "--stack-id", stack.id];
+      const legacyArgs = ["logs", "--stack", stack.id];
       const runLogs = Effect.gen(function* () {
         if (mode === "legacy")
           return yield* Command.runWith(
@@ -277,8 +276,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
             projectRef: Option.none(),
             local: false,
             linked: false,
-            stack: Option.none(),
-            stackId: Option.some(stack.id),
+            stack: Option.some(stack.id),
             service: flags.service ?? ["postgres"],
             resource: Option.none(),
             kind: Option.none(),
@@ -349,8 +347,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
         projectRef: Option.none(),
         local: false,
         linked: false,
-        stack: Option.none(),
-        stackId: Option.some(stack.id),
+        stack: Option.some(stack.id),
         service: Option.none(),
       }).pipe(Effect.provide(layer));
       return output.stdoutText;

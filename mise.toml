@@ -1,4 +1,4 @@
-min_version = '2026.10.17'
+min_version = '2026.11.6'
 
 [tools]
 jactionlint = "2"

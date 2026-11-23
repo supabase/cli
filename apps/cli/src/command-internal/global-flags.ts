@@ -1,3 +1,4 @@
+import { FlagDocumentation } from "./flag-documentation.ts";
 import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 
@@ -32,6 +33,11 @@ export const OutputFlag = GlobalFlag.Setting("output")({
   flag: Flag.Literals("output", GLOBAL_OUTPUT_FORMATS).pipe(
     Flag.withAlias("o"),
     Flag.withDescription("output format of status variables"),
+    Flag.annotate(FlagDocumentation, {
+      defaultValue: "pretty",
+      helpDefault: false, // Commands select their own format when --output is omitted.
+      choices: ["env", "pretty", "json", "toml", "yaml"],
+    }),
     Flag.optional,
   ),
 });
@@ -39,7 +45,8 @@ export const OutputFlag = GlobalFlag.Setting("output")({
 /** The TS-only `--output-format` global, accepted on any subcommand. */
 export const OutputFormatFlag = GlobalFlag.Setting("output-format")({
   flag: Flag.Literals("output-format", ["text", "json", "stream-json"]).pipe(
-    Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
+    Flag.withDescription("Output format: text, json, or stream-json (NDJSON)"),
+    Flag.annotate(FlagDocumentation, { defaultValue: "text" }),
     Flag.optional,
   ),
 });
@@ -109,7 +116,7 @@ export const CreateTicketFlag = GlobalFlag.Setting("create-ticket")({
 
 export const AgentFlag = GlobalFlag.Setting("agent")({
   flag: Flag.Literals("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
+    Flag.withDescription("Override agent detection: yes, no, or auto"),
     Flag.withDefault("auto" as const),
   ),
 });

@@ -7,6 +7,8 @@ import {
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../output/normalize-error.ts";
+import { FunctionsApiStatusError } from "./functions-api.errors.ts";
 
 export class ConflictingFunctionDeployFlagsError extends Data.TaggedError(
   "ConflictingFunctionDeployFlagsError",
@@ -70,7 +72,7 @@ const causeKindSeverity = {
 /** Aggregates the per-function failures of a multi-function API deploy. */
 export class FunctionsDeployFailedError extends AggregateError {
   static readonly [ErrorActionabilityFingerprintId] = "FunctionsDeployFailedError";
-  /** Reports the most severe cause, so a CLI or upstream failure is never masked by a user error. */
+  /** Reports the most severe cause; the classifier lets a plan-gated cause outrank it. */
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     const errors: unknown = this.errors;
     let worst: CliErrorActionabilityDeclaration | undefined;
@@ -86,5 +88,16 @@ export class FunctionsDeployFailedError extends AggregateError {
       }
     }
     return worst ?? actionability.unknown;
+  }
+
+  get entitlement(): PlanGateEntitlement | undefined {
+    const errors: unknown = this.errors;
+    if (!Array.isArray(errors)) return undefined;
+    for (const cause of errors) {
+      if (cause instanceof FunctionsApiStatusError && cause.entitlement !== undefined) {
+        return cause.entitlement;
+      }
+    }
+    return undefined;
   }
 }

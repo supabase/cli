@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import { DeclarativeNotEnabledError } from "./declarative.errors.ts";
-import { isPgDeltaEnabled, pgDeltaSuggestion, requirePgDelta } from "./declarative.gate.ts";
+import { isPgDeltaEnabled, pgDeltaSuggestion, pgDeltaAccess } from "./declarative.gate.ts";
 
 const EXPECTED_SUGGESTION =
   "Pass --experimental to run declarative commands while [experimental.pgdelta] enabled = false is set in supabase/config.toml";
@@ -28,25 +28,29 @@ describe("pgDeltaSuggestion", () => {
   });
 });
 
-describe("requirePgDelta", () => {
+describe("pgDeltaAccess", () => {
   it.effect("passes through when the gate is open", () =>
     Effect.gen(function* () {
-      const exit = yield* requirePgDelta({
-        experimental: true,
-        pgDeltaEnabled: false,
-        configPath: "supabase/config.toml",
-      }).pipe(Effect.exit);
+      const exit = yield* pgDeltaAccess
+        .check({
+          experimental: true,
+          pgDeltaEnabled: false,
+          configPath: "supabase/config.toml",
+        })
+        .pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
     }),
   );
 
   it.effect("fails with DeclarativeNotEnabledError when the gate is closed", () =>
     Effect.gen(function* () {
-      const error = yield* requirePgDelta({
-        experimental: false,
-        pgDeltaEnabled: false,
-        configPath: "supabase/config.toml",
-      }).pipe(Effect.flip);
+      const error = yield* pgDeltaAccess
+        .check({
+          experimental: false,
+          pgDeltaEnabled: false,
+          configPath: "supabase/config.toml",
+        })
+        .pipe(Effect.flip);
       expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       expect(error.message).toBe(
         "declarative commands require --experimental flag or pg-delta enabled in config",

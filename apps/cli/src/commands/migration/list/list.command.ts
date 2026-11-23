@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -15,6 +16,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -29,18 +31,11 @@ const config = {
 export type MigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationListCommand = Command.make("list", config).pipe(
+  withSidebar({ title: "List all migrations" }),
   Command.withDescription(
     "List local migration files and the migration history of the target database.",
   ),
   Command.withShortDescription("List local files and the target database's migration history"),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: [] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     migrationList(flags).pipe(
       withCommandTelemetry({
@@ -58,4 +53,13 @@ export const migrationListCommand = Command.make("list", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: [] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

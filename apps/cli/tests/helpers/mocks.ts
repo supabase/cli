@@ -238,6 +238,7 @@ export function mockOutput(
     promptConfirmFail?: boolean;
     promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
+    promptSelectInterrupt?: boolean;
     promptPasswordResponses?: ReadonlyArray<string>;
     promptConfirmResponses?: ReadonlyArray<boolean>;
   } = {},
@@ -264,12 +265,17 @@ export function mockOutput(
           autocompleteThreshold?: number;
           placeholder?: string;
           maxItems?: number;
+          silentCancel?: boolean;
         }
       | undefined;
   }> = [];
   const promptTextCalls: Array<{
     message: string;
-    opts?: { defaultValue?: string; validate?: (v: string) => string | undefined };
+    opts?: {
+      defaultValue?: string;
+      initialValue?: string;
+      validate?: (v: string) => string | undefined;
+    };
   }> = [];
   const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
@@ -389,7 +395,11 @@ export function mockOutput(
         let callCount = 0;
         return (
           message: string,
-          options?: { defaultValue?: string; validate?: (v: string) => string | undefined },
+          options?: {
+            defaultValue?: string;
+            initialValue?: string;
+            validate?: (v: string) => string | undefined;
+          },
         ) => {
           callCount++;
           promptTextCalls.push({ message, opts: options });
@@ -432,10 +442,13 @@ export function mockOutput(
           ),
         ),
       promptSelect: (message, options, behavior) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           promptSelectCalls.push({ message, options, behavior });
+          if (opts.promptSelectInterrupt === true) {
+            return Effect.interrupt;
+          }
           const response = promptSelectResponses.shift();
-          return response ?? options[0]!.value;
+          return Effect.succeed(response ?? options[0]!.value);
         }),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),

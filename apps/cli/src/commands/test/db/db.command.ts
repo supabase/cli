@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -14,18 +15,21 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 /**
  * `test db` — the visible entry point. Its hidden alias `db test` reuses the same
  * `testDbConfig`/`runTestDbCommand` implementation across two `Command` registrations.
  */
 export const testDbCommand = Command.make("db", testDbConfig).pipe(
+  withSidebar({ title: "Run tests (pgTAP)" }),
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
-  withPermissions(compose(dbConfig, branchResolution)),
   Command.withHandler(runTestDbCommand),
   Command.provide(testDbRuntimeLayer(["test", "db"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(testDbConfig),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(compose(dbConfig, branchResolution)),
 );

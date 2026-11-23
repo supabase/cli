@@ -6,11 +6,16 @@
 export const START_CUSTOM_NGINX_TEMPLATE = `pid pids/nginx.pid;                      # this setting is mandatory
 error_log logs/error.log \${{LOG_LEVEL}}; # can be set by kong.conf
 
-daemon \${{NGINX_DAEMON}};                     # can be set by kong.conf
-worker_processes \${{NGINX_WORKER_PROCESSES}}; # can be set by kong.conf
+# injected nginx_main_* directives
+> for _, el in ipairs(nginx_main_directives) do
+$(el.name) $(el.value);
+> end
 
 events {
-    multi_accept on;
+    # injected nginx_events_* directives
+> for _, el in ipairs(nginx_events_directives) do
+    $(el.name) $(el.value);
+> end
 }
 
 http {

@@ -14,9 +14,9 @@ export type PlanGateEntitlement = {
   readonly upgrade_url: string;
 };
 
-/** The text-mode stderr line that tells the user a plan upgrade unlocks the denied feature. */
+/** The text-mode stderr line that points the user at the billing page for a plan-gated feature. */
 export const upgradeHint = (upgradeUrl: string): string =>
-  `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", upgradeUrl)}`;
+  `Your organization's plan does not include this feature. Plans and add-ons: ${styleText("bold", upgradeUrl)}`;
 
 type NormalizedCliError = {
   readonly code: string;

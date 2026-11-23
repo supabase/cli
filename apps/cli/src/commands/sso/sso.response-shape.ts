@@ -51,6 +51,7 @@ export const SSO_PROVIDER_RESPONSE_SHAPE: OutputShape = shapeStruct([
             ]),
           ),
         ],
+        ["dedicated_scope", shapePtr(shapeBool)],
         ["entity_id", shapeString],
         ["metadata_url", shapePtr(shapeString)],
         ["metadata_xml", shapePtr(shapeString)],

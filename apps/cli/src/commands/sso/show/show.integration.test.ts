@@ -223,6 +223,7 @@ domains:
 id: ${VALID_PROVIDER_ID}
 saml:
     attributemapping: null
+    dedicatedscope: null
     entityid: https://example.com
     metadataurl: https://example.com
     metadataxml: <?xml version="2.0"?>

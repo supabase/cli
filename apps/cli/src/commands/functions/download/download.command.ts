@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -63,6 +64,7 @@ const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => 
 };
 
 export const functionsDownloadCommand = Command.make("download", config).pipe(
+  withSidebar({ title: "Download a function" }),
   Command.withDescription(
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),

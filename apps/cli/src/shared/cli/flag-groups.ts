@@ -114,13 +114,15 @@ export const PERSISTENT_VALUE_FLAG_SHORTHANDS: ReadonlyMap<string, string> = new
 
 /**
  * Token-keyed view of every value-taking global the TS parser accepts: `PERSISTENT_VALUE_FLAG_NAMES`
- * as `--` tokens, its shorthands, and `--completions` (needed only by the pre-parse scanners in
- * `run.ts` and `agent-output.ts`). Derived rather than hand-copied so the two lists cannot drift apart.
+ * as `--` tokens and its shorthands, derived so they cannot drift apart, plus `--completions`
+ * (needed only by the pre-parse scanners in `run.ts` and `agent-output.ts`) and the scoped stack
+ * selector `--stack`, which may precede the leaf.
  */
 export const GLOBAL_VALUE_FLAG_TOKENS: ReadonlySet<string> = new Set([
   ...[...PERSISTENT_VALUE_FLAG_NAMES].map((name) => `--${name}`),
   ...[...PERSISTENT_VALUE_FLAG_SHORTHANDS.keys()].map((short) => `-${short}`),
   "--completions",
+  "--stack",
 ]);
 
 export interface ArgvFlagScanSpec {

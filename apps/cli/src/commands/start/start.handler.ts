@@ -1,7 +1,3 @@
-/**
- * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
- * behavior contract.
- */
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
@@ -190,7 +186,10 @@ import { buildSupavisorContainerSpec } from "./services/supavisor.service.ts";
 /** The analytics API key's only possible value; never configurable. */
 const ANALYTICS_API_KEY = "api-key";
 
-/** Multiplies the service health budget when Logflare or Vector start; see SIDE_EFFECTS.md. */
+/**
+ * Multiplies the service health budget when Logflare or Vector start: Logflare migrates its
+ * database before serving `/health`, and Vector starts only after Logflare answers.
+ */
 const ANALYTICS_HEALTH_TIMEOUT_FACTOR = 2;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1361,11 +1360,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             platform: runtimeInfo.platform,
           };
           const runtime: StartedRuntime = yield* startStackEdgeRuntimeContainer(edgeRuntimeInput);
-          // Not calling `runtime.cleanup` here: unlike every other service (`createContainer`'s
-          // `restartPolicy: "unless-stopped"`), Edge Runtime sets no Docker restart policy, so
-          // its bind-mounted host temp files must still exist for as long as the container can
-          // be reattached to. `startStackEdgeRuntimeContainer` already runs cleanup internally on
-          // a failed or interrupted bring-up, so only the success path must leave it alone.
+          // Not calling `runtime.cleanup` here: `stop` or a failed-start rollback reclaims Edge
+          // Runtime's staged env file, and `startStackEdgeRuntimeContainer` already runs cleanup
+          // internally on a failed or interrupted bring-up.
           started.set(runtime.containerId, edgeRuntimeInput.image);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,
@@ -1497,7 +1494,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       // pipe's comment for why `onError`, not `tapError`, is required).
       yield* Effect.gen(function* () {
         // 9. Bulk health check over every non-Postgres started container, at the service
-        // timeout (doubled when Logflare or Vector start; see SIDE_EFFECTS.md).
+        // timeout (doubled when Logflare or Vector start; see `ANALYTICS_HEALTH_TIMEOUT_FACTOR`).
         if (output.format === "text") {
           yield* output.raw(START_WAITING_FOR_HEALTH_CHECKS_MESSAGE, "stderr");
         }

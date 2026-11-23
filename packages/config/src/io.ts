@@ -6,10 +6,8 @@ import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
   encodeCliConfigToJsonDocument,
   encodeCliConfigToTomlDocument,
-  isObject,
   type LoadedCliConfig,
   type InternalLoadCliConfigOptions,
-  cliConfigSchemaKey,
   type CliConfigValueSource,
   type SaveCliConfigOptions,
 } from "./config-document.ts";
@@ -24,6 +22,7 @@ import {
   CliConfigSchemaVersionError,
   CliConfigWriteError,
 } from "./errors.ts";
+import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -36,7 +35,7 @@ import {
   versionOfSchemaRef,
   type CliConfigSchemaDeclaration,
 } from "./schema-version.ts";
-import { setOwnProperty } from "./sparse.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
 

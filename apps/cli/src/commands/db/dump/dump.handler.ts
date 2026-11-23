@@ -10,10 +10,7 @@ import { resolveTarget } from "../../../command-internal/target/resolve-target.t
 import { loadProjectEnvValues, readDbConfig } from "../../../command-internal/db-config.read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
-import {
-  ipv6Suggestion,
-  isIPv6ConnectivityError,
-} from "../../../command-internal/connect-errors.ts";
+import { pgDumpFailureSuggestion } from "../../../command-internal/connect-errors.ts";
 import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -166,7 +163,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const managedProject =
       backend.kind === "stack" && target.kind === "local"
         ? yield* stackOpenReadyProject.pipe(
-            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
+            Effect.mapError(
+              (cause) =>
+                new DbDumpRunError({
+                  message: cause.message,
+                  ...("suggestion" in cause && cause.suggestion !== undefined
+                    ? { suggestion: cause.suggestion }
+                    : {}),
+                  cause,
+                }),
+            ),
             Effect.map(Option.getOrUndefined),
           )
         : undefined;
@@ -431,9 +437,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //    ran, otherwise the original) into an actionable suggestion, e.g. IPv6
     //    connectivity.
     if (result.exitCode !== 0) {
+      const suggestion = pgDumpFailureSuggestion(result.stderr);
       return yield* new DbDumpRunError({
         message: pgDumpClientExitMessage(dumpClient, result.exitCode),
-        ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
+        ...(suggestion === undefined ? {} : { suggestion }),
       });
     }
 

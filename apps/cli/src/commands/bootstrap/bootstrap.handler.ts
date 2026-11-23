@@ -112,13 +112,14 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
       : Option.getOrUndefined(cliSettings.workdirEnvValue);
+    const prefill = path.join(runtimeInfo.cwd, path.sep);
     const workdirInput =
       workdirRaw ??
-      (yield* output.promptText(
-        `Enter a directory to bootstrap your project (or leave blank to use ${bold(
-          runtimeInfo.cwd,
-        )}): `,
-      ));
+      (yield* output
+        .promptText("Enter a directory to bootstrap your project: ", { initialValue: prefill })
+        .pipe(
+          Effect.map((answer) => (tty.stdinIsTty && answer === prefill ? runtimeInfo.cwd : answer)),
+        ));
     const workdir = path.isAbsolute(workdirInput)
       ? workdirInput
       : path.join(runtimeInfo.cwd, workdirInput);

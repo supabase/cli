@@ -9,11 +9,20 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 import { configConvert } from "./convert.handler.ts";
 import {
   CONFIG_JSONC_MIN_CLI_VERSION,
@@ -42,6 +51,7 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
+  const recorded: Array<CommandTelemetryAttributeValues> = [];
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -54,9 +64,14 @@ function setup(opts: SetupOpts = {}) {
       opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     ),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
+    mockTty(),
+    mockTelemetryRuntime(),
+    Layer.succeed(CommandTelemetryAttributes, {
+      record: (values) => Effect.sync(() => void recorded.push(values)),
+    }),
     BunServices.layer,
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, recorded };
 }
 
 const projectPath = (...segments: ReadonlyArray<string>) =>
@@ -92,7 +107,7 @@ const materializedConfig = Effect.fnUntraced(
   Effect.provide(Layer.mergeAll(configValuesLayer(), BunServices.layer)),
 );
 
-const run = (dryRun = false) => configConvert({ dryRun });
+const run = (dryRun = false) => configConvert({ dryRun, to: "json", reason: Option.none() });
 
 const configTomlPath = projectPath("supabase", "config.toml");
 
@@ -166,7 +181,7 @@ describe("config convert integration", () => {
   it.effect(
     "converts the init template, keeping every prose comment once and the same config",
     () => {
-      const { layer, out, telemetry } = setup();
+      const { layer, out, telemetry, recorded } = setup();
       const template = renderCliConfigTemplate("demo", false);
       const tomlExample = /^#\s?(\[[^\]]+\]|[\w."'-]+ = .+)$/;
       const templateComments = template
@@ -216,6 +231,7 @@ describe("config convert integration", () => {
           "",
         ]);
         expect(out.stderrText).toBe("");
+        expect(recorded).toContainEqual({ config_format: "toml" });
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(BunServices.layer));
     },
@@ -306,13 +322,15 @@ describe("config convert integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("reports a TOML parse failure against config.toml", () => {
-    const { layer } = setup();
+  it.effect("reports a TOML parse failure against config.toml and still records the target", () => {
+    const { layer, recorded } = setup();
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.toml"], "[api\nport = 1\n");
       const error = yield* run().pipe(Effect.provide(layer), Effect.flip);
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(error.message).toContain("failed to parse supabase/config.toml");
+      expect(recorded).toContainEqual({ convert_target: "jsonc" });
+      expect(recorded).toContainEqual({ config_format: "toml" });
     }).pipe(Effect.provide(BunServices.layer));
   });
 

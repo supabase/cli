@@ -18,6 +18,7 @@ import {
   type StorageCredentials,
 } from "./storage-credentials.ts";
 import { currentStackBackend } from "./stack-backend.ts";
+import { stackRequireSelected } from "./stack-local-database.ts";
 import { type ConfigFileRef, configFileRefOf, DEFAULT_CONFIG_FILE } from "./config-advice.ts";
 import { withStackStorageGuidance } from "./stack-storage.ts";
 import { parseFileSizeLimit, resolveBucketProps } from "./storage-bucket-config.ts";
@@ -254,11 +255,10 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
     // Config validation (SUPABASE_API_*/SUPABASE_AUTH_* overrides, TLS cert/key pairing)
     // still runs here even with nothing to seed; it's validate-only — the seeding path
     // re-resolves these values through `resolveStorageCredentials`. The stack backend never
-    // consults these legacy-only inputs, so it skips this validation entirely.
+    // consults these legacy-only inputs; it only checks that a selected stack exists.
     const backend = yield* currentStackBackend;
-    if (backend.kind !== "stack") {
-      yield* validateLocalStorageConfig();
-    }
+    if (backend.kind === "stack") yield* stackRequireSelected;
+    else yield* validateLocalStorageConfig();
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }

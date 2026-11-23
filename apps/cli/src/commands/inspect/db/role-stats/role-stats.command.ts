@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbRoleStats } from "./role-stats.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbRoleStatsCommand = Command.make("role-stats", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show number of active connections" }),
   Command.withDescription("Show information about roles on the database."),
   Command.withShortDescription("Show role stats"),
   withPermissions(INSPECT_DB_PERMISSIONS),

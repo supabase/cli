@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Argument, Command, Flag, Param } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -36,12 +37,16 @@ import {
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   projectId: deprecatedProjectIdFlag,
   lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
-    Flag.withDescription("Output language of the generated types. (default typescript)"),
+    Flag.withDescription("Output language of the generated types."),
     Flag.withDefault("typescript"),
   ),
   schema: Flag.String("schema").pipe(
@@ -60,7 +65,7 @@ const config = {
     Flag.withDefault(false),
   ),
   queryTimeout: Flag.String("query-timeout").pipe(
-    Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
+    Flag.withDescription("Maximum timeout allowed for the database query."),
     Flag.withDefault("15s"),
   ),
 } as const;
@@ -118,6 +123,7 @@ const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandCo
   );
 
 export const genTypesCommand = Command.make("types", commandConfig).pipe(
+  withSidebar({ title: "Generate types (Postgres schema)" }),
   Command.withDescription("Generate types from Postgres schema."),
   Command.withShortDescription("Generate types from Postgres schema"),
   Command.withExamples([
@@ -138,6 +144,12 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       description: "Generate types from a database URL",
     },
   ]),
+  Command.withHandler(genTypesHandler),
+  Command.provide(genTypesRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
   withPermissions(
     remoteTarget.reduce(
       (fragment, condition) => withCondition(fragment, condition),
@@ -174,7 +186,12 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
                 "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
             },
           ],
-          noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
+          noApiEffectFlags: [
+            "schema",
+            "query-timeout",
+            ...GEN_TYPES_LANGUAGE_FLAG_NAMES,
+            ...STACK_SELECTOR_FLAG_NAMES,
+          ],
         },
         withContext(dbConfigLinked, notBranch),
         withContext(dbConfigPoolerFallbackLinked, notBranch),
@@ -184,9 +201,4 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       ),
     ),
   ),
-  Command.withHandler(genTypesHandler),
-  Command.provide(genTypesRuntimeLayer),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(commandConfig),
-  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

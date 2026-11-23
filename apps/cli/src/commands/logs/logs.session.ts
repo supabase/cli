@@ -2,9 +2,14 @@ import type { Effect, Option, Schema } from "effect";
 import type { TargetFlagValues } from "../../command-internal/target/target-flags.ts";
 import type { LogsBrowserWindow } from "./logs.browser.format.ts";
 
+/** The hidden `--stack-id` alias `logs` keeps for `--stack`. */
+export interface StackIdAlias {
+  readonly stack: Option.Option<string>;
+  readonly stackId?: Option.Option<string>;
+}
+
 export interface LogsFlags extends TargetFlagValues {
   readonly stack: Option.Option<string>;
-  readonly stackId: Option.Option<string>;
   readonly service: ReadonlyArray<string>;
   readonly resource: Option.Option<string>;
   readonly kind: Option.Option<"app" | "requests" | "builds">;

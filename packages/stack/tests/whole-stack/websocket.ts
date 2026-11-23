@@ -1,4 +1,4 @@
-import { Effect, Queue, Schedule, Schema, Scope } from "effect";
+import { Effect, Exit, Queue, Schedule, Schema, Scope } from "effect";
 import { NodeWS } from "@effect/platform-node";
 import * as Socket from "effect/socket/Socket";
 
@@ -52,10 +52,28 @@ export const openWebSocket = Effect.fn("WholeStack.openWebSocket")(
   (url: string): Effect.Effect<WebSocketChannel, WebSocketChannelError, Scope.Scope> =>
     Effect.gen(function* () {
       const messages = yield* Queue.unbounded<string, WebSocketChannelError>();
-      const socket = yield* Socket.makeWebSocket(url, { openTimeout: "60 seconds" }).pipe(
+      const socket = yield* Socket.makeWebSocket(url, { openTimeout: "20 seconds" }).pipe(
         Effect.provide(NodeWS.layerWebSocketConstructor),
       );
-      const pull = yield* Socket.readerString(socket).pipe(Effect.mapError(channelError));
+      const scope = yield* Effect.scope;
+      // Each attempt opens a fresh connection in its own scope, so a stalled one closes before retry.
+      const openReader = Effect.gen(function* () {
+        const attempt = yield* Scope.fork(scope);
+        return yield* Socket.readerString(socket).pipe(
+          Scope.provide(attempt),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(attempt, exit) : Effect.void,
+          ),
+        );
+      });
+      const pull = yield* openReader.pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("1 second"),
+          times: 3,
+          while: (cause) => cause.reason._tag === "SocketOpenError",
+        }),
+        Effect.mapError(channelError),
+      );
       yield* pull.pipe(
         Effect.flatMap((frames) => Queue.offerAll(messages, frames)),
         Effect.forever,

@@ -2,8 +2,36 @@
 
 Source content for the [CLI reference](https://supabase.com/docs/reference/cli) published on the Supabase docs site.
 
-- `supabase/` — long-form command descriptions, one file per command path
-- `templates/examples.yaml` — per-command usage examples, keyed by doc id
+Long-form command descriptions live under `supabase/`, one file per command path.
+For CLI contributors, author usage examples with `Command.withExamples` in command definitions.
+Terminal help and the website reference use these same invocations and descriptions, without sample
+output. Examples without descriptions use their invocation as the website title.
+
+## Command Description Markdown
+
+For CLI contributors, command descriptions, short descriptions, argument and flag descriptions,
+and example captions share a Markdown contract across terminal help and the generated reference.
+Use ordinary paragraphs, emphasis, inline code, links, and fenced or indented code blocks.
+Use code blocks for shell instructions that readers need to copy. Put literal placeholders such
+as `--remote=<ref>` and `supabase/notebooks/<name>.json` inside code spans.
+
+Headings, lists, blockquotes, thematic breaks, tables, images, and raw HTML are prohibited in
+these fields. Use paragraph labels instead of headings. Long-form page bodies under `supabase/`
+and command strings in examples are outside this restriction.
+
+Terminal rendering preserves paragraph separation, visible link destinations, and code-block
+line breaks without wrapping or borders. Code blocks receive four spaces of presentation indent;
+the surrounding help formatter can add more. Descriptions containing tabs retain their source
+because Bun expands tabs even inside fenced code. Prefer spaces when authoring new descriptions.
+Unsupported structures also retain their source at runtime, but fail the authoring check.
+JSON output and reference generation receive the original Markdown, not terminal escape codes.
+
+The authoring check runs with CLI unit tests and reports the command path, description field,
+and unsupported structure. From `apps/cli`, run:
+
+```sh
+pnpm run test:unit src/shared/output/description-contract.unit.test.ts
+```
 
 ## Local Preview
 
@@ -35,11 +63,17 @@ directory must already exist. Local mode does not clone, commit, push, or open a
 credentials. Add `--dry-run` to validate the input and print the destination without writing.
 
 This preview writes only the command-reference spec, not sidebar entries or JSON Schemas.
-New commands still need an entry in the website's
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json)
-to appear in the reference.
+From `apps/cli`, `pnpm docs:spec <version>` generates the command-reference spec and
+`pnpm docs:sidebar` generates the content for the website's
+[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json).
+Copy the generated sidebar into that file so new commands appear in the reference.
 
 ## Release Publishing
+
+Before writing a local preview or running Git, the publisher validates the generated `clispec 001`
+fields, including flags and examples. Command IDs and subcommand links must match the documented
+command tree in the current checkout, excluding unlisted and explicitly excluded commands.
+Generate and publish from the same checkout; duplicate, missing, or unexpected commands fail validation.
 
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
 release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
@@ -83,10 +117,11 @@ bun scripts/publish-schemas.ts --version <version> [--dry-run]
 
 ## Maintenance
 
-When adding or changing a command or flag, update the matching entries in
-`src/docs/docs-spec.tables.ts` — each table's doc comment says
-when it applies: `TAGS`, `DEFAULT_OVERRIDES`, `REQUIRED`, `EXPERIMENTAL` (and
-`_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`, `ARG_OVERRIDES`,
-`CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no
-longer resolve against the command tree, but new commands and flags must be
-added by hand — nothing detects a missing entry for a new surface.
+When adding or changing a command or flag, update the applicable argument overrides and extra
+flags in `src/docs/docs-spec.tables.ts`; each table's doc comment says when it applies.
+The spec build fails on entries that no longer resolve against the command tree, but it cannot
+detect missing overrides for a new surface.
+Each new top-level command needs `withSidebar({ category })`, using a category from
+`DOCS_SIDEBAR_CATEGORIES` in `src/command-internal/command-sidebar.ts`.
+Run `pnpm docs:sidebar` to regenerate the sidebar; the build rejects missing categories,
+categories declared on subcommands, unused categories and titles longer than 50 characters.

@@ -15,7 +15,10 @@ import { withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
 export interface TypegenHostOptions {
   /** Where out-of-process tools run: the directory the command was invoked from. */
   readonly cwd: string;
-  /** What the registry's Windows lookup reads; the child inherits the full environment. */
+  /**
+   * What the registry's drivers read: the Windows tool lookup and the Swift binary cache.
+   * The child inherits the full environment.
+   */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly platform: NodeJS.Platform;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];

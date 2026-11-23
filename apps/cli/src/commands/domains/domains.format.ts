@@ -89,7 +89,7 @@ ${customHostname} CNAME -> ${customOriginServer}`;
 
 /**
  * Formats the ssl struct for the "more than one validation record" branch.
- * Deterministic but not byte-reproducible; see SIDE_EFFECTS.md.
+ * Deterministic but not byte-reproducible.
  */
 export function formatSslStructDump(ssl: HostnameSsl): string {
   const validationErrors =

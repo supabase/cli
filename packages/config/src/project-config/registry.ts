@@ -1,4 +1,4 @@
-import { isObject } from "../config-document.ts";
+import { isObject } from "../lib/document-value.ts";
 import {
   formatProjectConfigParseErrorMessage,
   PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
