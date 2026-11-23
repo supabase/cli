@@ -1,4 +1,4 @@
-import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
+import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import { describe, expect, it } from "vitest";
 import { stringWidth } from "../../command-internal/string-width.ts";
 import { renderLogsRows, renderLogsSources } from "./logs.display.ts";
@@ -87,7 +87,7 @@ describe("readable logs output", () => {
 
   it("wraps human tail lines without losing spaces or multiline content", () => {
     const line = "2026-11-02T12:00:00Z postgres " + "hello world ".repeat(20) + "\nlast line";
-    const output = wrapLogsText(line, 80);
+    const output = wrapTerminalText(line, 80);
     expect(output.split("\n").every((part) => stringWidth(part) <= 80)).toBe(true);
     expect(output.replaceAll("\n", "")).toBe(line.replaceAll("\n", ""));
   });

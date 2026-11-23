@@ -1,4 +1,4 @@
-import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
+import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import { dim, inverse, type ColorStream } from "../../command-internal/colors.ts";
 import { DateTime, type Schema } from "effect";
 import { stripControlSequences } from "../../shared/output/strip-control-sequences.ts";
@@ -231,7 +231,9 @@ const clip = (value: string, width: number): string => {
 };
 
 function browserDetailLines(row: Schema.JsonObject, width: number): ReadonlyArray<string> {
-  return wrapLogsText(renderLogsRows([row], Math.max(2, width)), Math.max(2, width)).split("\n");
+  return wrapTerminalText(renderLogsRows([row], Math.max(2, width)), Math.max(2, width)).split(
+    "\n",
+  );
 }
 
 export function browserKey(
@@ -244,7 +246,7 @@ export function browserKey(
   if (state.error !== undefined) {
     if (key === "escape") return { ...state, error: undefined };
     const delta = key === "up" ? -1 : key === "down" ? 1 : 0;
-    const lines = wrapLogsText(state.error.message, width).split("\n");
+    const lines = wrapTerminalText(state.error.message, width).split("\n");
     return {
       ...state,
       error: {
@@ -299,7 +301,7 @@ export function renderBrowser(
   if (state.error !== undefined || state.detail !== undefined) {
     const lines =
       state.error !== undefined
-        ? wrapLogsText(state.error.message, width).split("\n")
+        ? wrapTerminalText(state.error.message, width).split("\n")
         : state.detail === undefined
           ? []
           : browserDetailLines(state.detail, width);

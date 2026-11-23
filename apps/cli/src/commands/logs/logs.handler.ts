@@ -1,4 +1,4 @@
-import { wrapTerminalText as wrapLogsText } from "../../shared/output/wrap-terminal-text.ts";
+import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { logEvent, markerText } from "../../command-internal/stack-log-events.ts";
 import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from "effect";
@@ -236,7 +236,7 @@ export const logs = Effect.fn("logs")(function* (input: LogsFlags & StackIdAlias
         else {
           const text = filteredText(row);
           yield* output.raw(
-            `${wrap ? wrapLogsText(text, width) : stripControlSequences(text.replaceAll("\r", "\\r").replaceAll("\n", "\\n"))}\n`,
+            `${wrap ? wrapTerminalText(text, width) : stripControlSequences(text.replaceAll("\r", "\\r").replaceAll("\n", "\\n"))}\n`,
           );
         }
       }
