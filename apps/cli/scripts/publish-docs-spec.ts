@@ -8,14 +8,14 @@
  * of base still gets its PR ensured, so a failed prior run is repaired by the next release.
  */
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
-import { $ } from "bun";
 import { Console, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { rootCommand } from "../src/cli/root.ts";
 import { buildDocsSidebar, stringifyDocsSidebar } from "../src/docs/docs-sidebar.ts";
 import { validateDocsSpec } from "./docs-spec-validation.ts";
-import { publishPullRequest, shell } from "./publish-pull-request.ts";
+import { publishPullRequest } from "./publish-pull-request.ts";
+import { writeDocsReference } from "./write-docs-reference.ts";
 
 class StdinReadFailed extends Data.TaggedError("StdinReadFailed")<{ readonly cause: unknown }> {}
 class InvalidDestination extends Data.TaggedError("InvalidDestination")<{
@@ -132,7 +132,7 @@ const main = Effect.gen(function* () {
         if (info !== undefined && info.type !== "File") {
           return yield* new InvalidDestination({ message: `Expected a regular file at ${target}` });
         }
-        return { parent, target, info };
+        return { parent, target, info: info ?? undefined };
       });
     const spec = yield* inspect(specPath);
     const sidebar = yield* inspect(sidebarPath);
@@ -183,54 +183,11 @@ const main = Effect.gen(function* () {
     return yield* Effect.sync(() => process.exit(0));
   }
 
-  const prettier = path.resolve(import.meta.dir, "../node_modules/.bin/prettier");
   const writeReference = Effect.fn("Docs.writeReference")(function* (checkoutDir: string) {
     const destinations = localDestinations ?? (yield* inspectDestinations(checkoutDir));
-    const specTemp = yield* fs.makeTempDirectoryScoped({
-      directory: destinations.spec.parent,
-      prefix: ".cli-reference-",
-    });
-    const sidebarTemp = yield* fs.makeTempDirectoryScoped({
-      directory: destinations.sidebar.parent,
-      prefix: ".cli-reference-",
-    });
-    const preparedSpec = path.join(specTemp, "commands.yaml");
-    const preparedSidebar = path.join(sidebarTemp, "sections.json");
-    const backup = path.join(specTemp, "original");
-    yield* fs.writeFileString(preparedSpec, spec);
-    yield* shell(
-      () =>
-        $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${preparedSpec}`,
-    );
-    yield* fs.writeFileString(preparedSidebar, `${sidebar}\n`);
-    if (destinations.spec.info !== undefined) {
-      yield* fs.copyFile(destinations.spec.target, backup);
-      yield* fs.chmod(preparedSpec, destinations.spec.info.mode & 0o777);
-    }
-    if (destinations.sidebar.info !== undefined) {
-      yield* fs.chmod(preparedSidebar, destinations.sidebar.info.mode & 0o777);
-    }
-    yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        yield* fs.rename(preparedSpec, destinations.spec.target);
-        yield* fs
-          .rename(preparedSidebar, destinations.sidebar.target)
-          .pipe(
-            Effect.onError(() =>
-              (destinations.spec.info === undefined
-                ? fs.remove(destinations.spec.target)
-                : fs.rename(backup, destinations.spec.target)
-              ).pipe(
-                Effect.catch((error) =>
-                  Console.error(`Could not restore ${destinations.spec.target}: ${error.message}`),
-                ),
-              ),
-            ),
-          );
-      }),
-    );
+    yield* writeDocsReference(destinations, spec, sidebar);
     yield* Effect.annotateCurrentSpan("docs.commands.count", commands.length);
-  }, Effect.scoped);
+  });
 
   if (localDir !== undefined) {
     yield* writeReference(localDir);
