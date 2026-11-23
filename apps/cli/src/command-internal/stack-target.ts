@@ -150,7 +150,7 @@ export const unmatchedStackIdAdvice = (value: string | undefined) =>
 
 /** The not-found message for a selection no saved stack matches, and the start that creates it. */
 export const missingStackAdvice = (name: string | undefined, others?: string) => {
-  const unmatched = unmatchedStackIdAdvice(name);
+  const unmatched = others === undefined ? unmatchedStackIdAdvice(name) : undefined;
   if (unmatched !== undefined) return unmatched;
   const named = name === undefined ? undefined : describeStackSelector({ stack: name });
   const start = `supabase stack start${named === undefined ? "" : ` ${named.flags}`}`;
