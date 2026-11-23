@@ -2788,6 +2788,22 @@ export const versionedEffectOperations = {
       }),
   },
   v2: {
+    addWarehouseReplication: (
+      input: typeof operationDefinitions.v2AddWarehouseReplication.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2AddWarehouseReplication.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2AddWarehouseReplication">(
+          operationDefinitions.v2AddWarehouseReplication,
+          input,
+          options,
+        );
+      }),
     assignOrganizationMemberRole: (
       input: typeof operationDefinitions.v2AssignOrganizationMemberRole.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3776,6 +3792,38 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2RemoveOrganizationMembers">(
           operationDefinitions.v2RemoveOrganizationMembers,
+          input,
+          options,
+        );
+      }),
+    removeWarehouseReplication: (
+      input: typeof operationDefinitions.v2RemoveWarehouseReplication.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2RemoveWarehouseReplication.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2RemoveWarehouseReplication">(
+          operationDefinitions.v2RemoveWarehouseReplication,
+          input,
+          options,
+        );
+      }),
+    resyncWarehouseReplication: (
+      input: typeof operationDefinitions.v2ResyncWarehouseReplication.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ResyncWarehouseReplication.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ResyncWarehouseReplication">(
+          operationDefinitions.v2ResyncWarehouseReplication,
           input,
           options,
         );
