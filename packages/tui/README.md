@@ -109,7 +109,7 @@ const main = Effect.fn("counter")(function* () {
   yield* Console.log(`final count: ${count}`);
 });
 
-main().pipe(Effect.provide(Terminal.layerNode()), NodeRuntime.runMain);
+main().pipe(Effect.provide(Terminal.layerProcess()), NodeRuntime.runMain);
 ```
 
 - `result` returns `Option.some(value)` when the program is finished. `Tui.run` then resolves with
@@ -118,7 +118,7 @@ main().pipe(Effect.provide(Terminal.layerNode()), NodeRuntime.runMain);
   `committed` nodes are appended to scrollback once. `committed` is cumulative and append-only:
   every view returns all the committed nodes so far, the writer appends only the entries beyond the
   previous count, and a shorter list is a defect.
-- `Terminal.layerNode()` gives the program a terminal. When stdin closes (EOF) before `result`
+- `Terminal.layerProcess()` gives the program a terminal. When stdin closes (EOF) before `result`
   returns a value, the run is interrupted (exit code 130), like Ctrl+C.
 - A view may take a second argument, the `Tui.Viewport`: the drawable size in cells. Live output
   reserves the last column and the last row for the cursor, so the viewport is one smaller than the

@@ -211,8 +211,9 @@ than sleeping; see [`spinner.integration.test.ts`](../src/blocks/spinner.integra
   palette.
 - A grapheme whose code points arrive in two separate reads decodes as two keys; a split inside one
   UTF-8 character is buffered.
-- Custom terminal providers are not a supported API yet: `Terminal.layerNode()` is the only
-  supported way to provide a terminal.
+- `Terminal.layerProcess()` is the only supported way to provide a terminal: it drives the
+  process's stdin and stdout (or stderr) on Node and Bun. Supplying your own streams is not a
+  public API yet.
 - Ambiguous-width glyphs count as one cell.
 - Select options and one-row decoration truncate at the end on narrow panes, so labels that share a
   long prefix can look identical. Put the distinguishing text first; Select filtering is the

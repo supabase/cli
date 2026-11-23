@@ -1,1 +1,1 @@
-export { layerNode, Service, TerminalError } from "./terminal.ts";
+export { layerProcess, Service, TerminalError } from "./terminal.ts";

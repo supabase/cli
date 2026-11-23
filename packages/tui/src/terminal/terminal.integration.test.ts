@@ -45,7 +45,7 @@ const overrideEnv = (overrides: Readonly<Record<string, string | undefined>>) =>
 const nodeCapabilities = Effect.gen(function* () {
   const terminal = yield* Terminal.Service;
   return terminal.capabilities;
-}).pipe(Effect.provide(Terminal.layerNode()));
+}).pipe(Effect.provide(Terminal.layerProcess()));
 
 describe("input session", () => {
   it.effect("decodes typed bytes into keys while holding the terminal in raw mode", () =>
@@ -500,7 +500,7 @@ describe("input ownership", () => {
   );
 });
 
-describe("layerNode", () => {
+describe("layerProcess", () => {
   it.effect("detects capabilities from the process environment, empty strings included", () =>
     Effect.gen(function* () {
       yield* overrideEnv({

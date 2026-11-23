@@ -65,7 +65,7 @@ export interface Interface {
   readonly claim: Effect.Effect<void, TerminalError, Scope.Scope>;
 }
 
-/** The terminal service a run reads; provide `layerNode` or a test layer. */
+/** The terminal service a run reads; provide `layerProcess` or a test layer. */
 export class Service extends Context.Service<Service, Interface>()("@supabase/tui/Terminal") {}
 
 /** The structural streams `make` drives, with the environment and platform to detect from. */
@@ -91,7 +91,7 @@ const guardOutput = (output: OutputStream) => {
 };
 
 /**
- * Builds the service over structural streams; `layerNode` and the test layer share it. The streams
+ * Builds the service over structural streams; `layerProcess` and the test layer share it. The streams
  * outlive the service, so a caller that supplies Node writable streams owns their `error` listener
  * policy: a failed write also emits `error`, which crashes the process when nobody listens.
  */
@@ -212,8 +212,8 @@ const readEnv = Effect.suspend(() =>
   ),
 ).pipe(Effect.orDie);
 
-/** The process terminal: `process.stdin` and the chosen output stream, env read once at construction. */
-export const layerNode = (options?: { readonly output?: "stdout" | "stderr" }) =>
+/** The process terminal on Node or Bun: `process.stdin` and the chosen output stream, env read once at construction. */
+export const layerProcess = (options?: { readonly output?: "stdout" | "stderr" }) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {

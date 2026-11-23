@@ -12,4 +12,4 @@ const writeUntilRefused = Effect.gen(function* () {
   Effect.catchTag("TerminalError", (error) => Console.error(`terminal-error: ${error.reason}`)),
 );
 
-writeUntilRefused.pipe(Effect.provide(Terminal.layerNode()), NodeRuntime.runMain);
+writeUntilRefused.pipe(Effect.provide(Terminal.layerProcess()), NodeRuntime.runMain);

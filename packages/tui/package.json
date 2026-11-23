@@ -17,12 +17,12 @@
   },
   "dependencies": {
     "@effect/platform-browser": "4.1.4",
-    "@effect/platform-node": "catalog:",
     "effect": "catalog:",
     "foldkit": "0.171.0",
     "yoga-layout": "3.2.1"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

@@ -647,9 +647,6 @@ importers:
       '@effect/platform-browser':
         specifier: 4.1.4
         version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
-      '@effect/platform-node':
-        specifier: 'catalog:'
-        version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))(redis@6.2.1)
       effect:
         specifier: 'catalog:'
         version: 4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47)
@@ -660,6 +657,9 @@ importers:
         specifier: 3.2.1
         version: 3.2.1
     devDependencies:
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))(redis@6.2.1)
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.1.4(patch_hash=6247418cdcd517fdfb3b197ba9e463a7843554e13f1ee0bfe13591181c44a3ce)(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))(vitest@5.0.0)

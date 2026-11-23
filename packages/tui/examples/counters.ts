@@ -11,6 +11,6 @@ const main = Effect.fn("examples.counters")(function* () {
 });
 
 main().pipe(
-  Effect.provide(Layer.mergeAll(Terminal.layerNode(), Theme.layer(supabaseTheme))),
+  Effect.provide(Layer.mergeAll(Terminal.layerProcess(), Theme.layer(supabaseTheme))),
   NodeRuntime.runMain,
 );

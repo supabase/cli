@@ -121,7 +121,7 @@ const makeFake = (options: TestTerminalOptions) => {
   };
 
   const resizeListeners = new Set<() => void>();
-  // The host's permanent `error` policy, as `layerNode` installs on the process streams.
+  // The host's permanent `error` policy, as `layerProcess` installs on the process streams.
   const outputErrorListeners = new Set<() => void>([() => {}]);
   const outputSize = { columns: options.columns, rows: options.rows };
   const accepted: Array<string> = [];

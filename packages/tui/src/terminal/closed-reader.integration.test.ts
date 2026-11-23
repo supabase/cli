@@ -31,7 +31,7 @@ const closed = (child: ChildProcess) =>
     });
   });
 
-describe("Terminal.layerNode with a reader that closes early", () => {
+describe("Terminal.layerProcess with a reader that closes early", () => {
   it.live(
     "reports the failed write as a TerminalError instead of crashing on the stream's error event",
     () =>
