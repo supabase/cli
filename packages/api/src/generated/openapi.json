@@ -12006,6 +12006,465 @@
         "x-oauth-scope": "projects:read"
       }
     },
+    "/v2/projects/{ref}/warehouse/replication/add": {
+      "post": {
+        "description": "Adds one eligible source table or the currently eligible tables in a schema to an enabled Warehouse. Existing selections and layouts are preserved; already-selected tables are unchanged. Schema selection excludes future tables, except future partitions of selected partition roots. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline remains stopped and requires an explicit start before copying. Initial copy adds source reads; duration is unknown. Unsafe reattachment of retained data is rejected. The response describes configuration and restart acceptance, not completed copy or streaming. Failures may have partial effects; inspect table and pipeline state before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-add-warehouse-replication",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseReplicationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseReplicationResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or ineligible source selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Warehouse pipeline, publication or selected table not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Warehouse lifecycle, initial sync or retained data conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Add source tables to Warehouse replication",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["project_admin_write", "database_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "add"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/warehouse/replication/remove": {
+      "post": {
+        "description": "Removes one selected source table or all selected tables in a schema as a batch. Source PostgreSQL rows and existing Warehouse data are retained. The retained copy stops receiving updates. An active pipeline restarts once, interrupting replication for other tables; their in-progress initial copies may restart from scratch. A stopped pipeline stays stopped. Removing an unselected target is unchanged. Removing the last target leaves Warehouse enabled with an empty selection. Publication changes and restart acceptance do not establish observed exclusion by active replication. Failures may have partial effects; inspect the selection and pipeline before retrying.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-remove-warehouse-replication",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseReplicationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseReplicationResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or ineligible source selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Warehouse pipeline, publication or selected table not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Warehouse lifecycle, initial sync or retained data conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove source tables from Warehouse replication",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["project_admin_write", "database_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "remove"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/warehouse/replication/resync": {
+      "post": {
+        "description": "Resets replication for one selected source table using its currently saved layout. Source rows, saved layouts and completed replication state for unrelated tables are preserved. In-progress initial copies of other tables may restart from scratch. The Warehouse copy is deleted and rebuilt when replication resumes; table reads may be unavailable, freshness can lag, and the source incurs additional reads. Stopping and restarting the pipeline interrupts replication for other tables. Duration is unknown. The pipeline must be started and initial sync enabled for the table before the reset. The immediate response retains ETL reset states; it does not establish recopy completion. Inspect warehouse tables get and warehouse status separately. Do not automatically retry an uncertain response: repeating this request may reset the table again. There is no server-side preview, revision check, idempotency key or operation polling.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-resync-warehouse-replication",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2WarehouseResyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WarehouseResyncResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or ineligible source selection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Warehouse pipeline, publication or selected table not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Warehouse lifecycle, initial sync or retained data conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Backend unavailable or outcome uncertain; inspect table and pipeline state before retrying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reset and rebuild one Warehouse table",
+        "tags": ["Projects Warehouse"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["pipelines"],
+        "x-fga-permissions": [["project_admin_write", "database_write"]],
+        "x-oauth-scope": "database:write",
+        "x-operation": {
+          "group": "warehouse.replication",
+          "method": "resync"
+        },
+        "x-scalar-stability": "experimental"
+      }
+    },
     "/v2/projects/{ref}/warehouse/capacity": {
       "get": {
         "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
@@ -43949,6 +44408,599 @@
         },
         "required": ["projects", "pagination"]
       },
+      "V2WarehouseReplicationRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["warehouse_replication_change"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Literal source PostgreSQL schema. Omit table to select its current tables."
+                  },
+                  "table": {
+                    "description": "Literal source table name. Omit to select the schema.",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["schema"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2WarehouseReplicationResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["warehouse_replication_change"]
+              },
+              "id": {
+                "type": "string"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "pipeline_id": {
+                    "type": "string"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": ["add", "remove"]
+                  },
+                  "changed": {
+                    "type": "boolean"
+                  },
+                  "application_status": {
+                    "type": "string",
+                    "enum": ["unchanged", "restart_requested", "configured"],
+                    "description": "Immediate orchestration result. Restart acceptance does not establish runtime application or copy completion."
+                  },
+                  "pipeline_status_before": {
+                    "type": "string"
+                  },
+                  "affected_tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0
+                        },
+                        "schema": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": ["id", "schema", "name"]
+                    }
+                  },
+                  "unchanged_tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0
+                        },
+                        "schema": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": ["id", "schema", "name"]
+                    }
+                  },
+                  "tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "exclusiveMinimum": true,
+                          "maximum": 4294967295,
+                          "minimum": 0
+                        },
+                        "schema": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "copy_name": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": ["syncing", "live", "error", null],
+                          "description": "Last observed table state; null when unavailable. Does not establish completion of this request.",
+                          "nullable": true
+                        },
+                        "replication_state": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "lag_ms": {
+                          "type": "number",
+                          "minimum": 0,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "schema",
+                        "name",
+                        "copy_name",
+                        "state",
+                        "replication_state",
+                        "lag_ms"
+                      ]
+                    },
+                    "description": "Resulting configured selection, with best-effort replication observations."
+                  },
+                  "selected_table_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "warehouse_enabled": {
+                    "type": "boolean",
+                    "enum": [true]
+                  },
+                  "source_data_preserved": {
+                    "type": "boolean",
+                    "enum": [true]
+                  },
+                  "warehouse_data_retained": {
+                    "type": "boolean",
+                    "enum": [true]
+                  },
+                  "includes_future_tables": {
+                    "type": "boolean",
+                    "enum": [false]
+                  }
+                },
+                "required": [
+                  "pipeline_id",
+                  "action",
+                  "changed",
+                  "application_status",
+                  "pipeline_status_before",
+                  "affected_tables",
+                  "unchanged_tables",
+                  "tables",
+                  "selected_table_count",
+                  "warehouse_enabled",
+                  "source_data_preserved",
+                  "warehouse_data_retained",
+                  "includes_future_tables"
+                ]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "APIErrorObject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "bad_request",
+              "forbidden",
+              "internal_server_error",
+              "not_found",
+              "payment_required",
+              "rate_limit_exceeded",
+              "request_timeout",
+              "request_too_large",
+              "unauthorized",
+              "validation_failed",
+              "warehouse_selection_empty",
+              "warehouse_selection_conflict",
+              "warehouse_selection_changed",
+              "warehouse_lifecycle_conflict",
+              "warehouse_setup_invalid",
+              "warehouse_not_found",
+              "warehouse_metrics_unavailable",
+              "warehouse_setup_unavailable",
+              "agentic_credential_not_found",
+              "backup_unsupported",
+              "branch_admin_required",
+              "compute_build_context_too_large",
+              "compute_build_in_progress",
+              "compute_deploy_rate_limit_exceeded",
+              "compute_instance_limit_exceeded",
+              "compute_instance_not_found",
+              "compute_not_enabled",
+              "compute_request_rejected",
+              "compute_unavailable",
+              "notebook_cell_duplicate",
+              "notebook_cell_unknown",
+              "notebook_disabled",
+              "notebook_not_found",
+              "notebook_sort_invalid",
+              "organization_invitation_email_delivery_failed",
+              "organization_invitations_partially_failed",
+              "organization_inviter_email_missing",
+              "organization_role_name_invalid",
+              "organization_role_not_entitled",
+              "pagination_cursor_invalid",
+              "project_branch_resync_unsupported",
+              "project_not_found",
+              "project_privatelink_disabled",
+              "project_transfer_disabled",
+              "delivery_not_found",
+              "endpoint_disabled",
+              "endpoint_event_type_not_subscribed",
+              "endpoint_not_found",
+              "endpoint_url_unresolvable",
+              "webhooks_access_disabled"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "links": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "href": {
+                  "type": "string"
+                },
+                "rel": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "describedby": {
+                  "type": "string"
+                },
+                "meta": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              },
+              "required": ["href"]
+            }
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "links": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "href": {
+                        "type": "string"
+                      },
+                      "rel": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "describedby": {
+                        "type": "string"
+                      },
+                      "meta": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      }
+                    },
+                    "required": ["href"]
+                  }
+                },
+                "meta": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              },
+              "required": ["code", "message"]
+            }
+          }
+        },
+        "required": ["code", "message"],
+        "ref": "APIErrorObject"
+      },
+      "ErrorResponseBody": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/APIErrorObject"
+          }
+        },
+        "required": ["error"]
+      },
+      "V2WarehouseResyncRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["warehouse_replication_resync"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Literal source PostgreSQL schema. Omit table to select its current tables."
+                  },
+                  "table": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Literal name of the single source table to reset and recopy."
+                  }
+                },
+                "required": ["schema", "table"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2WarehouseResyncResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["warehouse_replication_resync"]
+              },
+              "id": {
+                "type": "string"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "pipeline_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Pipeline ID",
+                    "example": "03dg2o5teb2eucxr9ggh3uie6"
+                  },
+                  "tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "table_id": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 4294967295,
+                          "description": "Table id (Postgres OID)",
+                          "example": 16408
+                        },
+                        "new_state": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "enum": ["queued"]
+                                }
+                              },
+                              "required": ["name"]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "enum": ["copying_table"]
+                                }
+                              },
+                              "required": ["name"]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "enum": ["copied_table"]
+                                }
+                              },
+                              "required": ["name"]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "enum": ["following_wal"]
+                                }
+                              },
+                              "required": ["name"]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "enum": ["error"]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "solution": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "retry_policy": {
+                                  "oneOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "policy": {
+                                          "type": "string",
+                                          "enum": ["no_retry"]
+                                        }
+                                      },
+                                      "required": ["policy"]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "policy": {
+                                          "type": "string",
+                                          "enum": ["manual_retry"]
+                                        }
+                                      },
+                                      "required": ["policy"]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "policy": {
+                                          "type": "string",
+                                          "enum": ["timed_retry"]
+                                        },
+                                        "next_retry": {
+                                          "type": "string",
+                                          "description": "Next retry time (RFC 3339 timestamp)",
+                                          "example": "2025-01-02T03:04:05Z"
+                                        }
+                                      },
+                                      "required": ["policy", "next_retry"]
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": ["name", "reason", "retry_policy"]
+                            }
+                          ],
+                          "description": "Table replication state"
+                        }
+                      },
+                      "required": ["table_id", "new_state"]
+                    },
+                    "description": "Rolled back tables"
+                  },
+                  "source_table": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "exclusiveMinimum": true,
+                        "maximum": 4294967295,
+                        "minimum": 0
+                      },
+                      "schema": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["id", "schema", "name"]
+                  },
+                  "source_data_preserved": {
+                    "type": "boolean",
+                    "enum": [true]
+                  },
+                  "application_status": {
+                    "type": "string",
+                    "description": "ETL reset replication state. Destination rebuild and recopy may still be pending.",
+                    "enum": ["reset"]
+                  }
+                },
+                "required": [
+                  "pipeline_id",
+                  "tables",
+                  "source_table",
+                  "source_data_preserved",
+                  "application_status"
+                ]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
       "V2WarehouseCapacityResponse_Output": {
         "type": "object",
         "properties": {
@@ -44182,171 +45234,6 @@
           }
         },
         "required": ["data"]
-      },
-      "APIErrorObject": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string",
-            "enum": [
-              "bad_request",
-              "forbidden",
-              "internal_server_error",
-              "not_found",
-              "payment_required",
-              "rate_limit_exceeded",
-              "request_timeout",
-              "request_too_large",
-              "unauthorized",
-              "validation_failed",
-              "warehouse_selection_empty",
-              "warehouse_selection_conflict",
-              "warehouse_selection_changed",
-              "warehouse_lifecycle_conflict",
-              "warehouse_setup_invalid",
-              "warehouse_not_found",
-              "warehouse_metrics_unavailable",
-              "warehouse_setup_unavailable",
-              "agentic_credential_not_found",
-              "backup_unsupported",
-              "branch_admin_required",
-              "compute_build_context_too_large",
-              "compute_build_in_progress",
-              "compute_deploy_rate_limit_exceeded",
-              "compute_instance_limit_exceeded",
-              "compute_instance_not_found",
-              "compute_not_enabled",
-              "compute_request_rejected",
-              "compute_unavailable",
-              "notebook_cell_duplicate",
-              "notebook_cell_unknown",
-              "notebook_disabled",
-              "notebook_not_found",
-              "notebook_sort_invalid",
-              "organization_invitation_email_delivery_failed",
-              "organization_invitations_partially_failed",
-              "organization_inviter_email_missing",
-              "organization_role_name_invalid",
-              "organization_role_not_entitled",
-              "pagination_cursor_invalid",
-              "project_branch_resync_unsupported",
-              "project_not_found",
-              "project_privatelink_disabled",
-              "project_transfer_disabled",
-              "delivery_not_found",
-              "endpoint_disabled",
-              "endpoint_event_type_not_subscribed",
-              "endpoint_not_found",
-              "endpoint_url_unresolvable",
-              "webhooks_access_disabled"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "links": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "href": {
-                  "type": "string"
-                },
-                "rel": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "type": {
-                  "type": "string"
-                },
-                "describedby": {
-                  "type": "string"
-                },
-                "meta": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              },
-              "required": ["href"]
-            }
-          },
-          "meta": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "issues": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "code": {
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "links": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "object",
-                    "properties": {
-                      "href": {
-                        "type": "string"
-                      },
-                      "rel": {
-                        "type": "string"
-                      },
-                      "title": {
-                        "type": "string"
-                      },
-                      "type": {
-                        "type": "string"
-                      },
-                      "describedby": {
-                        "type": "string"
-                      },
-                      "meta": {
-                        "type": "object",
-                        "additionalProperties": {}
-                      }
-                    },
-                    "required": ["href"]
-                  }
-                },
-                "meta": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              },
-              "required": ["code", "message"]
-            }
-          }
-        },
-        "required": ["code", "message"],
-        "ref": "APIErrorObject"
-      },
-      "ErrorResponseBody": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "$ref": "#/components/schemas/APIErrorObject"
-          }
-        },
-        "required": ["error"]
       },
       "V2WarehouseQueryStatsResponse_Output": {
         "type": "object",
@@ -46382,181 +47269,364 @@
                 "enum": ["warehouse_table_layout"]
               },
               "attributes": {
-                "type": "object",
-                "properties": {
-                  "reset_table": {
-                    "description": "Defaults to false, preserving historical files and replication progress. When the layout changes, true resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
-                    "type": "boolean"
-                  },
-                  "sort_by": {
-                    "description": "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
-                    "anyOf": [
-                      {
-                        "oneOf": [
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "reset_table": {
+                        "description": "Defaults to false, preserving historical files and replication progress. When the layout changes, true resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+                        "type": "boolean"
+                      },
+                      "sort_by": {
+                        "description": "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                        "anyOf": [
                           {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": ["none"]
-                              }
-                            },
-                            "required": ["kind"],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": ["primary_key"]
-                              }
-                            },
-                            "required": ["kind"],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string",
-                                "enum": ["columns"]
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["none"]
+                                  }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
                               },
-                              "columns": {
-                                "minItems": 1,
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "properties": {
-                                    "name": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "description": "Source column name."
-                                    },
-                                    "direction": {
-                                      "type": "string",
-                                      "enum": ["asc", "desc"]
-                                    },
-                                    "nulls": {
-                                      "type": "string",
-                                      "enum": ["first", "last", null],
-                                      "description": "Null placement. Null uses DuckLake's default placement.",
-                                      "nullable": true
-                                    }
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["primary_key"]
+                                  }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["columns"]
                                   },
-                                  "required": ["name", "direction"],
-                                  "additionalProperties": false
-                                }
+                                  "columns": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "description": "Source column name."
+                                        },
+                                        "direction": {
+                                          "type": "string",
+                                          "enum": ["asc", "desc"]
+                                        },
+                                        "nulls": {
+                                          "type": "string",
+                                          "enum": ["first", "last", null],
+                                          "description": "Null placement. Null uses DuckLake's default placement.",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": ["name", "direction"],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": ["kind", "columns"],
+                                "additionalProperties": false
                               }
-                            },
-                            "required": ["kind", "columns"],
-                            "additionalProperties": false
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "nullable": true,
+                            "enum": [null]
                           }
                         ]
                       },
-                      {
-                        "type": "object",
-                        "nullable": true,
-                        "enum": [null]
-                      }
-                    ]
-                  },
-                  "partition_by": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "column": {
-                          "type": "string",
-                          "minLength": 1,
-                          "description": "Source column name."
-                        },
-                        "transform": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["identity"]
-                                }
-                              },
-                              "required": ["kind"],
-                              "additionalProperties": false
+                      "partition_by": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "column": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "Source column name."
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["year"]
-                                }
-                              },
-                              "required": ["kind"],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["month"]
-                                }
-                              },
-                              "required": ["kind"],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["day"]
-                                }
-                              },
-                              "required": ["kind"],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["hour"]
-                                }
-                              },
-                              "required": ["kind"],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": ["bucket"]
+                            "transform": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["identity"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
                                 },
-                                "count": {
-                                  "type": "integer",
-                                  "exclusiveMinimum": true,
-                                  "maximum": 2147483647,
-                                  "description": "Number of hash buckets.",
-                                  "minimum": 0
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["year"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["month"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["day"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["hour"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["bucket"]
+                                    },
+                                    "count": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": true,
+                                      "maximum": 2147483647,
+                                      "description": "Number of hash buckets.",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": ["kind", "count"],
+                                  "additionalProperties": false
                                 }
-                              },
-                              "required": ["kind", "count"],
-                              "additionalProperties": false
+                              ]
                             }
-                          ]
-                        }
-                      },
-                      "required": ["column", "transform"],
-                      "additionalProperties": false
+                          },
+                          "required": ["column", "transform"],
+                          "additionalProperties": false
+                        },
+                        "description": "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                        "nullable": true
+                      }
                     },
-                    "description": "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
-                    "nullable": true
+                    "required": ["sort_by"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "reset_table": {
+                        "description": "Defaults to false, preserving historical files and replication progress. When the layout changes, true resets the table and copies it again. This requires initial sync to be enabled. Reads are disrupted during the copy. An unchanged layout never resets the table.",
+                        "type": "boolean"
+                      },
+                      "sort_by": {
+                        "description": "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+                        "anyOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["none"]
+                                  }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["primary_key"]
+                                  }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": ["columns"]
+                                  },
+                                  "columns": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "description": "Source column name."
+                                        },
+                                        "direction": {
+                                          "type": "string",
+                                          "enum": ["asc", "desc"]
+                                        },
+                                        "nulls": {
+                                          "type": "string",
+                                          "enum": ["first", "last", null],
+                                          "description": "Null placement. Null uses DuckLake's default placement.",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": ["name", "direction"],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": ["kind", "columns"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "nullable": true,
+                            "enum": [null]
+                          }
+                        ]
+                      },
+                      "partition_by": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "column": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "Source column name."
+                            },
+                            "transform": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["identity"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["year"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["month"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["day"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["hour"]
+                                    }
+                                  },
+                                  "required": ["kind"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": ["bucket"]
+                                    },
+                                    "count": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": true,
+                                      "maximum": 2147483647,
+                                      "description": "Number of hash buckets.",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": ["kind", "count"],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["column", "transform"],
+                          "additionalProperties": false
+                        },
+                        "description": "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                        "nullable": true
+                      }
+                    },
+                    "required": ["partition_by"],
+                    "additionalProperties": false
                   }
-                },
-                "additionalProperties": false
+                ]
               }
             },
             "required": ["type", "attributes"]

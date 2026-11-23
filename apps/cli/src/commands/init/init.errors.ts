@@ -7,7 +7,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * `supabase/config.toml` already exists and `--force` was not set. The message reproduces the
+ * A `supabase/config.json`, `config.jsonc` or `config.toml` already exists and `--force` was not set. The message reproduces the
  * platform's raw file-exists error text: `file exists` (POSIX) or `The file exists.` (Windows).
  */
 export class InitConfigExistsError extends Data.TaggedError("InitConfigExistsError")<{

@@ -131,13 +131,18 @@ export function buildKongEmailTemplateBind(
   return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
 
+/* Kong's `auto` follows the soft limit, as low as 1024 on Docker 29, so nginx is sized from the
+   hard limit up to Kong's 16384 ceiling instead, and `kong reload` reuses the values Kong saved in
+   `.kong_env` */
 const KONG_ENTRYPOINT_HEAD =
+  'n=$(ulimit -Hn); [ "$n" = unlimited ] || [ "$n" -gt 16384 ] && n=16384\n' +
+  "export KONG_NGINX_MAIN_WORKER_RLIMIT_NOFILE=$n KONG_NGINX_EVENTS_WORKER_CONNECTIONS=$n\n" +
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
   "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
- * Builds the non-secret half of the Kong entrypoint: the
- * `custom_nginx.template` heredoc plus the final `docker-entrypoint.sh` exec
+ * Builds the non-secret half of the Kong entrypoint: the nginx sizing exports,
+ * the `custom_nginx.template` heredoc and the final `docker-entrypoint.sh` exec
  * line. `kong.yml` and the TLS cert/key travel via `secretFiles` instead —
  * see this module's header.
  */

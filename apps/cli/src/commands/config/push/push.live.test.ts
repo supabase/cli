@@ -88,7 +88,7 @@ function expectMaxRowsConverged(cliEffect: LiveCliEffect, ref: string, label: st
   );
 }
 
-// Golden path only: a sparse config.toml declaring one property round-trips through push,
+// Golden path only: a sparse config.jsonc declaring one property round-trips through push,
 // `config diff` proves convergence, and the restore push is re-proven the same way, since push
 // exits 0 on "Nothing to push" too. Branch coverage lives in push.integration.test.ts.
 test(
@@ -101,8 +101,8 @@ test(
         const path = yield* Path.Path;
         const writeConfig = (maxRows: number) =>
           fs.writeFileString(
-            path.join(workspace.path, "supabase", "config.toml"),
-            `project_id = "cli-live-config-push"\n\n[api]\nmax_rows = ${maxRows}\n`,
+            path.join(workspace.path, "supabase", "config.jsonc"),
+            `${JSON.stringify({ project_id: "cli-live-config-push", api: { max_rows: maxRows } })}\n`,
           );
         const pushArgs = [
           "config",

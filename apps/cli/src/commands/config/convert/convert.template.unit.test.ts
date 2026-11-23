@@ -45,10 +45,10 @@ function commentedMembers(lines: ReadonlyArray<string>): Array<readonly [number,
   return members;
 }
 
-describe("converted init template", () => {
-  const template = renderCliConfigTemplate("demo", false);
-  const jsonc = convertCliConfigTomlToJsonc(template).text;
+describe("init template", () => {
+  const jsonc = renderCliConfigTemplate("demo", false);
   const lines = jsonc.split("\n");
+  const { text: template } = convertCliConfigJsoncToToml(jsonc);
   const example = /^# (\[[^\]]+\]|[\w."'-]+ = .+)$/;
 
   it("uncommenting any one example yields valid JSONC with its value where the TOML example implied", () => {
@@ -79,14 +79,18 @@ describe("converted init template", () => {
     expect(seen).toEqual(expected);
   });
 
-  it("round-trips through config.toml with the same values and the same example comments", () => {
+  it("round-trips through config.toml with the same values and no moved comments", () => {
     const { text: toml, movedComments } = convertCliConfigJsoncToToml(jsonc);
-    const examples = (text: string) => text.split("\n").filter((line) => example.test(line));
+    const examples = toml.split("\n").filter((line) => example.test(line));
+    const { $schema: _schema, ...values } = parseJsonc(jsonc) as Record<string, unknown>;
+    const { $schema: _roundTripSchema, ...roundTripped } = parseJsonc(
+      convertCliConfigTomlToJsonc(toml).text,
+    ) as Record<string, unknown>;
 
     expect(toml.startsWith("#:schema ")).toBe(true);
-    expect(parseToml(toml)).toEqual(parseToml(template));
-    expect(examples(toml).length).toBeGreaterThan(30);
-    expect(examples(toml).toSorted()).toEqual(examples(template).toSorted());
+    expect(parseToml(toml)).toEqual(values);
+    expect(roundTripped).toEqual(values);
+    expect(examples.length).toBeGreaterThan(30);
     expect(movedComments).toEqual([]);
   });
 });

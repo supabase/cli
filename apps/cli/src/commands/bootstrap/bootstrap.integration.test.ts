@@ -334,7 +334,7 @@ describe("bootstrap integration", () => {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
       );
-      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
       expect(
         yield* fs.readFileString(path.join(s.workdir, "supabase", ".temp", "project-ref")),
       ).toBe(VALID_REF);
@@ -358,9 +358,9 @@ describe("bootstrap integration", () => {
         yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
           Effect.provide(s.layer),
         );
-        const content = yield* fs.readFileString(path.join(s.workdir, "supabase", "config.toml"));
-        expect(content).toContain("stack = true");
-        expect(content).not.toMatch(/^port = 54321$/m);
+        const content = yield* fs.readFileString(path.join(s.workdir, "supabase", "config.jsonc"));
+        expect(content).toContain('"stack": true');
+        expect(content).not.toMatch(/^\s*"port": 54321,?$/m);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -472,7 +472,7 @@ describe("bootstrap integration", () => {
             'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
           );
         }
-        expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
+        expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(false);
         expect(s.out.stderrText).not.toContain("Created a new project at");
       }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -487,7 +487,7 @@ describe("bootstrap integration", () => {
       );
       expect(s.downloads).toHaveLength(1);
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
-      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -567,7 +567,7 @@ describe("bootstrap integration", () => {
           opts: { initialValue: path.join(path.dirname(s.workdir), path.sep) },
         },
       ]);
-      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -590,7 +590,7 @@ describe("bootstrap integration", () => {
           opts: { initialValue: prefill },
         },
       ]);
-      expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "config.toml"))).toBe(true);
+      expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "config.jsonc"))).toBe(true);
       expect(s.out.stderrText).not.toContain("Using workdir");
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -606,7 +606,7 @@ describe("bootstrap integration", () => {
         Effect.provide(s.layer),
       );
       expect(s.out.promptTextCalls).toEqual([]);
-      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -639,7 +639,7 @@ describe("bootstrap integration", () => {
       );
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
-      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

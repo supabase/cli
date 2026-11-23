@@ -23,7 +23,7 @@ const config = {
   ),
   force: Flag.Boolean("force").pipe(
     Flag.withDescription(
-      "Write a fresh supabase/config.toml, replacing an existing config.toml and removing any config.json or config.jsonc.",
+      "Write a fresh supabase/config.jsonc, replacing an existing config.jsonc and removing any config.json or config.toml.",
     ),
     Flag.withDefault(false),
   ),

@@ -26,6 +26,7 @@ import {
   registerTempHome,
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
+import { activeStackPortPaths, setConfigValues } from "./jsonc-config.ts";
 
 export { stripAnsi } from "./ansi.ts";
 
@@ -357,32 +358,28 @@ const overrideStackPortsEffect = (projectDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const configPath = pathService.join(projectDir, "supabase", "config.toml");
+    const configPath = pathService.join(projectDir, "supabase", "config.jsonc");
     /* Decoded keeping a leading byte order mark, like Node's `Buffer#toString`. */
     const config = chunkDecoder.decode(yield* fs.readFile(configPath));
     const assigned = new Set<number>();
-    const lines: string[] = [];
-    for (const line of config.split("\n")) {
-      const match = /^(\s*(?:port|smtp_port|pop3_port|inspector_port|shadow_port) = )\d+$/.exec(
-        line,
-      );
-      if (match === null) {
-        lines.push(line);
-        continue;
-      }
+    const edits: Array<{ path: ReadonlyArray<string>; value: number }> = [];
+    for (const path of activeStackPortPaths(config)) {
       let port = yield* pickFreePort;
       while (assigned.has(port)) {
         port = yield* pickFreePort;
       }
       assigned.add(port);
-      lines.push(`${match[1]}${port}`);
+      edits.push({ path, value: port });
     }
-    yield* fs.writeFileString(configPath, lines.join("\n"));
+    if (edits.length === 0) {
+      throw new Error(`no active stack ports found in ${configPath}`);
+    }
+    yield* fs.writeFileString(configPath, setConfigValues(config, edits));
   });
 
 /**
  * Rewrites every active port assignment in an `init`-generated
- * `supabase/config.toml` with a freshly allocated free port, so stacks started
+ * `supabase/config.jsonc` with a freshly allocated free port, so stacks started
  * from default configs cannot collide on host ports with other e2e stacks on
  * the same runner. Commented-out port lines are left untouched.
  */
@@ -423,7 +420,10 @@ const stopAndRemoveStackProject = (dir: string, cleanupTimeoutMs: number) =>
 
     // `init` can fail before creating a project config. There is no stack to
     // stop in that case, so remove the exact owned directory directly.
-    if (!(yield* pathExists(fs, pathService.join(dir, "supabase", "config.toml")))) {
+    const hasConfig =
+      (yield* pathExists(fs, pathService.join(dir, "supabase", "config.jsonc"))) ||
+      (yield* pathExists(fs, pathService.join(dir, "supabase", "config.toml")));
+    if (!hasConfig) {
       yield* removeOwnedDir(dir);
       return;
     }
