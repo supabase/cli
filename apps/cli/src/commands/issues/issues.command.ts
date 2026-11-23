@@ -47,6 +47,30 @@ export const issuesCommand = Command.make("issues", config).pipe(
   withSidebar({ category: "projects", title: "Check project issues" }),
   Command.withDescription("Checks security, performance, and health issues."),
   Command.withShortDescription("Checks security, performance, and health issues"),
+  Command.withHandler((flags) =>
+    issues(flags).pipe(
+      withCommandTelemetry({
+        outputFormats: GLOBAL_OUTPUT_FORMATS,
+        flags: {
+          type: flags.type,
+          severity: flags.severity,
+          "fail-on": flags.failOn,
+        },
+        config,
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(commandRuntimeLayer(["issues"])),
+  Command.provide(advisorChecksRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
   withPermissions(
     compose(
       {
@@ -89,28 +113,4 @@ export const issuesCommand = Command.make("issues", config).pipe(
       branchResolution,
     ),
   ),
-  Command.withHandler((flags) =>
-    issues(flags).pipe(
-      withCommandTelemetry({
-        outputFormats: GLOBAL_OUTPUT_FORMATS,
-        flags: {
-          type: flags.type,
-          severity: flags.severity,
-          "fail-on": flags.failOn,
-        },
-        config,
-      }),
-      withJsonErrorHandling,
-    ),
-  ),
-  Command.provide(commandRuntimeLayer(["issues"])),
-  Command.provide(advisorChecksRuntimeLayer),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(config),
-  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
-  withTargetPolicy({
-    group: "selectable",
-    consent: "none",
-    consentExemptReason: "its transaction is always rolled back",
-  }),
 );
