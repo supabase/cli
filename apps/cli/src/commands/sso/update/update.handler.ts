@@ -456,7 +456,20 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         return;
       }
 
-      yield* output.raw(renderSingleProvider(provider));
+      // The update response omits `dedicated_scope`, which cannot change after creation, so the
+      // value from the preceding GET stands in for it.
+      yield* output.raw(
+        renderSingleProvider(
+          {
+            ...provider,
+            saml:
+              provider.saml === undefined
+                ? undefined
+                : { ...provider.saml, dedicated_scope: existing.saml?.dedicated_scope },
+          },
+          ref,
+        ),
+      );
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.
