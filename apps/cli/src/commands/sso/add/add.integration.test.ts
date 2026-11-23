@@ -970,6 +970,10 @@ describe("sso add integration", () => {
       const error = yield* Effect.flip(ssoAdd(defaultFlags));
       expect(error).toMatchObject({ _tag: "SsoAddUnexpectedStatusError", status: 404 });
       expect(error.message).toContain("Project not found");
+      expect(classifyCliCauseActionability(Cause.fail(error))).toMatchObject({
+        error_category: "invalid_input",
+        error_fingerprint: "tag:SsoAddUnexpectedStatusError:not_found",
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       ]);

@@ -62,7 +62,7 @@ export class SsoListUnexpectedStatusError extends Data.TaggedError("SsoListUnexp
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 
@@ -84,7 +84,7 @@ export class SsoAddUnexpectedStatusError extends Data.TaggedError("SsoAddUnexpec
   readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

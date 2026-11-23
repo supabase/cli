@@ -316,6 +316,10 @@ describe("sso list integration", () => {
       );
       expect(error).toMatchObject({ _tag: "SsoListUnexpectedStatusError", status: 404 });
       expect(error.message).toContain("Project not found");
+      expect(classifyCliCauseActionability(Cause.fail(error))).toMatchObject({
+        error_category: "invalid_input",
+        error_fingerprint: "tag:SsoListUnexpectedStatusError:not_found",
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
       ]);
