@@ -142,8 +142,8 @@ test("reports tables in a configured non-public exposed schema", ({
       const table = "unprotected";
       const target = Effect.gen(function* () {
         yield* fs.writeFileString(
-          `${workspace.path}/supabase/config.toml`,
-          `[api]\nschemas = ["public", "${schema}"]\n`,
+          `${workspace.path}/supabase/config.jsonc`,
+          `{ "api": { "schemas": ["public", "${schema}"] } }\n`,
         );
         yield* Effect.promise(() => queryLiveDb(project.dbUrl, `create schema ${schema}`));
         yield* Effect.promise(() =>

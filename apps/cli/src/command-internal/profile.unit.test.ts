@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { billingUrl, dashboardUrl, poolerHost, projectHost } from "./profile.ts";
+import { dashboardUrl, poolerHost, projectHost } from "./profile.ts";
 
 describe("projectHost", () => {
   it("maps built-in profile names to the project_host", () => {
@@ -40,14 +40,5 @@ describe("dashboardUrl", () => {
 
   it("falls back to the production dashboard for unknown profiles", () => {
     expect(dashboardUrl("custom-profile")).toBe("https://supabase.com/dashboard");
-  });
-});
-
-describe("billingUrl", () => {
-  it("composes the dashboard URL with /org/<slug>/billing", () => {
-    expect(billingUrl("supabase", "acme")).toBe("https://supabase.com/dashboard/org/acme/billing");
-    expect(billingUrl("supabase-staging", "acme")).toBe(
-      "https://supabase.green/dashboard/org/acme/billing",
-    );
   });
 });

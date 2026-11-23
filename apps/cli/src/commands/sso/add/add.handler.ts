@@ -1,4 +1,4 @@
-import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
+import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -25,7 +25,6 @@ import { accessTokenForProfile } from "../../../auth/command-credentials.layer.t
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   argvBoolValue,
   argvEnumValue,
@@ -40,7 +39,6 @@ import {
   SsoAddMetadataFileError,
   SsoAddNetworkError,
   SsoAddRequiredFlagError,
-  SsoAddSamlDisabledError,
   SsoAddUnexpectedStatusError,
   SsoFlagNeedsArgumentError,
   SsoInvalidFlagValueError,
@@ -57,9 +55,6 @@ import {
   toNameIdFormat,
 } from "../sso.saml.ts";
 import type { SsoAddFlags } from "./add.command.ts";
-
-const SAML_DISABLED_MESSAGE =
-  "SAML 2.0 support is not enabled for this project. Please enable it through the dashboard";
 
 type SsoAddBody = Types.Mutable<
   Omit<Schema.Schema.Type<typeof operationDefinitions.v1CreateASsoProvider.inputSchema>, "ref">
@@ -86,52 +81,14 @@ const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoAddAttributeMappingFileError(args),
 });
 
-type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
-
-const handleAddError = <R>(
-  ref: string,
-  apiUrl: string,
-  tokenForAux: TokenForAux<R>,
-  cause: SupabaseApiError,
-) =>
-  mapStatusOrNetwork(cause).pipe(
-    Effect.catchTag("SsoAddUnexpectedStatusError", (mapped) =>
-      Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: mapped.status,
-          response: gateResponse(cause),
-          apiUrl,
-          ...(yield* Effect.map(tokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        if (mapped.status === 404) {
-          return yield* new SsoAddSamlDisabledError({
-            message: SAML_DISABLED_MESSAGE,
-            upgradeSuggested,
-          });
-        }
-        return yield* new SsoAddUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
-          upgradeSuggested,
-          entitlement: mapped.entitlement,
-        });
-      }),
-    ),
-  );
-
 const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 
 // Declaration order sets the mutex error message's bracket order.
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
 // Value-taking flags for `scanArgvFlags`: each consumes the next argv token
-// as its value. `--skip-url-validation` is this command's only boolean flag,
-// so it's excluded.
+// as its value. The boolean flags (`--skip-url-validation`, `--dedicated-scope`)
+// are excluded.
 const SSO_ADD_SCAN_SPEC = {
   valueFlagNames: new Set([
     "project-ref",
@@ -174,6 +131,9 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const skipUrlValidation = yield* Effect.fromResult(
       argvBoolValue(occurrences, "skip-url-validation"),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const dedicatedScope = yield* Effect.fromResult(
+      argvBoolValue(occurrences, "dedicated-scope"),
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
     const nameIdFormat = yield* Effect.fromResult(
       argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
@@ -194,8 +154,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Resolved once (memoized) so the token read happens after
     // required/mutex/workdir validation — a missing or invalid reconciled
-    // token must not preempt those errors. Auxiliary calls (cache fill,
-    // upgrade-gate GETs) use the failure-absorbing variant below instead.
+    // token must not preempt those errors. The cache fill uses the
+    // failure-absorbing variant below instead.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(accessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -291,6 +251,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         if (format !== undefined) body.name_id_format = format;
       }
 
+      if (occurrences.has("dedicated-scope")) body.dedicated_scope = dedicatedScope;
+
       yield* requireHostedMutationConsent({
         action: "Add an SSO provider",
         details: [
@@ -298,6 +260,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
           ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
           ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
           ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(occurrences.has("dedicated-scope") ? [`Dedicated scope: ${dedicatedScope}`] : []),
         ],
       });
 
@@ -331,7 +294,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         const rawBody: unknown = yield* response.json;
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
-        Effect.catch((cause) => handleAddError(ref, apiUrl, reconciledTokenForAux, cause)),
+        Effect.catch(mapStatusOrNetwork),
         Effect.tapError(() => creating?.fail() ?? Effect.void),
       );
       yield* creating?.clear ?? Effect.void;
@@ -371,7 +334,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         return;
       }
 
-      yield* output.raw(renderSingleProvider(provider));
+      yield* output.raw(renderSingleProvider(provider, ref));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

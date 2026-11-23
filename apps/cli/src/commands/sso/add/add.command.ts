@@ -8,7 +8,6 @@ import { branchResolution } from "../../../command-internal/target/branch-resolu
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
@@ -55,6 +54,12 @@ const config = {
     ),
     Flag.optional,
   ),
+  dedicatedScope: Flag.Boolean("dedicated-scope").pipe(
+    Flag.withDescription(
+      "Scope the SAML entity ID, metadata URL and ACS URL to this identity provider instead of the shared project-wide URLs.",
+    ),
+    Flag.withDefault(false),
+  ),
   nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
@@ -89,9 +94,9 @@ export const ssoAddCommand = Command.make("add", config).pipe(
           "skip-url-validation",
           "attribute-mapping-file",
           "name-id-format",
+          "dedicated-scope",
         ],
       },
-      upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
       branchResolution,

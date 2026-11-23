@@ -1,10 +1,22 @@
 import { randomUUID } from "node:crypto";
 
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Data, Effect, Exit, FileSystem, Layer, Path, Schedule, Schema } from "effect";
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { describe, expect } from "vitest";
 
+import { parseJsonc } from "@supabase/config/internal";
 import { overrideStackPorts } from "../../../../../tests/helpers/cli.ts";
 import { type LiveFixtures, test } from "../../../../../tests/helpers/live.ts";
 
@@ -25,6 +37,9 @@ Deno.serve((req) => {
   return new Response("ok", { headers });
 });
 `;
+
+const encodeConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeConfig = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown));
 
 const ApiKeysSchema = Schema.Array(
   Schema.Struct({ api_key: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
@@ -232,13 +247,21 @@ describe("stack gateway CORS (live)", () => {
               yield* fs.makeDirectory(directory, { recursive: true });
               yield* fs.writeFileString(path.join(directory, "index.ts"), functionSource);
             }
-            const configPath = path.join(workspace.path, "supabase", "config.toml");
+            const configPath = path.join(workspace.path, "supabase", "config.jsonc");
             yield* Effect.promise(() => overrideStackPorts(workspace.path));
-            const config = yield* fs.readFileString(configPath);
-            yield* fs.writeFileString(
-              configPath,
-              `${config.replace("[experimental]\n", "[experimental]\nstack = true\n")}\n[functions.${slug}]\nverify_jwt = false\n\n[functions.${jwtSlug}]\nverify_jwt = true\n`,
-            );
+            const config = yield* decodeConfig(parseJsonc(yield* fs.readFileString(configPath)));
+            const updated = yield* encodeConfig({
+              ...config,
+              experimental: {
+                ...(Predicate.isObject(config.experimental) ? config.experimental : {}),
+                stack: true,
+              },
+              functions: {
+                [slug]: { verify_jwt: false },
+                [jwtSlug]: { verify_jwt: true },
+              },
+            });
+            yield* fs.writeFileString(configPath, `${updated}\n`);
 
             const keys = yield* cliEffect([
               "projects",

@@ -616,7 +616,7 @@ it.live("a running stack's pinned port conflict names the port, its project, and
 
       expect(failure.message).toContain(String(port));
       expect(failure.message).toContain(projectA);
-      expect(failure.message).toContain("supabase stack stop");
+      expect(failure.message).toContain(`supabase stack stop --stack ${a}`);
       expect(failure.message).not.toContain("destroy");
       if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
       expect(failure.conflict?.holder).toMatchObject({ stackId: a });

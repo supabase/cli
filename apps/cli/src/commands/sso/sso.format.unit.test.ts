@@ -143,16 +143,19 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
   });
 
   it("renders a single provider with table + optional attribute mapping section", () => {
-    const out = renderSingleProvider({
-      id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
-      saml: {
-        entity_id: "https://example.com",
-        attribute_mapping: { keys: { a: { name: "xyz" } } },
-        metadata_xml: '<?xml version="2.0"?>',
+    const out = renderSingleProvider(
+      {
+        id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
+        saml: {
+          entity_id: "https://example.com",
+          attribute_mapping: { keys: { a: { name: "xyz" } } },
+          metadata_xml: '<?xml version="2.0"?>',
+        },
+        domains: [{ domain: "example.com" }],
+        created_at: "2023-03-28T13:50:14.464Z",
       },
-      domains: [{ domain: "example.com" }],
-      created_at: "2023-03-28T13:50:14.464Z",
-    });
+      "abcdefghijklmnopqrst",
+    );
     expect(out).toContain("IDENTITY PROVIDER ID");
     expect(out).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
     expect(out).toContain("## Attribute Mapping");
@@ -161,11 +164,35 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
     expect(out).toContain("```xml");
   });
 
+  it("renders the provider's own ACS URL and entity ID when its scope is dedicated", () => {
+    const id = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+    const out = renderSingleProvider(
+      { id, saml: { entity_id: "https://idp.example.com", dedicated_scope: true } },
+      "abcdefghijklmnopqrst",
+    );
+    expect(out).toContain(`https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/acs`);
+    expect(out).toContain(
+      `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/metadata`,
+    );
+  });
+
+  it("omits the dedicated URLs when the provider uses the shared scope", () => {
+    const out = renderSingleProvider(
+      { id: "abc", saml: { entity_id: "https://idp.example.com", dedicated_scope: null } },
+      "abcdefghijklmnopqrst",
+    );
+    expect(out).not.toContain("DEDICATED SCOPE");
+    expect(out).not.toContain("SP ACS URL");
+  });
+
   it("renders a single provider WITHOUT optional sections when none present", () => {
-    const out = renderSingleProvider({
-      id: "abc",
-      created_at: "2023-03-28T13:50:14.464Z",
-    });
+    const out = renderSingleProvider(
+      {
+        id: "abc",
+        created_at: "2023-03-28T13:50:14.464Z",
+      },
+      "abcdefghijklmnopqrst",
+    );
     expect(out).not.toContain("## Attribute Mapping");
     expect(out).not.toContain("## SAML 2.0 Metadata XML");
   });
@@ -174,11 +201,14 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
   // an established output contract. Changing this needs the renderer and
   // this test updated together.
   it("intentionally renders UPDATED AT using created_at", () => {
-    const out = renderSingleProvider({
-      id: "abc",
-      created_at: "2023-01-01T00:00:00Z",
-      updated_at: "2099-12-31T23:59:59Z",
-    });
+    const out = renderSingleProvider(
+      {
+        id: "abc",
+        created_at: "2023-01-01T00:00:00Z",
+        updated_at: "2099-12-31T23:59:59Z",
+      },
+      "abcdefghijklmnopqrst",
+    );
     expect(out).toContain("CREATED AT (UTC)");
     expect(out).toContain("2023-01-01 00:00:00");
     expect(out).not.toContain("2099-12-31 23:59:59");
@@ -191,6 +221,15 @@ describe("buildInfoPayload + renderInfoMarkdown", () => {
     expect(payload).toEqual({
       acs_url: "https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/acs",
       entity_id: "https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/saml/metadata",
+      relay_state: "https://abcdefghijklmnopqrst.supabase.co",
+    });
+  });
+
+  it("scopes the ACS URL and entity ID to the provider id when one is given", () => {
+    const id = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
+    expect(buildInfoPayload("abcdefghijklmnopqrst", id)).toEqual({
+      acs_url: `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/acs`,
+      entity_id: `https://abcdefghijklmnopqrst.supabase.co/auth/v1/sso/${id}/saml/metadata`,
       relay_state: "https://abcdefghijklmnopqrst.supabase.co",
     });
   });

@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { parseJsonc } from "@supabase/config/internal";
+import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
 import { Effect, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
@@ -182,7 +183,7 @@ describe("config convert integration", () => {
     "converts the init template, keeping every prose comment once and the same config",
     () => {
       const { layer, out, telemetry, recorded } = setup();
-      const template = renderCliConfigTemplate("demo", false);
+      const template = convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text;
       const tomlExample = /^#\s?(\[[^\]]+\]|[\w."'-]+ = .+)$/;
       const templateComments = template
         .split("\n")
