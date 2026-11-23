@@ -2,435 +2,504 @@ import { CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 
-const CONFIG_TEMPLATE_RAW = `#:schema ${CLI_CONFIG_SCHEMA_URL}
-# For detailed configuration reference documentation, visit:
-# https://supabase.com/docs/guides/local-development/cli/config
-# A string used to distinguish different Supabase projects on the same host. Defaults to the
-# working directory name when running \`supabase init\`.
-project_id = "__PROJECT_ID__"
+const CONFIG_TEMPLATE_RAW = `{
+  "$schema": "${CLI_CONFIG_SCHEMA_URL}",
+  // For detailed configuration reference documentation, visit:
+  // https://supabase.com/docs/guides/local-development/cli/config
+  // A string used to distinguish different Supabase projects on the same host. Defaults to the
+  // working directory name when running \`supabase init\`.
+  "project_id": "__PROJECT_ID__",
 
-[api]
-enabled = true
-# Port to use for the API URL.
-port = 54321
-# Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
-# endpoints. \`public\` and \`graphql_public\` schemas are included by default.
-schemas = ["public", "graphql_public"]
-# Extra schemas to add to the search_path of every request.
-extra_search_path = ["public", "extensions"]
-# The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
-# for accidental or malicious requests.
-max_rows = 1000
-# The maximum number of connections in the local PostgREST database pool. Left unset, the default
-# pool size is unchanged.
-# db_pool = 10
-# Controls whether new tables, views, sequences and functions created in the \`public\` schema by
-# \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
-# without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
-# instead. Left unset, a fresh project falls back to \`true\`.
-# auto_expose_new_tables = true
+  "api": {
+    "enabled": true,
+    // Port to use for the API URL.
+    "port": 54321,
+    // Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
+    // endpoints. \`public\` and \`graphql_public\` schemas are included by default.
+    "schemas": ["public", "graphql_public"],
+    // Extra schemas to add to the search_path of every request.
+    "extra_search_path": ["public", "extensions"],
+    // The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
+    // for accidental or malicious requests.
+    "max_rows": 1000,
+    // The maximum number of connections in the local PostgREST database pool. Left unset, the default
+    // pool size is unchanged.
+    // "db_pool": 10,
+    // Controls whether new tables, views, sequences and functions created in the \`public\` schema by
+    // \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
+    // without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
+    // instead. Left unset, a fresh project falls back to \`true\`.
+    // "auto_expose_new_tables": true,
 
-[api.tls]
-# Enable HTTPS endpoints locally using a self-signed certificate.
-enabled = false
-# Paths to self-signed certificate pair.
-# cert_path = "../certs/my-cert.pem"
-# key_path = "../certs/my-key.pem"
+    "tls": {
+      // Enable HTTPS endpoints locally using a self-signed certificate.
+      "enabled": false,
+      // Paths to self-signed certificate pair.
+      // "cert_path": "../certs/my-cert.pem",
+      // "key_path": "../certs/my-key.pem",
+    }
+  },
 
-[db]
-# Port to use for the local database URL.
-port = 54322
-# Port used by db diff command to initialize the shadow database.
-shadow_port = 54320
-# Maximum amount of time to wait for health check when starting the local database.
-health_timeout = "2m"
-# The database major version to use. This has to be the same as your remote database's. Run \`SHOW
-# server_version;\` on the remote database to check.
-major_version = 17
-# OrioleDB version to use as the Postgres storage engine. Leave empty to use the default engine.
-orioledb_version = "__ORIOLEDB_VERSION__"
+  "db": {
+    // Port to use for the local database URL.
+    "port": 54322,
+    // Port used by db diff command to initialize the shadow database.
+    "shadow_port": 54320,
+    // Maximum amount of time to wait for health check when starting the local database.
+    "health_timeout": "2m",
+    // The database major version to use. This has to be the same as your remote database's. Run \`SHOW
+    // server_version;\` on the remote database to check.
+    "major_version": 17,
+    // OrioleDB version to use as the Postgres storage engine. Leave empty to use the default engine.
+    "orioledb_version": "__ORIOLEDB_VERSION__",
 
-[db.pooler]
-enabled = false
-# Port to use for the local connection pooler.
-port = 54329
-# Specifies when a server connection can be reused by other clients.
-# Configure one of the supported pooler modes: \`transaction\`, \`session\`.
-pool_mode = "transaction"
-# How many server connections to allow per user/database pair.
-default_pool_size = 20
-# Maximum number of client connections allowed.
-max_client_conn = 100
+    "pooler": {
+      "enabled": false,
+      // Port to use for the local connection pooler.
+      "port": 54329,
+      // Specifies when a server connection can be reused by other clients.
+      // Configure one of the supported pooler modes: \`transaction\`, \`session\`.
+      "pool_mode": "transaction",
+      // How many server connections to allow per user/database pair.
+      "default_pool_size": 20,
+      // Maximum number of client connections allowed.
+      "max_client_conn": 100
+    },
 
-# [db.vault]
-# secret_key = "env(SECRET_VALUE)"
+    // "vault": {
+    //   "secret_key": "env(SECRET_VALUE)"
+    // },
 
-[db.migrations]
-# If disabled, migrations will be skipped during a db push or reset.
-enabled = true
-# Specifies an ordered list of schema files, directories, or glob patterns that describe your database.
-# Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
-schema_paths = []
+    "migrations": {
+      // If disabled, migrations will be skipped during a db push or reset.
+      "enabled": true,
+      // Specifies an ordered list of schema files, directories, or glob patterns that describe your database.
+      // Supports paths relative to supabase directory: "./schemas/*.sql", "./database".
+      "schema_paths": []
+    },
 
-[db.seed]
-# If enabled, seeds the database after migrations during a db reset.
-enabled = true
-# Specifies an ordered list of seed files to load during db reset.
-# Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+    "seed": {
+      // If enabled, seeds the database after migrations during a db reset.
+      "enabled": true,
+      // Specifies an ordered list of seed files to load during db reset.
+      // Supports glob patterns relative to supabase directory: "./seeds/*.sql"
+      "sql_paths": ["./seed.sql"]
+    },
 
-[db.network_restrictions]
-# Enable management of network restrictions.
-enabled = false
-# List of IPv4 CIDR blocks allowed to connect to the database.
-# Defaults to allow all IPv4 connections. Set empty array to block all IPs.
-allowed_cidrs = ["0.0.0.0/0"]
-# List of IPv6 CIDR blocks allowed to connect to the database.
-# Defaults to allow all IPv6 connections. Set empty array to block all IPs.
-allowed_cidrs_v6 = ["::/0"]
+    "network_restrictions": {
+      // Enable management of network restrictions.
+      "enabled": false,
+      // List of IPv4 CIDR blocks allowed to connect to the database.
+      // Defaults to allow all IPv4 connections. Set empty array to block all IPs.
+      "allowed_cidrs": ["0.0.0.0/0"],
+      // List of IPv6 CIDR blocks allowed to connect to the database.
+      // Defaults to allow all IPv6 connections. Set empty array to block all IPs.
+      "allowed_cidrs_v6": ["::/0"]
+    },
 
-# Uncomment to reject non-secure connections to the database.
-# [db.ssl_enforcement]
-# enabled = true
+    // Uncomment to reject non-secure connections to the database.
+    // "ssl_enforcement": {
+    //   "enabled": true
+    // },
+  },
 
-[realtime]
-enabled = true
-# Bind realtime via either IPv4 or IPv6. (default: IPv4)
-# ip_version = "IPv6"
-# The maximum length in bytes of HTTP request headers. (default: 4096)
-# max_header_length = 4096
+  "realtime": {
+    "enabled": true,
+    // Bind realtime via either IPv4 or IPv6. (default: IPv4)
+    // "ip_version": "IPv6",
+    // The maximum length in bytes of HTTP request headers. (default: 4096)
+    // "max_header_length": 4096,
+  },
 
-[studio]
-enabled = true
-# Port to use for Supabase Studio.
-port = 54323
-# External URL of the API server that frontend connects to.
-api_url = "http://127.0.0.1"
-# OpenAI API Key to use for Supabase AI in the Supabase Studio.
-openai_api_key = "env(OPENAI_API_KEY)"
+  "studio": {
+    "enabled": true,
+    // Port to use for Supabase Studio.
+    "port": 54323,
+    // External URL of the API server that frontend connects to.
+    "api_url": "http://127.0.0.1",
+    // OpenAI API Key to use for Supabase AI in the Supabase Studio.
+    "openai_api_key": "env(OPENAI_API_KEY)"
+  },
 
-# Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
-# are monitored, and you can view the emails that would have been sent from the web interface.
-[local_smtp]
-enabled = true
-# Port to use for the email testing server web interface.
-port = 54324
-# Uncomment to expose additional ports for testing user applications that send emails.
-# smtp_port = 54325
-# pop3_port = 54326
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+  // Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
+  // are monitored, and you can view the emails that would have been sent from the web interface.
+  "local_smtp": {
+    "enabled": true,
+    // Port to use for the email testing server web interface.
+    "port": 54324,
+    // Uncomment to expose additional ports for testing user applications that send emails.
+    // "smtp_port": 54325,
+    // "pop3_port": 54326,
+    // "admin_email": "admin@email.com",
+    // "sender_name": "Admin",
+  },
 
-[storage]
-enabled = true
-# The maximum file size allowed (e.g. "5MB", "500KB").
-file_size_limit = "50MiB"
+  "storage": {
+    "enabled": true,
+    // The maximum file size allowed (e.g. "5MB", "500KB").
+    "file_size_limit": "50MiB",
 
-# Uncomment to configure local storage buckets
-# [storage.buckets.images]
-# public = false
-# file_size_limit = "50MiB"
-# allowed_mime_types = ["image/png", "image/jpeg"]
-# objects_path = "./images"
+    // Uncomment to configure local storage buckets
+    // "buckets": {
+    //   "images": {
+    //     "public": false,
+    //     "file_size_limit": "50MiB",
+    //     "allowed_mime_types": ["image/png", "image/jpeg"],
+    //     "objects_path": "./images"
+    //   }
+    // },
 
-# Allow connections via S3 compatible clients
-[storage.s3_protocol]
-enabled = true
+    // Allow connections via S3 compatible clients
+    "s3_protocol": {
+      "enabled": true
+    },
 
-# Image transformation API is available to Supabase Pro plan.
-# [storage.image_transformation]
-# enabled = true
+    // Image transformation API is available to Supabase Pro plan.
+    // "image_transformation": {
+    //   "enabled": true
+    // },
 
-# Store analytical data in S3 for running ETL jobs over Iceberg Catalog
-# This feature is only available on the hosted platform.
-[storage.analytics]
-enabled = false
-max_namespaces = 5
-max_tables = 10
-max_catalogs = 2
+    // Store analytical data in S3 for running ETL jobs over Iceberg Catalog
+    // This feature is only available on the hosted platform.
+    "analytics": {
+      "enabled": false,
+      "max_namespaces": 5,
+      "max_tables": 10,
+      "max_catalogs": 2,
 
-# Analytics Buckets is available to Supabase Pro plan.
-# [storage.analytics.buckets.my-warehouse]
+      // Analytics Buckets is available to Supabase Pro plan.
+      // "buckets": {
+      //   "my-warehouse": {}
+      // },
+    },
 
-# Store vector embeddings in S3 for large and durable datasets
-[storage.vector]
-enabled = true
-max_buckets = 10
-max_indexes = 5
+    // Store vector embeddings in S3 for large and durable datasets
+    "vector": {
+      "enabled": true,
+      "max_buckets": 10,
+      "max_indexes": 5,
 
-# Vector Buckets is available to Supabase Pro plan.
-# [storage.vector.buckets.documents-openai]
+      // Vector Buckets is available to Supabase Pro plan.
+      // "buckets": {
+      //   "documents-openai": {}
+      // },
+    }
+  },
 
-[auth]
-enabled = true
-# The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
-# in emails.
-site_url = "http://127.0.0.1:3000"
-# The public URL that Auth serves on. Defaults to the API external URL with \`/auth/v1\` appended.
-# external_url = ""
-# A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
-# How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
-jwt_expiry = 3600
-# JWT issuer URL. If not set, defaults to auth.external_url.
-# jwt_issuer = ""
-# Path to JWT signing key. DO NOT commit your signing keys file to git.
-# signing_keys_path = "./signing_keys.json"
-# If disabled, the refresh token will never expire.
-enable_refresh_token_rotation = true
-# Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
-# Requires enable_refresh_token_rotation = true.
-refresh_token_reuse_interval = 10
-# Allow/disallow new user signups to your project. Existing users can still sign in.
-enable_signup = true
-# Allow/disallow anonymous sign-ins to your project.
-enable_anonymous_sign_ins = false
-# Allow/disallow testing manual linking of accounts
-enable_manual_linking = false
-# Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 6
-# Passwords that do not meet the following requirements will be rejected as weak. Supported values
-# are: \`letters_digits\`, \`lower_upper_letters_digits\`, \`lower_upper_letters_digits_symbols\`
-password_requirements = ""
+  "auth": {
+    "enabled": true,
+    // The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
+    // in emails.
+    "site_url": "http://127.0.0.1:3000",
+    // The public URL that Auth serves on. Defaults to the API external URL with \`/auth/v1\` appended.
+    // "external_url": "",
+    // A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
+    "additional_redirect_urls": ["https://127.0.0.1:3000"],
+    // How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
+    "jwt_expiry": 3600,
+    // JWT issuer URL. If not set, defaults to auth.external_url.
+    // "jwt_issuer": "",
+    // Path to JWT signing key. DO NOT commit your signing keys file to git.
+    // "signing_keys_path": "./signing_keys.json",
+    // If disabled, the refresh token will never expire.
+    "enable_refresh_token_rotation": true,
+    // Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
+    // Requires enable_refresh_token_rotation = true.
+    "refresh_token_reuse_interval": 10,
+    // Allow/disallow new user signups to your project. Existing users can still sign in.
+    "enable_signup": true,
+    // Allow/disallow anonymous sign-ins to your project.
+    "enable_anonymous_sign_ins": false,
+    // Allow/disallow testing manual linking of accounts
+    "enable_manual_linking": false,
+    // Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
+    "minimum_password_length": 6,
+    // Passwords that do not meet the following requirements will be rejected as weak. Supported values
+    // are: \`letters_digits\`, \`lower_upper_letters_digits\`, \`lower_upper_letters_digits_symbols\`
+    "password_requirements": "",
 
-# Configure passkey sign-ins.
-# [auth.passkey]
-# enabled = false
+    // Configure passkey sign-ins.
+    // "passkey": {
+    //   "enabled": false
+    // },
 
-# Configure WebAuthn relying party settings (required when passkey is enabled).
-# [auth.webauthn]
-# rp_display_name = "Supabase"
-# rp_id = "localhost"
-# rp_origins = ["http://127.0.0.1:3000"]
+    // Configure WebAuthn relying party settings (required when passkey is enabled).
+    // "webauthn": {
+    //   "rp_display_name": "Supabase",
+    //   "rp_id": "localhost",
+    //   "rp_origins": ["http://127.0.0.1:3000"]
+    // },
 
-[auth.rate_limit]
-# Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
-email_sent = 2
-# Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
-sms_sent = 30
-# Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
-anonymous_users = 30
-# Number of sessions that can be refreshed in a 5 minute interval per IP address.
-token_refresh = 150
-# Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
-sign_in_sign_ups = 30
-# Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
-token_verifications = 30
-# Number of Web3 logins that can be made in a 5 minute interval per IP address.
-web3 = 30
+    "rate_limit": {
+      // Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
+      "email_sent": 2,
+      // Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
+      "sms_sent": 30,
+      // Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
+      "anonymous_users": 30,
+      // Number of sessions that can be refreshed in a 5 minute interval per IP address.
+      "token_refresh": 150,
+      // Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
+      "sign_in_sign_ups": 30,
+      // Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
+      "token_verifications": 30,
+      // Number of Web3 logins that can be made in a 5 minute interval per IP address.
+      "web3": 30
+    },
 
-# Configure one of the supported captcha providers: \`hcaptcha\`, \`turnstile\`.
-# [auth.captcha]
-# enabled = true
-# provider = "hcaptcha"
-# secret = ""
+    // Configure one of the supported captcha providers: \`hcaptcha\`, \`turnstile\`.
+    // "captcha": {
+    //   "enabled": true,
+    //   "provider": "hcaptcha",
+    //   "secret": ""
+    // },
 
-[auth.email]
-# Allow/disallow the email provider. When false, users can't sign up or sign in with email.
-# To block new signups only, set enable_signup = false under [auth] instead.
-enabled = true
-# If enabled, a user will be required to confirm any email change on both the old, and new email
-# addresses. If disabled, only the new email is required to confirm.
-double_confirm_changes = true
-# If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
-# If enabled, users will need to reauthenticate or have logged in recently to change their password.
-secure_password_change = false
-# If enabled, users will need to provide their current password to change their password, unless
-# they signed in with a one-time password, magic link, or recovery link.
-# require_current_password = true
-# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
-# Number of characters used in the email OTP.
-otp_length = 6
-# Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 3600
+    "email": {
+      // Allow/disallow the email provider. When false, users can't sign up or sign in with email.
+      // To block new signups only, set enable_signup = false under [auth] instead.
+      "enabled": true,
+      // If enabled, a user will be required to confirm any email change on both the old, and new email
+      // addresses. If disabled, only the new email is required to confirm.
+      "double_confirm_changes": true,
+      // If enabled, users need to confirm their email address before signing in.
+      "enable_confirmations": false,
+      // If enabled, users will need to reauthenticate or have logged in recently to change their password.
+      "secure_password_change": false,
+      // If enabled, users will need to provide their current password to change their password, unless
+      // they signed in with a one-time password, magic link, or recovery link.
+      // "require_current_password": true,
+      // Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
+      "max_frequency": "1s",
+      // Number of characters used in the email OTP.
+      "otp_length": 6,
+      // Number of seconds before the email OTP expires (defaults to 1 hour).
+      "otp_expiry": 3600,
 
-# Use a production-ready SMTP server
-# [auth.email.smtp]
-# enabled = true
-# host = "smtp.sendgrid.net"
-# port = 587
-# user = "apikey"
-# pass = "env(SENDGRID_API_KEY)"
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+      // Use a production-ready SMTP server
+      // "smtp": {
+      //   "enabled": true,
+      //   "host": "smtp.sendgrid.net",
+      //   "port": 587,
+      //   "user": "apikey",
+      //   "pass": "env(SENDGRID_API_KEY)",
+      //   "admin_email": "admin@email.com",
+      //   "sender_name": "Admin"
+      // },
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+      // Uncomment to customize email template
+      // "template": {
+      //   "invite": {
+      //     "subject": "You have been invited",
+      //     "content_path": "./supabase/templates/invite.html"
+      //   }
+      // },
 
-# Uncomment to customize notification email template
-# [auth.email.notification.password_changed]
-# enabled = true
-# subject = "Your password has been changed"
-# content_path = "./supabase/templates/password_changed_notification.html"
+      // Uncomment to customize notification email template
+      // "notification": {
+      //   "password_changed": {
+      //     "enabled": true,
+      //     "subject": "Your password has been changed",
+      //     "content_path": "./supabase/templates/password_changed_notification.html"
+      //   }
+      // },
+    },
 
-[auth.sms]
-# Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
-# To block new signups only, set enable_signup = false under [auth] instead.
-enabled = false
-# If enabled, users need to confirm their phone number before signing in.
-enable_confirmations = false
-# Template for sending OTP to users
-template = "Your code is {{ .Code }}"
-# Controls the minimum amount of time that must pass before sending another sms otp.
-max_frequency = "5s"
+    "sms": {
+      // Allow/disallow the phone provider. When false, users can't sign up or sign in with SMS.
+      // To block new signups only, set enable_signup = false under [auth] instead.
+      "enabled": false,
+      // If enabled, users need to confirm their phone number before signing in.
+      "enable_confirmations": false,
+      // Template for sending OTP to users
+      "template": "Your code is {{ .Code }}",
+      // Controls the minimum amount of time that must pass before sending another sms otp.
+      "max_frequency": "5s",
 
-# Use pre-defined map of phone number to OTP for testing.
-# Keys are the phone number with country code and without the + prefix.
-# [auth.sms.test_otp]
-# 14152127777 = "123456"
+      // Use pre-defined map of phone number to OTP for testing.
+      // Keys are the phone number with country code and without the + prefix.
+      // "test_otp": {
+      //   "14152127777": "123456"
+      // },
 
-# Configure logged in session timeouts.
-# [auth.sessions]
-# Force log out after the specified duration.
-# timebox = "24h"
-# Force log out if the user has been inactive longer than the specified duration.
-# inactivity_timeout = "8h"
+      // Configure one of the supported SMS providers: \`twilio\`, \`twilio_verify\`, \`messagebird\`, \`textlocal\`, \`vonage\`.
+      "twilio": {
+        "enabled": false,
+        "account_sid": "",
+        "message_service_sid": "",
+        // DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
+        "auth_token": "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
+      }
+    },
 
-# This hook runs before a new user is created and allows developers to reject the request based on the incoming user object.
-# [auth.hook.before_user_created]
-# enabled = true
-# uri = "pg-functions://postgres/auth/before-user-created-hook"
+    // Configure logged in session timeouts.
+    // "sessions": {
+    //   // Force log out after the specified duration.
+    //   "timebox": "24h",
+    //   // Force log out if the user has been inactive longer than the specified duration.
+    //   "inactivity_timeout": "8h"
+    // },
 
-# This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# [auth.hook.custom_access_token]
-# enabled = true
-# uri = "pg-functions://<database>/<schema>/<hook_name>"
+    // This hook runs before a new user is created and allows developers to reject the request based on the incoming user object.
+    // "hook": {
+    //   "before_user_created": {
+    //     "enabled": true,
+    //     "uri": "pg-functions://postgres/auth/before-user-created-hook"
+    //   },
+    //   // This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
+    //   "custom_access_token": {
+    //     "enabled": true,
+    //     "uri": "pg-functions://<database>/<schema>/<hook_name>"
+    //   }
+    // },
 
-# Configure one of the supported SMS providers: \`twilio\`, \`twilio_verify\`, \`messagebird\`, \`textlocal\`, \`vonage\`.
-[auth.sms.twilio]
-enabled = false
-account_sid = ""
-message_service_sid = ""
-# DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
-auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
+    // Multi-factor-authentication is available to Supabase Pro plan.
+    "mfa": {
+      // Control how many MFA factors can be enrolled at once per user.
+      "max_enrolled_factors": 10,
 
-# Multi-factor-authentication is available to Supabase Pro plan.
-[auth.mfa]
-# Control how many MFA factors can be enrolled at once per user.
-max_enrolled_factors = 10
+      // Control MFA via App Authenticator (TOTP)
+      "totp": {
+        "enroll_enabled": false,
+        "verify_enabled": false
+      },
 
-# Control MFA via App Authenticator (TOTP)
-[auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+      // Configure MFA via Phone Messaging
+      "phone": {
+        "enroll_enabled": false,
+        "verify_enabled": false,
+        "otp_length": 6,
+        "template": "Your code is {{ .Code }}",
+        "max_frequency": "5s"
+      },
 
-# Configure MFA via Phone Messaging
-[auth.mfa.phone]
-enroll_enabled = false
-verify_enabled = false
-otp_length = 6
-template = "Your code is {{ .Code }}"
-max_frequency = "5s"
+      // Configure MFA via WebAuthn
+      // "web_authn": {
+      //   "enroll_enabled": true,
+      //   "verify_enabled": true
+      // },
+    },
 
-# Configure MFA via WebAuthn
-# [auth.mfa.web_authn]
-# enroll_enabled = true
-# verify_enabled = true
+    // Use an external OAuth provider. The full list of providers are: \`apple\`, \`azure\`, \`bitbucket\`,
+    // \`discord\`, \`facebook\`, \`github\`, \`gitlab\`, \`google\`, \`keycloak\`, \`linkedin_oidc\`, \`notion\`, \`twitch\`,
+    // \`twitter\`, \`x\`, \`slack_oidc\`, \`spotify\`, \`workos\`, \`zoom\`.
+    "external": {
+      "apple": {
+        "enabled": false,
+        "client_id": "",
+        // DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
+        "secret": "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)",
+        // Overrides the default auth callback URL derived from auth.external_url.
+        "redirect_uri": "",
+        // Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
+        // or any other third-party OIDC providers.
+        "url": "",
+        // If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
+        "skip_nonce_check": false,
+        // If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
+        "email_optional": false
+      }
+    },
 
-# Use an external OAuth provider. The full list of providers are: \`apple\`, \`azure\`, \`bitbucket\`,
-# \`discord\`, \`facebook\`, \`github\`, \`gitlab\`, \`google\`, \`keycloak\`, \`linkedin_oidc\`, \`notion\`, \`twitch\`,
-# \`twitter\`, \`x\`, \`slack_oidc\`, \`spotify\`, \`workos\`, \`zoom\`.
-[auth.external.apple]
-enabled = false
-client_id = ""
-# DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
-secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
-# Overrides the default auth callback URL derived from auth.external_url.
-redirect_uri = ""
-# Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
-# or any other third-party OIDC providers.
-url = ""
-# If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
-skip_nonce_check = false
-# If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
-email_optional = false
+    // Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS) standard.
+    // You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
+    "web3": {
+      "solana": {
+        "enabled": false
+      },
 
-# Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS) standard.
-# You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
-[auth.web3.solana]
-enabled = false
+      // Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
+      // "ethereum": {
+      //   "enabled": true
+      // },
+    },
 
-# Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
-# [auth.web3.ethereum]
-# enabled = true
+    // Use Firebase Auth as a third-party provider alongside Supabase Auth.
+    "third_party": {
+      "firebase": {
+        "enabled": false,
+        // "project_id": "my-firebase-project",
+      },
 
-# Use Firebase Auth as a third-party provider alongside Supabase Auth.
-[auth.third_party.firebase]
-enabled = false
-# project_id = "my-firebase-project"
+      // Use Auth0 as a third-party provider alongside Supabase Auth.
+      "auth0": {
+        "enabled": false,
+        // "tenant": "my-auth0-tenant",
+        // "tenant_region": "us",
+      },
 
-# Use Auth0 as a third-party provider alongside Supabase Auth.
-[auth.third_party.auth0]
-enabled = false
-# tenant = "my-auth0-tenant"
-# tenant_region = "us"
+      // Use AWS Cognito (Amplify) as a third-party provider alongside Supabase Auth.
+      "aws_cognito": {
+        "enabled": false,
+        // "user_pool_id": "my-user-pool-id",
+        // "user_pool_region": "us-east-1",
+      },
 
-# Use AWS Cognito (Amplify) as a third-party provider alongside Supabase Auth.
-[auth.third_party.aws_cognito]
-enabled = false
-# user_pool_id = "my-user-pool-id"
-# user_pool_region = "us-east-1"
+      // Use Clerk as a third-party provider alongside Supabase Auth.
+      "clerk": {
+        "enabled": false,
+        // Obtain from https://clerk.com/setup/supabase
+        // "domain": "example.clerk.accounts.dev",
+      }
+    },
 
-# Use Clerk as a third-party provider alongside Supabase Auth.
-[auth.third_party.clerk]
-enabled = false
-# Obtain from https://clerk.com/setup/supabase
-# domain = "example.clerk.accounts.dev"
+    // OAuth server configuration
+    "oauth_server": {
+      // Enable OAuth server functionality
+      "enabled": false,
+      // Path for OAuth consent flow UI
+      "authorization_url_path": "/oauth/consent",
+      // Allow dynamic client registration
+      "allow_dynamic_registration": false
+    }
+  },
 
-# OAuth server configuration
-[auth.oauth_server]
-# Enable OAuth server functionality
-enabled = false
-# Path for OAuth consent flow UI
-authorization_url_path = "/oauth/consent"
-# Allow dynamic client registration
-allow_dynamic_registration = false
+  "edge_runtime": {
+    "enabled": true,
+    // Supported request policies: \`oneshot\`, \`per_worker\`.
+    // \`per_worker\` (default) — enables hot reload during local development.
+    // \`oneshot\` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
+    "policy": "per_worker",
+    // Port to attach the Chrome inspector for debugging edge functions.
+    "inspector_port": 8083,
+    // The Deno major version to use.
+    "deno_version": 2,
 
-[edge_runtime]
-enabled = true
-# Supported request policies: \`oneshot\`, \`per_worker\`.
-# \`per_worker\` (default) — enables hot reload during local development.
-# \`oneshot\` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).
-policy = "per_worker"
-# Port to attach the Chrome inspector for debugging edge functions.
-inspector_port = 8083
-# The Deno major version to use.
-deno_version = 2
+    // "secrets": {
+    //   "secret_key": "env(SECRET_VALUE)"
+    // },
+  },
 
-# [edge_runtime.secrets]
-# secret_key = "env(SECRET_VALUE)"
+  "analytics": {
+    "enabled": true,
+    "port": 54327,
+    // Configure one of the supported backends: \`postgres\`, \`bigquery\`.
+    "backend": "postgres"
+  },
 
-[analytics]
-enabled = true
-port = 54327
-# Configure one of the supported backends: \`postgres\`, \`bigquery\`.
-backend = "postgres"
+  // Experimental features may be deprecated any time
+  "experimental": {
+    // Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
+    "s3_host": "env(S3_HOST)",
+    // Configures S3 bucket region, eg. us-east-1
+    "s3_region": "env(S3_REGION)",
+    // Configures AWS_ACCESS_KEY_ID for S3 bucket
+    "s3_access_key": "env(S3_ACCESS_KEY)",
+    // Configures AWS_SECRET_ACCESS_KEY for S3 bucket
+    "s3_secret_key": "env(S3_SECRET_KEY)",
 
-# Experimental features may be deprecated any time
-[experimental]
-# Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
-s3_host = "env(S3_HOST)"
-# Configures S3 bucket region, eg. us-east-1
-s3_region = "env(S3_REGION)"
-# Configures AWS_ACCESS_KEY_ID for S3 bucket
-s3_access_key = "env(S3_ACCESS_KEY)"
-# Configures AWS_SECRET_ACCESS_KEY for S3 bucket
-s3_secret_key = "env(S3_SECRET_KEY)"
-
-# pg-delta is the schema diff engine for db diff / db pull.
-# Set enabled = false to fall back to the legacy migra engine.
-[experimental.pgdelta]
-enabled = true
-# Directory under \`supabase/\` where declarative files are written.
-# declarative_schema_path = "./schemas"
-# JSON string passed through to pg-delta SQL formatting. When omitted, SQL is
-# formatted with uppercase keywords, indent 2, max width 180, trailing commas,
-# and column/key alignment. Set to "null" to emit raw, unformatted SQL.
-# format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":180,\\"commaStyle\\":\\"trailing\\"}"
+    // pg-delta is the schema diff engine for db diff / db pull.
+    // Set enabled = false to fall back to the legacy migra engine.
+    "pgdelta": {
+      "enabled": true,
+      // Directory under \`supabase/\` where declarative files are written.
+      // "declarative_schema_path": "./schemas",
+      // JSON string passed through to pg-delta SQL formatting. When omitted, SQL is
+      // formatted with uppercase keywords, indent 2, max width 180, trailing commas,
+      // and column/key alignment. Set to "null" to emit raw, unformatted SQL.
+      // "format_options": "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":180,\\"commaStyle\\":\\"trailing\\"}",
+    }
+  }
+}
 `;
 
 export const INIT_GITIGNORE_TEMPLATE = `# Supabase
@@ -499,48 +568,54 @@ const initOrioledbVersion = (): string =>
     .toSorted(postgresVersionCompare)
     .at(-1) ?? "";
 
-const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
-stack = true
+const EXPERIMENTAL_STACK_INIT_FLAG = `    // Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
+    "stack": true,
 `;
 
-// Default ports omitted so the stack is not pinned to Docker-era values.
+// Default ports omitted so the stack is not pinned to Docker-era values. Each block is a
+// non-final member, so removing it leaves no dangling comma.
 const STACK_INIT_OMITTED_PORT_BLOCKS = [
-  `# Port to use for the API URL.
-port = 54321
+  `    // Port to use for the API URL.
+    "port": 54321,
 `,
-  `# Port to use for the local database URL.
-port = 54322
+  `    // Port to use for the local database URL.
+    "port": 54322,
 `,
-  `# Port used by db diff command to initialize the shadow database.
-shadow_port = 54320
+  `    // Port used by db diff command to initialize the shadow database.
+    "shadow_port": 54320,
 `,
-  `# Port to use for the local connection pooler.
-port = 54329
+  `      // Port to use for the local connection pooler.
+      "port": 54329,
 `,
-  `# Port to use for Supabase Studio.
-port = 54323
+  `    // Port to use for Supabase Studio.
+    "port": 54323,
 `,
-  `# Port to use for the email testing server web interface.
-port = 54324
+  `    // Port to use for the email testing server web interface.
+    "port": 54324,
 `,
-  `# Port to attach the Chrome inspector for debugging edge functions.
-inspector_port = 8083
+  `    // Port to attach the Chrome inspector for debugging edge functions.
+    "inspector_port": 8083,
 `,
-  `port = 54327
+  `    "port": 54327,
 `,
 ] as const;
 
+// JSONC allows a trailing comma, so commenting out the final member (`openai_api_key`) is safe.
 function applyExperimentalStackInitTemplate(source: string): string {
-  let next = source.replace("[experimental]\n", `[experimental]\n${EXPERIMENTAL_STACK_INIT_FLAG}`);
+  let next = source.replace(
+    '  "experimental": {\n',
+    `  "experimental": {\n${EXPERIMENTAL_STACK_INIT_FLAG}`,
+  );
   for (const block of STACK_INIT_OMITTED_PORT_BLOCKS) {
     next = next.replace(block, "");
   }
   return next.replace(
-    /^(openai_api_key|s3_host|s3_region|s3_access_key|s3_secret_key) = /gm,
-    "# $&",
+    /^(\s*)("(?:openai_api_key|s3_host|s3_region|s3_access_key|s3_secret_key)": )/gm,
+    "$1// $2",
   );
 }
 
+/** Renders the `supabase init` config as JSONC. */
 export function renderCliConfigTemplate(
   projectId: string,
   useOrioledb: boolean,
