@@ -7,6 +7,7 @@ import { sparkDbQueryCommand } from "./db/query/query.command.ts";
 import { sparkDbResetCommand } from "./db/reset/reset.command.ts";
 import { sparkGenTypesCommand } from "./gen/types/types.command.ts";
 import { sparkLinkCommand } from "./link/link.command.ts";
+import { sparkMigrationFetchCommand } from "./migration/fetch/fetch.command.ts";
 import { sparkMigrationListCommand } from "./migration/list/list.command.ts";
 
 const sparkDbCommand = Command.make("db").pipe(
@@ -25,7 +26,7 @@ const sparkMigrationCommand = Command.make("migration").pipe(
   Command.withDescription("Manage database migration scripts."),
   Command.withShortDescription("Manage database migration scripts"),
   Command.withAlias("migrations"),
-  Command.withSubcommands([sparkMigrationListCommand]),
+  Command.withSubcommands([sparkMigrationFetchCommand, sparkMigrationListCommand]),
 );
 
 const sparkGenCommand = Command.make("gen").pipe(

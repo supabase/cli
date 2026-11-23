@@ -16,10 +16,8 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { HttpClient } from "effect/http";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { makeSparkAdmin } from "@supabase/stack/spark";
 import { afterAll, describe, expect, test } from "vitest";
 import {
   createTempHome,
@@ -558,7 +556,7 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
   );
 
   step(
-    "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url",
+    "MCP: list_tables, apply_migration, execute_sql, list_migrations, generate_typescript_types, get_project_url; migration fetch writes the applied migration's file",
     async () => {
       const mcpCheck = await readText(join(exampleDir, "mcp.check.mjs"));
       expect(mcpCheck, "the MCP check does not start the MCP server from MCP_CLI").toContain(
@@ -580,20 +578,22 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
         await migrationFiles("_add_labels.sql"),
         "the Management API wrote a migration file",
       ).toHaveLength(0);
-      // The Spark command tree has no `migration fetch`: the test writes the applied migration as it would.
-      const history = await hostRuntime.runPromise(
-        Effect.flatMap(
-          HttpClient.HttpClient,
-          (client) => makeSparkAdmin(client, API, serviceKey).migrations,
-        ).pipe(Effect.provide(FetchHttpClient.layer)),
-      );
-      const labels = history.find((migration) => migration.name === "add_labels");
-      if (labels?.statements === null || labels?.statements === undefined)
-        throw new Error("apply_migration recorded no add_labels migration in Spark's history");
-      await writeText(
-        join(projectDir, "supabase", "migrations", `${labels.version}_add_labels.sql`),
-        `${labels.statements.join(";\n")};\n`,
-      );
+      expect(
+        (await runFails(["db", "push"])).log,
+        "db push accepted a history with a version that has no local file",
+      ).toContain("Remote migration versions not found in local migrations directory");
+      await run(["migration", "fetch", "--yes"]);
+      const fetched = await migrationFiles("_add_labels.sql");
+      expect(fetched, "migration fetch wrote no add_labels migration").toHaveLength(1);
+      expect(
+        await readText(join(projectDir, "supabase", "migrations", fetched[0] ?? "")),
+        "the fetched migration is not what apply_migration ran",
+      ).toMatch(/^create table public\.labels \(.*;\n$/s);
+      expect(
+        await readText(join(projectDir, "supabase", "migrations", "20260101000000_todos.sql")),
+        "migration fetch changed a migration that was pushed from its local file",
+      ).toBe(await readText(join(exampleDir, "todos.sql")));
+      expect((await run(["db", "push"])).log).toContain("Remote database is up to date");
     },
   );
 
@@ -929,7 +929,7 @@ grant all on table "public"."projects" to "authenticated";
   );
 
   step(
-    "linked project: link, db query --read-only (a write asks for --yes), migration list, gen types, db diff and a confirmed db push through the Management API; unreachable, only the local target answers",
+    "linked project: link, db query --read-only (a write asks for --yes), migration list, gen types, db diff, a confirmed db push and migration fetch through the Management API; unreachable, only the local target answers",
     async () => {
       // The linked project's path: the Management API, served by the test's stand-in.
       const profilePath = join(workDir, "spark-profile.yaml");
@@ -992,6 +992,13 @@ grant all on table "public"."projects" to "authenticated";
         await restStatus("remote_probe?select=id"),
         "db push --remote applied no remote_probe table",
       ).toBe(200);
+
+      await removePath(migrationsPath("20990101000002_remote_probe.sql"));
+      await run(["migration", "fetch", "--remote", "--yes"]);
+      expect(
+        await readText(migrationsPath("20990101000002_remote_probe.sql")),
+        "migration fetch --remote did not write the pushed migration back",
+      ).toBe("create table public.remote_probe (id bigint primary key);\n");
 
       // With the profile pointing nowhere the linked path fails and the local one still answers: they do not share a route.
       const deadProfilePath = join(workDir, "dead-profile.yaml");
