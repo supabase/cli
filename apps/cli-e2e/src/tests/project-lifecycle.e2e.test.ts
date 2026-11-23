@@ -40,24 +40,30 @@ describe("init", () => {
       ),
   );
 
-  testBehaviour("replaces config.toml with config.jsonc under --force", ({ run, workspace, signal }) =>
-    runE2e(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* fs.makeDirectory(path.join(workspace.path, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          path.join(workspace.path, "supabase", "config.toml"),
-          "# existing config\n",
-        );
-        const result = yield* run(["init", "--force"]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("Finished supabase init");
-        expect(yield* fs.exists(path.join(workspace.path, "supabase", "config.jsonc"))).toBe(true);
-        expect(yield* fs.exists(path.join(workspace.path, "supabase", "config.toml"))).toBe(false);
-      }),
-      signal,
-    ),
+  testBehaviour(
+    "replaces config.toml with config.jsonc under --force",
+    ({ run, workspace, signal }) =>
+      runE2e(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(workspace.path, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(workspace.path, "supabase", "config.toml"),
+            "# existing config\n",
+          );
+          const result = yield* run(["init", "--force"]);
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).toContain("Finished supabase init");
+          expect(yield* fs.exists(path.join(workspace.path, "supabase", "config.jsonc"))).toBe(
+            true,
+          );
+          expect(yield* fs.exists(path.join(workspace.path, "supabase", "config.toml"))).toBe(
+            false,
+          );
+        }),
+        signal,
+      ),
   );
 
   testBehaviour(
