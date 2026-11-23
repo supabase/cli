@@ -25,7 +25,7 @@ FROM supabase/studio:2026.11.23-sha-4a73166 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
-FROM supabase/edge-runtime:v1.79.3 AS edgeruntime
+FROM supabase/edge-runtime:v1.79.4 AS edgeruntime
 
 FROM timberio/vector:0.58.0-alpine AS vector
 
