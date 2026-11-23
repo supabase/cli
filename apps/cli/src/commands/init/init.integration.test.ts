@@ -150,14 +150,14 @@ describe("init", () => {
       expect(parseJsonc(content)).toMatchObject({
         $schema: "https://supabase.com/schemas/config/v1.json",
         db: { major_version: 17 },
+        api: { port: 54321 },
       });
-      expect(content).toContain('"port": 54321');
       expect(content).not.toContain('"stack": true');
-      expect(
-        Exit.isFailure(yield* Effect.exit(readTextFile(tempDir, "supabase", "config.toml"))),
-      ).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fs.exists(path.join(tempDir, "supabase", "config.toml"))).toBe(false);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect.each([
@@ -280,6 +280,37 @@ describe("init", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.effect(
+    "--force replaces a symlinked config.jsonc without writing through to its target",
+    () => {
+      const tempDir = tempRoot.current;
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const supabaseDir = path.join(tempDir, "supabase");
+        const targetPath = path.join(tempDir, "shared-config.jsonc");
+        const configPath = path.join(supabaseDir, "config.jsonc");
+        yield* fs.makeDirectory(supabaseDir, { recursive: true });
+        yield* fs.writeFileString(targetPath, "// shared\n{}\n");
+        yield* fs.symlink(targetPath, configPath);
+        const { layer } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false, force: true }).pipe(
+          Effect.provide(layer),
+        );
+
+        expect(yield* fs.readLink(configPath).pipe(Effect.exit, Effect.map(Exit.isFailure))).toBe(
+          true,
+        );
+        expect(parseJsonc(yield* fs.readFileString(configPath))).toMatchObject({
+          db: { major_version: 17 },
+        });
+        expect(yield* fs.readFileString(targetPath)).toBe("// shared\n{}\n");
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
   it.effect("--force keeps config.json when config.jsonc cannot be written", () => {
     const tempDir = tempRoot.current;
 
@@ -290,7 +321,7 @@ describe("init", () => {
       yield* fs.makeDirectory(supabaseDir, { recursive: true });
       yield* fs.writeFileString(path.join(supabaseDir, "config.json"), "{}\n");
       yield* fs.writeFileString(path.join(supabaseDir, "config.jsonc"), "");
-      yield* fs.chmod(path.join(supabaseDir, "config.jsonc"), 0o444);
+      yield* fs.chmod(supabaseDir, 0o555);
       const { layer } = setup(tempDir);
 
       const exit = yield* Effect.exit(
@@ -302,7 +333,7 @@ describe("init", () => {
           withVscodeSettings: false,
           withIntellijSettings: false,
         }).pipe(Effect.provide(layer)),
-      );
+      ).pipe(Effect.ensuring(fs.chmod(supabaseDir, 0o755).pipe(Effect.ignore)));
 
       expect(Exit.isFailure(exit)).toBe(true);
       expect(yield* fs.readFileString(path.join(supabaseDir, "config.json"))).toBe("{}\n");
@@ -596,8 +627,9 @@ describe("init", () => {
       });
     });
 
-    it.effect("prints neither the update line nor the warning in json output mode", () => {
+    it.effect("leaves settings.json byte-identical in json output mode", () => {
       const tempDir = tempRoot.current;
+      const broken = `{ "a": }`;
 
       return Effect.gen(function* () {
         const settingsPath = yield* writeSettings(tempDir, SETTINGS_WITH_COMMENT);
@@ -605,15 +637,14 @@ describe("init", () => {
 
         yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
-        expect(parseJsonc(yield* readTextFile(settingsPath))).toMatchObject({
-          [TRUST_KEY]: { "https://supabase.com/schemas/": true },
-        });
+        expect(yield* readTextFile(settingsPath)).toBe(SETTINGS_WITH_COMMENT);
         expect(out.stdoutText).not.toContain("Updated .vscode/settings.json");
 
-        yield* writeSettings(tempDir, `{ "a": }`);
+        yield* writeSettings(tempDir, broken);
         yield* init({ ...BASE_INIT_FLAGS, interactive: false, force: true }).pipe(
           Effect.provide(layer),
         );
+        expect(yield* readTextFile(settingsPath)).toBe(broken);
         expect(out.stderrText).not.toContain("Warning");
       });
     });

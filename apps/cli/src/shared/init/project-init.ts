@@ -10,7 +10,7 @@ import {
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
-  renderCliConfigJsoncTemplate,
+  renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
 
@@ -160,8 +160,13 @@ export const trustSupabaseSchemaDomain = Effect.fnUntraced(function* (
   return true;
 });
 
-const trustSchemaDomainAfterInit = Effect.fnUntraced(function* (cwd: string) {
+// Text mode only: structured output has no field to disclose a settings edit in.
+const trustSchemaDomainAfterInit = Effect.fn("Init.trustSchemaDomain")(function* (cwd: string) {
   const output = yield* Output;
+  if (output.format !== "text") {
+    yield* Effect.annotateCurrentSpan("init.vscode_trust", "skipped");
+    return;
+  }
   const result = yield* trustSupabaseSchemaDomain(cwd).pipe(
     Effect.match({
       onSuccess: (updated) => ({ updated, failure: undefined }),
@@ -171,9 +176,10 @@ const trustSchemaDomainAfterInit = Effect.fnUntraced(function* (cwd: string) {
       }),
     }),
   );
-  if (output.format !== "text") {
-    return;
-  }
+  yield* Effect.annotateCurrentSpan(
+    "init.vscode_trust",
+    result.failure !== undefined ? "failed" : result.updated ? "updated" : "unchanged",
+  );
   if (result.updated) {
     yield* output.raw(`Updated .vscode/settings.json (trusts ${SCHEMA_TRUST_DOMAIN}).\n`);
   }
@@ -318,13 +324,11 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
 
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
+  // Replaces a symlinked config.jsonc instead of writing through to its target.
+  yield* fs.remove(configJsoncPath, { force: true });
   yield* fs.writeFileString(
     configJsoncPath,
-    yield* renderCliConfigJsoncTemplate(
-      projectId,
-      options.useOrioledb,
-      options.experimentalStack === true,
-    ),
+    renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
     { mode: INIT_FILE_MODE },
   );
   for (const staleConfigPath of [configJsonPath, configTomlPath]) {

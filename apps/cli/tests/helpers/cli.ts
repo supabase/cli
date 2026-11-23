@@ -26,6 +26,7 @@ import {
   registerTempHome,
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
+import { activeStackPortPaths, setConfigValues } from "./jsonc-config.ts";
 
 export { stripAnsi } from "./ansi.ts";
 
@@ -361,22 +362,19 @@ const overrideStackPortsEffect = (projectDir: string) =>
     /* Decoded keeping a leading byte order mark, like Node's `Buffer#toString`. */
     const config = chunkDecoder.decode(yield* fs.readFile(configPath));
     const assigned = new Set<number>();
-    const lines: string[] = [];
-    for (const line of config.split("\n")) {
-      const match =
-        /^(\s*"(?:port|smtp_port|pop3_port|inspector_port|shadow_port)": )\d+(,?)$/.exec(line);
-      if (match === null) {
-        lines.push(line);
-        continue;
-      }
+    const edits: Array<{ path: ReadonlyArray<string>; value: number }> = [];
+    for (const path of activeStackPortPaths(config)) {
       let port = yield* pickFreePort;
       while (assigned.has(port)) {
         port = yield* pickFreePort;
       }
       assigned.add(port);
-      lines.push(`${match[1]}${port}${match[2]}`);
+      edits.push({ path, value: port });
     }
-    yield* fs.writeFileString(configPath, lines.join("\n"));
+    if (edits.length === 0) {
+      throw new Error(`no active stack ports found in ${configPath}`);
+    }
+    yield* fs.writeFileString(configPath, setConfigValues(config, edits));
   });
 
 /**

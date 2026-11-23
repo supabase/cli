@@ -9,6 +9,7 @@ import {
   parseJsonc,
   type ConfigEdit,
 } from "@supabase/config/internal";
+import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
 import * as SmolToml from "smol-toml";
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { cliConfigDocumentOnlyPaths } from "../../config/cli-config-keys.ts";
@@ -19,13 +20,16 @@ import {
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SCHEMA_TRUST_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
-  renderCliConfigJsoncTemplate,
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
 }
+
+const renderTomlTemplate = (projectId: string, useOrioledb: boolean, experimentalStack = false) =>
+  convertCliConfigJsoncToToml(renderCliConfigTemplate(projectId, useOrioledb, experimentalStack))
+    .text;
 
 // Vendored copies of the init-template scaffold files. Dotted file
 // names are de-dotted so git/tooling don't interpret the fixtures themselves.
@@ -55,8 +59,9 @@ const renderExpectedInitOutput = readVendoredTemplate("config.toml").pipe(
       // The version is catalog data, checked by the pinned-version test below.
       .replace(
         "{{ .Db.OrioleDBVersion }}",
-        /^orioledb_version = "(.*)"$/m.exec(renderCliConfigTemplate("demo-project", true))?.[1] ??
-          "",
+        /^\s*"orioledb_version": "(.*)",$/m.exec(
+          renderCliConfigTemplate("demo-project", true),
+        )?.[1] ?? "",
       )
       // supabase init always opts new projects into pg-delta; the template
       // renders this from a flag only set on the init path.
@@ -142,30 +147,38 @@ const renderExpectedNativeEject = renderExpectedInitOutput.pipe(
 );
 
 describe("project init templates", () => {
-  it.effect.each([
-    { label: "default", useOrioledb: false, experimentalStack: false },
-    { label: "orioledb", useOrioledb: true, experimentalStack: false },
-    { label: "experimental stack", useOrioledb: false, experimentalStack: true },
-    { label: "experimental stack with orioledb", useOrioledb: true, experimentalStack: true },
-  ])(
-    "renders the $label JSONC scaffold with the same values as the TOML scaffold",
-    ({ useOrioledb, experimentalStack }) =>
-      Effect.gen(function* () {
-        const jsonc = yield* renderCliConfigJsoncTemplate("demo", useOrioledb, experimentalStack);
+  it("renders JSONC that parses and starts with the schema line", () => {
+    const rendered = renderCliConfigTemplate("demo", false);
 
-        expect(jsonc.startsWith(`{\n  "$schema": "${CLI_CONFIG_SCHEMA_URL}",`)).toBe(true);
-        const { $schema, ...values } = parseJsonc(jsonc) as Record<string, unknown>;
-        expect($schema).toBe(CLI_CONFIG_SCHEMA_URL);
-        expect(values).toEqual(
-          SmolToml.parse(renderCliConfigTemplate("demo", useOrioledb, experimentalStack)),
-        );
-      }),
-  );
+    expect(rendered.startsWith(`{\n  "$schema": "${CLI_CONFIG_SCHEMA_URL}",\n`)).toBe(true);
+    expect(parseJsonc(rendered)).toMatchObject({
+      $schema: CLI_CONFIG_SCHEMA_URL,
+      project_id: "demo",
+      db: { orioledb_version: "" },
+    });
+  });
 
-  it.effect("renders config.toml with the native notification content_path base", () =>
+  it("sets db.orioledb_version when orioledb is requested", () => {
+    const parsed = parseJsonc(renderCliConfigTemplate("demo", true)) as {
+      db: { orioledb_version: string };
+    };
+
+    expect(parsed.db.orioledb_version).not.toBe("");
+  });
+
+  it.effect("renders every line of the native scaffold, with the native content_path base", () =>
     Effect.gen(function* () {
-      expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(
-        yield* renderExpectedNativeEject,
+      // JSONC nesting reorders commented sibling blocks and adds parent-only headers, so
+      // compare the non-blank lines as a multiset rather than byte for byte.
+      const parentOnlyHeaders = new Set(["[auth.external]", "[auth.web3]", "[auth.third_party]"]);
+      const lines = (text: string) =>
+        normalizeNewlines(text)
+          .split("\n")
+          .filter((line) => line !== "" && !parentOnlyHeaders.has(line))
+          .toSorted();
+
+      expect(lines(renderTomlTemplate("demo-project", true))).toEqual(
+        lines(yield* renderExpectedNativeEject),
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -181,7 +194,7 @@ describe("project init templates", () => {
   );
 
   it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw template escapes", () => {
-    const rendered = renderCliConfigTemplate("demo-project", false);
+    const rendered = renderTomlTemplate("demo-project", false);
     const otpTemplateLines = rendered.split("\n").filter((line) => line.startsWith("template = "));
     expect(otpTemplateLines).toEqual([
       'template = "Your code is {{ .Code }}"',
@@ -193,7 +206,7 @@ describe("project init templates", () => {
     const pinned = orioledbVersions().filter((version) => postgresMajor(version) === "17");
     for (const experimentalStack of [false, true]) {
       const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
-      const version = /^orioledb_version = "(.+)"$/m.exec(rendered)?.[1] ?? "";
+      const version = /^\s*"orioledb_version": "(.+)",$/m.exec(rendered)?.[1] ?? "";
       expect(pinned).toContain(version);
       for (const other of pinned)
         expect(postgresVersionCompare(version, other)).toBeGreaterThanOrEqual(0);
@@ -208,7 +221,7 @@ describe("project init templates", () => {
       yield* fs.makeDirectory(path.join(cwd, "supabase"));
       yield* fs.writeFileString(
         path.join(cwd, "supabase", "config.toml"),
-        renderCliConfigTemplate("demo-project", false),
+        renderTomlTemplate("demo-project", false),
       );
       const loaded = yield* loadCliConfig(cwd, { cliCompat: true });
 
@@ -224,7 +237,7 @@ describe("project init templates", () => {
     for (const experimentalStack of [false, true]) {
       for (const useOrioledb of [false, true]) {
         const rendered = renderCliConfigTemplate("demo-project", useOrioledb, experimentalStack);
-        expect(findUnknownCliConfigKeys(SmolToml.parse(rendered))).toEqual([]);
+        expect(findUnknownCliConfigKeys(parseJsonc(rendered))).toEqual([]);
       }
     }
   });
@@ -239,7 +252,7 @@ describe("project init templates", () => {
       );
     };
     for (const experimentalStack of [false, true]) {
-      const rendered = renderCliConfigTemplate("demo-project", false, experimentalStack);
+      const rendered = renderTomlTemplate("demo-project", false, experimentalStack);
       const uncommented = rendered
         .split("\n")
         .map((line) => uncommentable.exec(line)?.[1] ?? line)
@@ -256,25 +269,55 @@ describe("project init templates", () => {
   });
 
   it("enables pg-delta by default in the generated config", () => {
-    const rendered = renderCliConfigTemplate("demo-project", false);
-    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
+    const parsed = parseJsonc(renderCliConfigTemplate("demo-project", false)) as {
+      experimental: { pgdelta: { enabled: boolean }; stack?: boolean };
+    };
+
+    expect(parsed.experimental.pgdelta.enabled).toBe(true);
+    expect(parsed.experimental.stack).toBeUndefined();
   });
 
   it("opts the experimental stack template into stack=true without default listener ports", () => {
     const rendered = renderCliConfigTemplate("demo-project", false, true);
+    const parsed = parseJsonc(rendered) as {
+      api: Record<string, unknown>;
+      db: Record<string, unknown> & { pooler: Record<string, unknown> };
+      studio: Record<string, unknown>;
+      local_smtp: Record<string, unknown>;
+      edge_runtime: Record<string, unknown>;
+      analytics: Record<string, unknown>;
+      experimental: Record<string, unknown> & { pgdelta: { enabled: boolean } };
+    };
+
     expect(rendered).toMatch(
-      /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
+      /"experimental": \{\n    \/\/ Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\n    "stack": true,\n/,
     );
-    expect(rendered).toContain("# smtp_port = 54325");
-    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
-    expect(rendered).not.toMatch(/^port = 54321$/m);
-    expect(rendered).not.toMatch(/^port = 54322$/m);
-    expect(rendered).not.toMatch(/^shadow_port = 54320$/m);
-    expect(rendered).not.toMatch(/^port = 54329$/m);
-    expect(rendered).not.toMatch(/^port = 54323$/m);
-    expect(rendered).not.toMatch(/^port = 54324$/m);
-    expect(rendered).not.toMatch(/^inspector_port = 8083$/m);
-    expect(rendered).not.toMatch(/^port = 54327$/m);
+    expect(parsed.experimental.stack).toBe(true);
+    expect(parsed.experimental.pgdelta.enabled).toBe(true);
+    expect(rendered).toContain('// "smtp_port": 54325');
+    expect(parsed.api).not.toHaveProperty("port");
+    expect(parsed.db).not.toHaveProperty("port");
+    expect(parsed.db).not.toHaveProperty("shadow_port");
+    expect(parsed.db.pooler).not.toHaveProperty("port");
+    expect(parsed.studio).not.toHaveProperty("port");
+    expect(parsed.local_smtp).not.toHaveProperty("port");
+    expect(parsed.edge_runtime).not.toHaveProperty("inspector_port");
+    expect(parsed.analytics).not.toHaveProperty("port");
+  });
+
+  it("comments out the secrets and S3 settings in the experimental stack template", () => {
+    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    const parsed = parseJsonc(rendered) as {
+      studio: Record<string, unknown>;
+      experimental: Record<string, unknown>;
+    };
+
+    for (const key of ["s3_host", "s3_region", "s3_access_key", "s3_secret_key"]) {
+      expect(parsed.experimental).not.toHaveProperty(key);
+      expect(rendered).toContain(`// "${key}": `);
+    }
+    expect(parsed.studio).not.toHaveProperty("openai_api_key");
+    expect(rendered).toContain('// "openai_api_key": ');
   });
 
   it.effect("matches the .gitignore scaffold", () =>
@@ -394,7 +437,7 @@ function diffLines(a: ReadonlyArray<string>, b: ReadonlyArray<string>): Readonly
 
 describe("config pull surgical editor round trip over the rendered scaffold", () => {
   it("applies a replace, an insert into an existing table, and a new [remotes.staging] block, touching only those lines", () => {
-    const source = renderCliConfigTemplate("demo", false);
+    const source = renderTomlTemplate("demo", false);
     const edits: ReadonlyArray<ConfigEdit> = [
       // Replace: an already-declared scalar.
       { path: ["api", "max_rows"], value: 500 },

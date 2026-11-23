@@ -6,7 +6,7 @@ A `supabase/config.jsonc` file is created in your current working directory. Thi
 
 > You may override the directory path by specifying the `SUPABASE_WORKDIR` environment variable or `--workdir` flag.
 
-In addition to `config.jsonc`, the `supabase` directory may also contain other Supabase objects, such as `migrations`, `functions`, `tests`, etc.
+Along with `config.jsonc`, the `supabase` directory can contain directories such as `migrations`, `functions`, and `tests`.
 
 With `--use-orioledb`, the command writes the OrioleDB version to `db.orioledb_version` in `supabase/config.jsonc`; `--experimental` is not required.
 

@@ -20,6 +20,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTempHome, runSupabase, type TempHome } from "../../../tests/helpers/cli.ts";
+import { activeStackPortPaths, setConfigValues } from "../../../tests/helpers/jsonc-config.ts";
 
 const CLEANUP_TIMEOUT_MS = 120_000;
 
@@ -33,8 +34,6 @@ const STACK_PORT_ATTEMPT_COUNT = 4;
 const STACK_PORT_BLOCK_SIZE = 32;
 const STACK_PORT_BASE =
   49152 + ((process.pid * 53) % (16384 - STACK_PORT_ATTEMPT_COUNT * STACK_PORT_BLOCK_SIZE));
-const STACK_PORT_ASSIGNMENT =
-  /^(\s*"(?:port|smtp_port|pop3_port|inspector_port|shadow_port)": )\d+(,?)$/u;
 
 /**
  * `db diff`'s shadow port. Docker has to bind it, so a test cannot truly reserve it up front —
@@ -67,17 +66,21 @@ const assignStackPorts = Effect.fnUntraced(function* (projectDir: string, attemp
   const path = yield* Path.Path;
   const configPath = path.join(projectDir, "supabase", "config.jsonc");
   const config = yield* fs.readFileString(configPath);
-  let index = 0;
   const base = STACK_PORT_BASE + attempt * STACK_PORT_BLOCK_SIZE;
-  const lines = config.split("\n").map((line) => {
-    const match = STACK_PORT_ASSIGNMENT.exec(line);
-    if (match === null) return line;
-    return `${match[1]}${base + index++}${match[2]}`;
-  });
-  yield* fs.writeFileString(configPath, lines.join("\n"));
+  const portPaths = activeStackPortPaths(config);
+  if (portPaths.length === 0) {
+    throw new Error(`no active stack ports found in ${configPath}`);
+  }
+  yield* fs.writeFileString(
+    configPath,
+    setConfigValues(
+      config,
+      portPaths.map((portPath, index) => ({ path: portPath, value: base + index })),
+    ),
+  );
   return Array.from(
     { length: SHADOW_PORT_CANDIDATE_COUNT },
-    (_, shadowIndex) => base + index + shadowIndex,
+    (_, shadowIndex) => base + portPaths.length + shadowIndex,
   );
 });
 
