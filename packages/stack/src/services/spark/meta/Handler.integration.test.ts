@@ -136,12 +136,6 @@ const fakeSpark = (
         ? { message: "CREATE FUNCTION is not supported" }
         : {}),
     }));
-  const sqlOf = (body: unknown): unknown => {
-    const files: unknown = Reflect.get(Object(body), "files");
-    return Array.isArray(files)
-      ? Reflect.get(Object(files[0]), "sql")
-      : Reflect.get(Object(body), "sql");
-  };
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
@@ -168,7 +162,7 @@ const fakeSpark = (
             return respond(reply([{ version: "20260101000000", name: "todos", statements: null }]));
           return respond(
             dryRun
-              ? reply({ dry_run: true, statuses: statusesOf(sqlOf(body)) })
+              ? reply({ dry_run: true, statuses: statusesOf(Reflect.get(Object(body), "sql")) })
               : reply({ ok: true }),
           );
         case "/_spark/v1/parse":
