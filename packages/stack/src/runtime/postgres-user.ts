@@ -141,11 +141,21 @@ const ancestorsOf = (path: Path.Path, start: string): ReadonlyArray<string> => {
 
 const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag === "AlreadyExists";
 
+/** Whether this process runs in a user namespace; the initial one maps every uid to itself. */
+const insideUserNamespace = Effect.fn("NativePostgresUser.insideUserNamespace")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString("/proc/self/uid_map").pipe(
+    Effect.map((map) => map.trim().split(/\s+/u).join(" ") !== "0 0 4294967295"),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 /**
  * Confirms `target`'s unresolved state (one `lstat`, so a symlink is never followed) is a
- * directory worth trusting: owned by `uid`, or when `allowRootOwner` by uid 0 or the default
- * overflow uid 65534 a user namespace reports for an unmapped host root, and never writable by
- * group or others unless `allowStickyWritable` and the sticky bit guard it, as `/tmp` itself is.
+ * directory worth trusting: owned by `uid`, or when `allowRootOwner` by uid 0 or, inside a user
+ * namespace, the default overflow uid 65534 it reports for any unmapped owner, normally host root,
+ * and never writable by group or others unless `allowStickyWritable` and the sticky bit guard it,
+ * as `/tmp` itself is.
  */
 const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDirectory")(function* (
   target: string,
@@ -168,7 +178,10 @@ const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDire
       operation: "launch",
       message: `${target} is not a directory; refusing to use it for the native runtime root`,
     });
-  if (info.uid !== uid && !(policy.allowRootOwner && (info.uid === 0 || info.uid === 65_534)))
+  const rootOwned =
+    policy.allowRootOwner &&
+    (info.uid === 0 || (info.uid === 65_534 && (yield* insideUserNamespace())));
+  if (info.uid !== uid && !rootOwned)
     return yield* new ServiceError({
       operation: "launch",
       message: `${target} belongs to uid ${String(info.uid)}, not the current user; refusing to use it for the native runtime root`,
