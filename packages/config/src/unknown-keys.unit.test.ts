@@ -47,7 +47,7 @@ describe("findUnknownCliConfigKeys", () => {
   ];
 
   test.each(unknown)("reports $name", ({ document, expected }) => {
-    expect(findUnknownCliConfigKeys(document)).toEqual(expected);
+    expect(findUnknownCliConfigKeys(document).map(({ path }) => path)).toEqual(expected);
   });
 
   const clean: ReadonlyArray<{ readonly name: string; readonly document: unknown }> = [
@@ -75,5 +75,18 @@ describe("findUnknownCliConfigKeys", () => {
 
   test.each(clean)("reports nothing for $name", ({ document }) => {
     expect(findUnknownCliConfigKeys(document)).toEqual([]);
+  });
+
+  test("reports the sibling keys of the table holding an unknown key", () => {
+    const [found] = findUnknownCliConfigKeys({ api: { prot: 1 } });
+    expect(found?.path).toEqual(["api", "prot"]);
+    expect(found?.knownKeys).toContain("port");
+    expect(found?.knownKeys).not.toContain("prot");
+  });
+
+  test("reports the sibling keys of a remote table", () => {
+    const [found] = findUnknownCliConfigKeys({ remotes: { staging: { api: { prot: 1 } } } });
+    expect(found?.path).toEqual(["remotes", "staging", "api", "prot"]);
+    expect(found?.knownKeys).toContain("port");
   });
 });

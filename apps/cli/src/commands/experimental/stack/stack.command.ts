@@ -16,6 +16,7 @@ import { stackStatusCommand as stackStatusCommandBase } from "./status/status.co
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
+import { stackPruneCommand as stackPruneCommandBase } from "./prune/prune.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
 import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
 import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
@@ -77,6 +78,9 @@ const stackLogsCommand = stackLogsCommandBase.pipe(
 const stackListCommand = stackListCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "list"])),
 );
+const stackPruneCommand = stackPruneCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "prune"])),
+);
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
 );
@@ -102,6 +106,7 @@ export const stackCommand = Command.make("stack").pipe(
     stackListCommand,
     stackLogsCommand,
     stackOutdatedCommand,
+    stackPruneCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,

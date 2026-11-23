@@ -6,15 +6,14 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 ## Workspaces and naming
 
 - `apps/cli` — published `supabase` CLI
-- `apps/docs` — Next.js docs site
 - `packages/api` — typed Management API client
 - `packages/config` — published config schema and generated types
 - `packages/stack` — local Supabase stack runtime
 - `packages/cli-*` — published platform binary wrappers
 
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
-reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
-`packages/cli-*` have their own shapes. Lint, format, and unused-code tooling is
+reference. Published `apps/cli` and `packages/config` are not private;
+`packages/cli-*` has its own shape. Lint, format, and unused-code tooling is
 root-owned.
 
 ### Config Naming Vocabulary
@@ -101,8 +100,8 @@ comment states only the why that the code cannot carry. Most code needs no comme
 ### When to comment
 
 Write a comment only for an invariant or constraint the types cannot express, an external quirk,
-a decision that would otherwise read as a bug, or a pointer to an ADR, `SIDE_EFFECTS.md`, docs
-page, or upstream issue. If the rationale needs more than three lines, move it to documentation.
+a decision that would otherwise read as a bug, or a pointer to an ADR, docs page, or upstream
+issue. If the rationale needs more than three lines, move it to documentation.
 
 ### How to comment
 

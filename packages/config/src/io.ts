@@ -1,20 +1,20 @@
 import { randomBytes } from "node:crypto";
 import { Clock, Effect, FileSystem, Option, Path, Predicate, Redacted } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
   encodeCliConfigToJsonDocument,
   encodeCliConfigToTomlDocument,
-  isObject,
   type LoadedCliConfig,
   type InternalLoadCliConfigOptions,
-  cliConfigSchemaKey,
   type CliConfigValueSource,
   type SaveCliConfigOptions,
 } from "./config-document.ts";
 import { updateJsonDocument } from "./config-edit.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import {
+  type CliConfigRemovedKeyError,
   CliConfigFileConflictError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
@@ -22,11 +22,12 @@ import {
   CliConfigSchemaVersionError,
   CliConfigWriteError,
 } from "./errors.ts";
+import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { findCliProjectPaths } from "./paths.ts";
-import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
+import { rejectRemovedConfigKeys, stripRemovedConfigKeys } from "./removed-config-keys.ts";
 import { SUPPORTED_CLI_CONFIG_SCHEMA_VERSION } from "./schema-metadata.ts";
 import {
   readCliConfigSchemaDeclaration,
@@ -34,7 +35,7 @@ import {
   versionOfSchemaRef,
   type CliConfigSchemaDeclaration,
 } from "./schema-version.ts";
-import { setOwnProperty } from "./sparse.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
 
@@ -426,15 +427,30 @@ const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string)
   return { format, content, document, schemaDeclaration } as const;
 });
 
-const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
+const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (
+  filePath: string,
+  tolerateRemovedKeys = false,
+) {
   const { format, content, document, schemaDeclaration } =
     yield* readCliConfigDocumentFile(filePath);
-  const withoutRemoved = isObject(document)
-    ? yield* rejectRemovedConfigKeys(document, filePath, format)
-    : document;
+  const removal =
+    isObject(document) && tolerateRemovedKeys ? stripRemovedConfigKeys(document) : undefined;
+  const withoutRemoved = removal
+    ? removal.document
+    : isObject(document)
+      ? yield* rejectRemovedConfigKeys(document, filePath, format)
+      : document;
   const { document: normalized, deprecatedPaths } =
     normalizeDeprecatedProviderSignupKeys(withoutRemoved);
-  return { format, content, document, schemaDeclaration, normalized, deprecatedPaths } as const;
+  return {
+    format,
+    content,
+    document,
+    schemaDeclaration,
+    normalized,
+    deprecatedPaths,
+    removedKeys: removal?.removedKeys ?? [],
+  } as const;
 });
 
 /**
@@ -735,6 +751,8 @@ export interface ParsedCliConfigDocument {
   readonly deprecatedPaths: ReadonlyArray<string>;
   readonly rawDocument: Record<string, unknown> | undefined;
   readonly normalized: unknown;
+  /** The removed keys deleted from `normalized` under `tolerateRemovedKeys`; empty otherwise. */
+  readonly removedKeys: ReadonlyArray<CliConfigRemovedKeyError["removedKeys"][number]>;
 }
 
 /**
@@ -747,6 +765,8 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
   options?: {
     readonly search?: boolean;
     readonly tomlOnly?: boolean;
+    /** Deletes removed keys and reports them in `removedKeys` instead of failing. */
+    readonly tolerateRemovedKeys?: boolean;
   },
 ) {
   const located = yield* locateCliConfigFile(cwd, options);
@@ -755,8 +775,8 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     return null;
   }
 
-  const { format, content, document, schemaDeclaration, normalized, deprecatedPaths } =
-    yield* readAndNormalizeCliConfigFile(located.filePath);
+  const { format, content, document, schemaDeclaration, normalized, deprecatedPaths, removedKeys } =
+    yield* readAndNormalizeCliConfigFile(located.filePath, options?.tolerateRemovedKeys);
 
   return {
     path: located.filePath,
@@ -768,6 +788,7 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
     deprecatedPaths,
     rawDocument: isObject(normalized) ? normalized : undefined,
     normalized,
+    removedKeys,
   } satisfies ParsedCliConfigDocument;
 });
 
@@ -933,6 +954,57 @@ export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: Sav
     ignoredPaths: [],
     deprecatedPaths: [],
   } satisfies LoadedCliConfig;
+});
+
+const succeedUnlessExists = (error: PlatformError) =>
+  Predicate.isTagged(error.reason, "AlreadyExists") ? Effect.succeed(false) : Effect.fail(error);
+
+/** Publishes a new file with exactly `mode`, never replacing an existing one: `false` means the
+ * target already existed and was left untouched. Where hard links are unsupported, it falls back
+ * to an exclusive create, which readers can observe mid-write. */
+export const createCliConfigDocumentText = Effect.fn("CliConfig.createDocument")(function* (
+  filePath: string,
+  content: string,
+  mode: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const now = yield* Clock.currentTimeMillis;
+  const tmpPath = `${filePath}.tmp.${now}.${randomBytes(3).toString("hex")}`;
+
+  const createExclusive = Effect.scoped(
+    Effect.gen(function* () {
+      const file = yield* fs.open(filePath, { flag: "wx", mode });
+      yield* Effect.gen(function* () {
+        yield* fs.chmod(filePath, mode);
+        yield* file.writeAll(new TextEncoder().encode(content));
+      }).pipe(Effect.onError(() => fs.remove(filePath).pipe(Effect.ignore)));
+      return true;
+    }),
+  ).pipe(Effect.catchTag("PlatformError", succeedUnlessExists));
+
+  const created = yield* Effect.gen(function* () {
+    yield* fs.writeFileString(tmpPath, content, { mode });
+    yield* fs.chmod(tmpPath, mode);
+    return yield* fs.link(tmpPath, filePath).pipe(
+      Effect.as(true),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "AlreadyExists") ? Effect.succeed(false) : createExclusive,
+      ),
+    );
+  }).pipe(
+    Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)),
+    Effect.catchTag("PlatformError", (cause) =>
+      Effect.fail(
+        new CliConfigWriteError({
+          path: filePath,
+          cause,
+          message: `Failed to write ${filePath}: ${cause.message}`,
+        }),
+      ),
+    ),
+  );
+  yield* Effect.annotateCurrentSpan("config.created", created);
+  return created;
 });
 
 /** Atomically replaces text while applying the target mode at creation to protect sensitive files. */

@@ -82,6 +82,8 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
+import { rootCaBundle } from "../../../command-internal/supabase-tls.ts";
+import { SUGGEST_CA_VERIFICATION } from "../../../command-internal/connect-errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
@@ -176,6 +178,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       get: () => Effect.succeed(database),
       list: Effect.succeed([database]),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: Effect.die("unused") },
     composition: {
       plan: () => Effect.succeed([]),
@@ -391,6 +394,7 @@ function mockBundledPostgresClient(opts: {
   stderr?: string;
   runFails?: boolean;
   results?: ReadonlyArray<DockerResult>;
+  onRun?: (run: RunPostgresClientOptions<unknown>) => Effect.Effect<void>;
 }) {
   const allOpts: Array<RunPostgresClientOptions<unknown>> = [];
   const queue = [...(opts.results ?? [])];
@@ -398,6 +402,7 @@ function mockBundledPostgresClient(opts: {
     run: (runOpts) =>
       Effect.gen(function* () {
         allOpts.push(runOpts);
+        if (opts.onRun !== undefined) yield* opts.onRun(runOpts);
         if (opts.runFails === true) {
           return yield* new DockerRunError({
             message: "failed to run docker: not found",
@@ -442,6 +447,7 @@ interface SetupOpts {
   stderr?: string;
   runFails?: boolean;
   results?: ReadonlyArray<DockerResult>;
+  onRun?: (run: RunPostgresClientOptions<unknown>) => Effect.Effect<void>;
   poolerFallback?: Option.Option<PgConnInput>;
   poolerFallbackFails?: boolean;
   networkId?: string;
@@ -987,6 +993,79 @@ describe("db dump integration", () => {
     }),
   );
 
+  it.effect("verifies a pinned Supabase project against the bundled CA in the container", () => {
+    const { layer, docker } = setup({
+      conn: { ...REMOTE_CONN, sslmode: "require", sslrootcertInline: rootCaBundle() },
+      isLocal: false,
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
+      expect(docker.lastOpts?.env).toMatchObject({
+        PGSSLMODE: "verify-ca",
+        PGSSLROOTCERT: "/tmp/supabase-root.crt",
+        PGSSLROOTCERT_PEM: rootCaBundle(),
+      });
+      expect(docker.lastOpts?.cmd[2]).toContain(
+        `printf '%s' "$PGSSLROOTCERT_PEM" > /tmp/supabase-root.crt || exit 1\n`,
+      );
+      expect(docker.lastOpts?.binds).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("writes the pinned CA and copies the client key in the same tool container", () =>
+    Effect.gen(function* () {
+      const cert = yield* writePem("client.crt");
+      const key = yield* writePem("client.key");
+      const { layer, docker } = setup({
+        conn: {
+          ...REMOTE_CONN,
+          sslmode: "require",
+          sslrootcertInline: rootCaBundle(),
+          sslcert: cert,
+          sslkey: key,
+        },
+        isLocal: false,
+      });
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.provide(layer));
+      expect(docker.lastOpts?.cmd[2]).toContain(
+        `printf '%s' "$PGSSLROOTCERT_PEM" > /tmp/supabase-root.crt || exit 1\n`,
+      );
+      expect(docker.lastOpts?.cmd[2]).toContain(
+        "(umask 077 && cp /run/supabase/tls/client.key /tmp/supabase-client.key) || exit 1\n",
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("verifies a pinned Supabase project against the bundled CA in a native pg_dump", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let rootCertDuringRun = "";
+      const { layer, bundled } = setup({
+        conn: { ...REMOTE_CONN, sslmode: "require", sslrootcertInline: rootCaBundle() },
+        isLocal: false,
+        platform: "darwin",
+        stdout: "",
+        onRun: (run) =>
+          fs.readFileString(run.env["PGSSLROOTCERT"] ?? "").pipe(
+            Effect.orDie,
+            Effect.map((pem) => {
+              rootCertDuringRun = pem;
+            }),
+          ),
+      });
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+      );
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      const env = bundled.lastOpts?.env ?? {};
+      expect(env["PGSSLMODE"]).toBe("verify-ca");
+      expect(env["PGSSLROOTCERT_PEM"]).toBeUndefined();
+      expect(env["PGSSLROOTCERT"]).toMatch(/supabase-root-.*\.crt$/u);
+      expect(rootCertDuringRun).toBe(rootCaBundle());
+      expect(yield* fs.exists(env["PGSSLROOTCERT"] ?? "")).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("mounts the linked project's TLS files into a Windows tool container", () =>
     Effect.gen(function* () {
       const root = yield* writePem("root.crt");
@@ -1367,6 +1446,19 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("linked: attaches the CA suggestion when pg_dump rejects the certificate", () => {
+    const { layer } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      results: [{ exitCode: 1, stderr: "SSL error: certificate verify failed" }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
+      expect(failMessage(exit)).toBe("error running container: exit 1");
+      expect(failSuggestion(exit)).toBe(SUGGEST_CA_VERIFICATION);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("linked: no IPv6 suggestion on a non-IPv6 container failure", () => {
     const { layer } = setup({
       conn: REMOTE_CONN,
@@ -1520,9 +1612,11 @@ describe("db dump integration", () => {
   }
 
   describe("managed stack dump", () => {
+    /* The stack lookup canonicalizes the project root, so it must exist on disk. */
+    const projectDir = useTempWorkdir("db-dump-stack-");
     for (const runtime of ["native", "docker"] as const) {
       it.effect(`streams schema output through the ${runtime} stack tool`, () => {
-        const { layer, out } = setup({ isLocal: true, stdout: "" });
+        const { layer, out } = setup({ isLocal: true, stdout: "", workdir: projectDir.current });
         return Effect.gen(function* () {
           yield* dbDump(flags());
           expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');

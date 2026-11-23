@@ -28,7 +28,7 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
   readonly message: string;
   /** Classified at the container-runtime boundary; never inferred from `message` by telemetry. */
   readonly daemonDown?: boolean;
-  /** Set when the failure is a daemon-connection error. */
+  /** Recovery advice printed with the error. */
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {

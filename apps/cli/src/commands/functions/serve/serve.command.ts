@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { Argument, Command, Flag } from "effect/cli";
@@ -15,6 +16,10 @@ import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../../command-internal/stack-target.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
@@ -70,8 +75,17 @@ const commandConfig = {
 } as const;
 
 export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
+  withSidebar({ title: "Serve functions locally" }),
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
+  Command.withHandler((flags) =>
+    functionsServe(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
+  ),
+  Command.provide(functionsServeRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
   withPermissions({
     operations: [],
     noApiEffectFlags: [
@@ -82,13 +96,7 @@ export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
       "inspect-mode",
       "inspect-main",
       "all",
+      ...STACK_SELECTOR_FLAG_NAMES,
     ],
   }),
-  Command.withHandler((flags) =>
-    functionsServe(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
-  ),
-  Command.provide(functionsServeRuntimeLayer),
-  Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(commandConfig),
-  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -39,11 +39,7 @@ on:
         type: string
         default: supabase
     secrets:
-      SENTRY_DSN:
-        required: false
       POSTHOG_API_KEY:
-        required: false
-      POSTHOG_ENDPOINT:
         required: false
       GH_APP_PRIVATE_KEY:
         required: false
@@ -64,9 +60,7 @@ jobs:
     with:
       version: ${{ inputs.version }}
     secrets:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   build-github:
@@ -79,9 +73,7 @@ jobs:
       timeout_minutes: 45
       build_timeout_minutes: 20
     secrets:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   smoke-test:
@@ -603,24 +595,11 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against the just-released
-  # CLI. Runs last and intentionally doesn't gate publish-homebrew/publish-scoop — by the time it
-  # runs, the npm package and GitHub release are already live, so a setup-cli regression surfaces
-  # as a red post-release signal without holding back the rest of the channel. `needs` is for
-  # ordering only; `always() && needs.publish.result == 'success'` lets it run even when
-  # publish-homebrew/publish-scoop are skipped or fail.
-  setup-cli-smoke:
-    needs: [publish, publish-homebrew, publish-scoop]
-    if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
-    uses: ./.github/workflows/setup-cli-smoke-test.yml
-    with:
-      version: ${{ inputs.version }}
-
   # Post-publish check that the Homebrew tap, Scoop bucket, and curl|bash install script
   # actually install the just-released CLI — brew/scoop verify the published checksum against
   # the downloaded tarball, catching a mismatch like CLI v2.107.0. Only runs when brew/scoop were
-  # published and both pushes succeeded; a skipped channel is covered by the GitHub Release
-  # download path in setup-cli-smoke. Runs last and doesn't gate the rest of the channel.
+  # published and both pushes succeeded; the daily setup-cli smoke test covers the GitHub Release
+  # download path for every channel. Runs last and doesn't gate the rest of the channel.
   verify-install-channels:
     needs: [publish, publish-homebrew, publish-scoop]
     if: ${{ always() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish-homebrew.result == 'success' && needs.publish-scoop.result == 'success' }}

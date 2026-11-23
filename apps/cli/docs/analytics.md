@@ -68,6 +68,16 @@ It is emitted once per handled command invocation and includes:
 - `exit_code`
 - `duration_ms`
 - `output_format`
+- `config_format` (`toml`, `json` or `jsonc`) once the command reads the project's config file,
+  set on success and on failure, including when the file fails to parse. Commands that never read
+  the project config, and projects without one, omit it
+- `convert_target` (`toml` or `jsonc`) on `config convert`, the format being written, from `--to`
+  as soon as the command starts, on success and on failure
+- `convert_reason` (`editor`, `third-party-tool`, `older-cli`, `ci-or-deploy`, `ai-agent`,
+  `preference` or `other`) on `config convert --to toml`, from `--reason` or the interactive
+  prompt, which is not shown when telemetry is opted out; omitted when the user skips
+- `convert_moved_comment_count` (number) on `config convert` after a conversion renders, in either
+  direction, counting comments that could not keep their place and moved to a nearby line
 
 Failed invocations (`exit_code != 0`) handled by the TS shells also carry a
 sanitized error classification:
@@ -240,7 +250,6 @@ That means:
 
 - analytics gets one or a few meaningful events per command
 - traces remain in the tracing path
-- Sentry and PostHog remain distinct telemetry systems with different responsibilities
 
 In short:
 

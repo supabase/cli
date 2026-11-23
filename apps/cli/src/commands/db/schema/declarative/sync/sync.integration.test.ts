@@ -84,7 +84,10 @@ import {
 } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
-import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
+import {
+  DeclarativeDestructiveChangesError,
+  DeclarativeNotEnabledError,
+} from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { selection } from "../../../../../../tests/helpers/pins.ts";
@@ -117,6 +120,8 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
+  /** `--stack`; the stack backend fixture only has the default stack. */
+  stack?: string;
   /** Runs the real db-config resolver; `workdir` must be a real directory. */
   realLayers?: boolean;
 }
@@ -176,6 +181,7 @@ function syncStackApi(workdir: string, port: number) {
           ? Effect.succeed(database)
           : Effect.fail(new StackError({ operation: "get", message: "unknown instance" })),
     },
+    apiTls: { get: Effect.undefined },
     credentials: { get: unusedSync },
     composition: {
       plan: () => Effect.succeed([]),
@@ -197,19 +203,19 @@ function syncStackApi(workdir: string, port: number) {
     create: unusedSyncFn,
     open: () => Effect.succeed(stack),
     discover: () => Effect.die("unused"),
-    find: () =>
+    find: (options) =>
       Effect.succeed(
         Option.some({
           definition: {
             id: stack.id,
             identity,
-            runtime: "native",
+            runtime: "native" as const,
             instances: [],
             composition,
             lifetime: "detached" as const,
           },
           host: undefined,
-        }),
+        }).pipe(Option.filter(() => !("name" in options) || options.name === undefined)),
       ),
     findDeleted: () => Effect.die("unused"),
   });
@@ -401,7 +407,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : resolver,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockCommandSettings({
+      workdir,
+      projectId: opts.projectId ?? Option.some("test"),
+      ...(opts.stack === undefined ? {} : { stack: opts.stack }),
+    }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
@@ -457,6 +467,7 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  failOnDestructive: over.failOnDestructive ?? false,
 });
 
 const seedDeclarative = (workdir: string) =>
@@ -962,6 +973,67 @@ describe("db schema declarative sync integration", () => {
     },
   );
 
+  it.effect.each([
+    {
+      mode: "--no-apply",
+      apply: Option.none<boolean>(),
+      noApply: Option.some(true),
+      stdinIsTty: false,
+    },
+    {
+      mode: "--apply",
+      apply: Option.some(true),
+      noApply: Option.none<boolean>(),
+      stdinIsTty: false,
+    },
+    {
+      mode: "interactive",
+      apply: Option.none<boolean>(),
+      noApply: Option.none<boolean>(),
+      stdinIsTty: true,
+    },
+  ])(
+    "--fail-on-destructive ($mode): refuses drops before any prompt and writes nothing",
+    ({ apply, noApply, stdinIsTty }) => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        stdinIsTty,
+        diffSql: "ALTER TABLE a ADD COLUMN b int;\nDROP TABLE c;\n",
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
+        const error = yield* dbSchemaDeclarativeSync(
+          flags({ apply, noApply, failOnDestructive: true }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DeclarativeDestructiveChangesError);
+        expect(error).toMatchObject({ detail: expect.stringContaining("DROP TABLE c") });
+        expect(s.out.promptTextCalls).toEqual([]);
+        expect(s.out.promptConfirmCalls).toEqual([]);
+        expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
+        expect(s.dbExec).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("--fail-on-destructive still writes a migration without drops", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(
+        flags({ noApply: Option.some(true), failOnDestructive: true }),
+      );
+      const migrations = yield* fs.readDirectory(path.join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("--apply: batches the migration and history through the native session", () => {
     const s = setup(tmp.current, {
       experimental: true,
@@ -978,6 +1050,19 @@ describe("db schema declarative sync integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
         true,
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("fails on an unknown --stack before planning on the stack backend", () => {
+    const s = setup(tmp.current, { experimental: true, stackBackend: true, stack: "typo" });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      /* `--no-apply` never connects to the local database, so only the up-front check can fail. */
+      const error = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(false) })).pipe(
+        Effect.flip,
+      );
+      expect(error.message).toBe('The local stack "typo" does not exist for this project.');
+      expect(s.dbConnectPorts).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

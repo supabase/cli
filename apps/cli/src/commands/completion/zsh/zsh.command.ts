@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -14,6 +15,7 @@ const config = {
 export type CompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const completionZshCommand = Command.make("zsh", config).pipe(
+  withSidebar({ title: "Generate zsh script" }),
   Command.withDescription(
     "Generate the autocompletion script for the zsh shell.\n\n" +
       "If shell completion is not already enabled in your environment you will need\n" +
@@ -22,9 +24,9 @@ export const completionZshCommand = Command.make("zsh", config).pipe(
       "To load completions in your current shell session:\n\n" +
       "\tsource <(supabase completion zsh)\n\n" +
       "To load completions for every new session, execute once:\n\n" +
-      "#### Linux:\n\n" +
+      "Linux:\n\n" +
       '\tsupabase completion zsh > "${fpath[1]}/_supabase"\n\n' +
-      "#### macOS:\n\n" +
+      "macOS:\n\n" +
       "\tsupabase completion zsh > $(brew --prefix)/share/zsh/site-functions/_supabase\n\n" +
       "You will need to start a new shell for this setup to take effect.",
   ),

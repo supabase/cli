@@ -28,7 +28,7 @@ import type { ProjectLinkState } from "../config/project-link-state.service.ts";
 import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts";
 import type { LegacyProjectState } from "../config/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
-import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { textCliOutputLayer } from "../output/text-cli-output.layer.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { failureBesideClosedStdout, ignoreStdoutClosed } from "../output/errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
@@ -61,6 +61,7 @@ import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
+  resolveAgentModeFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
 import {
@@ -111,8 +112,7 @@ export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, Allowe
 
 // Global flags that consume their following argv token as a value; missing one here would make
 // `extractCommandPath` mistake its value for a command-path segment, and leave scanners below
-// unable to skip past it. Derived from `PERSISTENT_VALUE_FLAG_NAMES` so the two registries can't
-// drift apart.
+// unable to skip past it. See `GLOBAL_VALUE_FLAG_TOKENS` for what it holds.
 //
 // `extractCommandPath` treats a recognized bare boolean literal (`--debug false`) as consuming a
 // token too, but `rootFlagTokens`/`firstPositionalIndex` keep the stricter rule that a bare
@@ -392,15 +392,22 @@ export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boo
   );
 }
 
-function formatterLayerFor(
+function suggestionContextFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
+  stackRootCommand: Command.Command.Any | undefined,
+): CliErrorSuggestionContext {
+  return { rootCommand, args, ...(stackRootCommand ? { stackRootCommand } : {}) };
+}
+
+function formatterLayerFor(
+  context: CliErrorSuggestionContext,
   format: OutputFormat,
+  agentMode: boolean,
 ) {
-  const context = { rootCommand, args };
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter(context))
-    : CliOutput.layer(textCliOutputFormatter(context));
+    : textCliOutputLayer(context, undefined, agentMode);
 }
 
 /**
@@ -612,6 +619,8 @@ export interface RunCliOptions<BeforeParseError = never> {
   readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
   /** The selected root's agent default, applied to failures `runCli` renders itself. */
   readonly agentDefaultOutputFormat: OutputFormat;
+  /** The root the stack opt-in would select, so a rejected stack-only flag can name the opt-in. */
+  readonly stackRootCommand?: Command.Command.Any;
   readonly analyticsLayer: Layer.Layer<
     Analytics,
     Config.ConfigError | PlatformError.PlatformError,
@@ -645,6 +654,7 @@ export function cliProgramFor<
   cliArgs: CliArgsShape,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
+  agentMode = false,
 ) {
   const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
@@ -665,9 +675,11 @@ export function cliProgramFor<
     ),
   );
   const commandProgram = options.beforeParse ?? Effect.void;
-  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
-    Layer.provideMerge(options.analyticsLayer),
-  );
+  const commandLayer = formatterLayerFor(
+    suggestionContextFor(rootCommand, args, options.stackRootCommand),
+    outputFormat,
+    agentMode,
+  ).pipe(Layer.provideMerge(options.analyticsLayer));
   const cliProgramLayer = telemetryRuntimeLayer.pipe(
     Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
@@ -723,13 +735,20 @@ export const runCli = Effect.fnUntraced(function* <
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
-  const suggestionContext = { rootCommand, args };
+  const suggestionContext = suggestionContextFor(rootCommand, args, options.stackRootCommand);
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = yield* Effect.gen(function* () {
+  const { outputFormat, agentMode } = yield* Effect.gen(function* () {
     const aiTool = yield* AiTool;
-    return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
+    return {
+      outputFormat: resolveAgentOutputFormatFromArgs(
+        args,
+        aiTool.name,
+        options.agentDefaultOutputFormat,
+      ),
+      agentMode: resolveAgentModeFromArgs(args, aiTool.name),
+    };
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat, agentMode);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),

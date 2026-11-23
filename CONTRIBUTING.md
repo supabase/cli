@@ -14,7 +14,7 @@ Until the `open-for-contribution` label is present, the issue is still in triage
 
 Target your pull request at `develop`. Changes that break existing behaviour use a `type(scope)!:` title (for example `feat(cli)!: remove ...`) and target `next` instead; a maintainer will tell you if a change should be breaking.
 
-Pull requests from external contributors that do not follow this workflow are commented on and closed automatically by the [Contribution Gate](.github/workflows/contribution-gate.yml). Supabase members are exempt, so they can work from Linear tickets that are not public on GitHub. Maintainers: see [`.github/MAINTAINERS.md`](.github/MAINTAINERS.md).
+The [Contribution Gate](.github/workflows/contribution-gate.yml) is scheduled to check open pull requests every 15 minutes and can also run manually. It comments on and closes pull requests from external contributors that do not follow this workflow. Scheduled runs can be delayed. Link an open issue with the `open-for-contribution` label before reopening a closed PR. Supabase members are exempt, so they can work from Linear tickets that are not public on GitHub. Maintainers: see [`.github/MAINTAINERS.md`](.github/MAINTAINERS.md).
 
 ## Setup
 
@@ -89,8 +89,8 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 ```text
 .
 |-- apps/
-|   |-- cli/   # Published Supabase CLI package
-|   `-- docs/  # Next.js docs site generated from the CLI
+|   |-- cli/      # Published Supabase CLI package
+|   `-- cli-e2e/  # CLI compatibility tests
 |-- packages/
 |   |-- api/                  # Typed Supabase Management API client
 |   |-- config/               # Supabase config schema and generated types
@@ -107,7 +107,6 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/cli`     | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts.            |
 | `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TypeScript CLI against real Supabase Management API responses. |
-| `apps/docs`    | Internal docs site built with Next.js and generated from the CLI docs sources.                                                         |
 
 ## Packages
 

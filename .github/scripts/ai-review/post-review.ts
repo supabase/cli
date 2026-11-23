@@ -23,6 +23,8 @@
  * Run in CI as: `bun .github/scripts/ai-review/post-review.ts <command>`.
  */
 
+import { guidanceReviewStatus } from "./docs-guidance-status.ts";
+
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
 const AI_REVIEW_STATE_PATTERN =
   /^<!-- supabase-ai-review-state head=([0-9a-f]{40}) complete=(true|false) findings=(\d+) -->$/m;
@@ -632,6 +634,7 @@ export interface ReviewFooterInfo {
   /** Commit the models reviewed; absent from older workflow copies, whose reviews carry no state and never approve. */
   headSha?: string;
   reviewsComplete?: boolean;
+  docsGuidance?: unknown;
 }
 
 /** Renders the full review body: summary, findings table, out-of-diff section, refuted details, stats, and footer. */
@@ -651,7 +654,11 @@ export function renderReviewBody(
     ? `${renderAiReviewState({ head: footer.headSha, complete: footer.reviewsComplete === true, findings: posted.length + review.findings.filter(isAdvisoryNextImpact).length })}\n`
     : "";
   const header = `${AI_REVIEW_MARKER}\n${state}`;
-  const sections: string[] = [`${header}## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
+  const guidance =
+    "docsGuidance" in footer ? `${guidanceReviewStatus(footer.docsGuidance)}\n\n` : "";
+  const sections: string[] = [
+    `${header}## 🤖 AI Review\n\n${guidance}${sanitizeModelText(review.summary)}`,
+  ];
 
   if (posted.length > 0) {
     const rows = posted.map(
@@ -1181,11 +1188,21 @@ async function runPost(): Promise<void> {
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
 
+  let guidance: unknown;
+  if (process.env.DOCS_GUIDANCE_PATH) {
+    try {
+      guidance = JSON.parse(await Bun.file(process.env.DOCS_GUIDANCE_PATH).text());
+    } catch {
+      guidance = null;
+    }
+  }
+
   const diff = await Bun.file(prDiffPath).text();
   await postConsolidatedReview(io, prNumber, raw, diff, {
     trigger,
     runUrl,
     modelsFooter: `\`${claudeModel}\` + \`${codexModel}\``,
+    ...(process.env.DOCS_GUIDANCE_PATH ? { docsGuidance: guidance } : {}),
     headSha,
     reviewsComplete,
   });

@@ -32,6 +32,7 @@ import {
 import {
   makeContainerRuntime,
   type ContainerProcess,
+  type ContainerResources,
   type ContainerRuntime,
   type EngineTarget,
   type HostGateway,
@@ -128,13 +129,19 @@ export interface DatabaseConfig extends Schema.Schema.Type<typeof DatabaseConfig
 /** A database's configuration with the artifact pin its creation selected. */
 export interface PinnedDatabaseConfig extends DatabaseConfig {
   readonly pin: ArtifactPin;
+  readonly container?: ContainerResources;
 }
 
-/** Joins a database creation's pin and configuration into what the component runs. */
+/** Joins a database creation's pin, container limits and configuration into what the component runs. */
 export const pinnedDatabaseConfig = (creation: {
   readonly pin: ArtifactPin;
   readonly config: DatabaseConfig;
-}): PinnedDatabaseConfig => ({ ...creation.config, pin: creation.pin });
+  readonly container?: ContainerResources;
+}): PinnedDatabaseConfig => ({
+  ...creation.config,
+  pin: creation.pin,
+  ...(creation.container === undefined ? {} : { container: creation.container }),
+});
 
 export const DatabaseEndpoints = Schema.Struct({ sql: Schema.optionalKey(EndpointIntent) });
 export interface DatabaseEndpoints extends Schema.Schema.Type<typeof DatabaseEndpoints> {}
@@ -853,6 +860,7 @@ export const makeDatabase = (
             },
           ],
           ports: [5432],
+          ...(config.container === undefined ? {} : { resources: config.container }),
           // SIGTERM is PostgreSQL's smart shutdown, which waits for every client to disconnect.
           stopSignal: "SIGINT",
           ...(config.stopGraceSeconds === undefined

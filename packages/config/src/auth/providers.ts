@@ -1,22 +1,48 @@
 import dedent from "dedent";
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
+import { type CliConfigTableRuleIssue, tableRuleFilter } from "../lib/table-rule.ts";
 
 const tags = ["auth"];
 
-function requiredWhenEnabled<
-  T extends Record<string, string | number | boolean | undefined> & { enabled: boolean },
->(path: string, predicate: (value: T) => boolean, message: string) {
-  return Schema.makeFilter((value: T) => {
-    if (!value.enabled || predicate(value)) {
-      return undefined;
-    }
+interface ExternalProviderInput {
+  readonly enabled: boolean;
+  readonly client_id: string;
+  readonly secret?: string;
+}
 
-    return {
-      path: [path],
-      issue: message,
-    };
-  });
+const secretOptional = (id: string) => id === "apple" || id === "google";
+
+function providerRequirements(id: string) {
+  return [
+    ["client_id", (value: ExternalProviderInput) => value.client_id !== ""],
+    ...(secretOptional(id)
+      ? []
+      : [
+          [
+            "secret",
+            (value: ExternalProviderInput) => value.secret !== undefined && value.secret !== "",
+          ] as const,
+        ]),
+  ] as const;
+}
+
+const providerRequirementFilter = (id: string, key: "client_id" | "secret") =>
+  tableRuleFilter((value: ExternalProviderInput) =>
+    cliConfigExternalProviderIssues(id, value, key),
+  );
+
+/** The required-when-enabled issues of the `[auth.external.<id>]` table; paths are relative to it. */
+export function cliConfigExternalProviderIssues(
+  id: string,
+  value: ExternalProviderInput,
+  only?: "client_id" | "secret",
+): ReadonlyArray<CliConfigTableRuleIssue> {
+  return providerRequirements(id).flatMap(([key, isPresent]) =>
+    (only !== undefined && key !== only) || !value.enabled || isPresent(value)
+      ? []
+      : [{ path: [key], message: `Missing required field in config: auth.external.${id}.${key}` }],
+  );
 }
 
 const provider = (providerConfig: {
@@ -98,20 +124,10 @@ const provider = (providerConfig: {
 
   return schema
     .check(
-      requiredWhenEnabled(
-        "client_id",
-        (value) => value.client_id !== "",
-        `Missing required field in config: auth.external.${providerConfig.id}.client_id`,
-      ),
-      ...(providerConfig.id === "apple" || providerConfig.id === "google"
+      providerRequirementFilter(providerConfig.id, "client_id"),
+      ...(secretOptional(providerConfig.id)
         ? []
-        : [
-            requiredWhenEnabled(
-              "secret",
-              (value) => value.secret !== undefined && value.secret !== "",
-              `Missing required field in config: auth.external.${providerConfig.id}.secret`,
-            ),
-          ]),
+        : [providerRequirementFilter(providerConfig.id, "secret")]),
     )
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultProvider })));
 };
@@ -119,7 +135,7 @@ const provider = (providerConfig: {
 const defaultExternal = {};
 
 /** OAuth providers. The removed `linkedin`/`slack` ids are rejected on load; use `linkedin_oidc`/`slack_oidc`. */
-export const external = Schema.Struct({
+const externalProviders = Schema.Struct({
   apple: provider({
     id: "apple",
     name: "Apple",
@@ -206,4 +222,11 @@ export const external = Schema.Struct({
     id: "zoom",
     name: "Zoom",
   }),
-}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultExternal })));
+});
+
+/** The ids of the built-in providers, the only ones the schema's required-field rule covers. */
+export const EXTERNAL_PROVIDER_IDS: ReadonlyArray<string> = Object.keys(externalProviders.fields);
+
+export const external = externalProviders.pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultExternal })),
+);

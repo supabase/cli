@@ -404,7 +404,7 @@ describe("branches create integration", () => {
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `POST https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
       ]);
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -434,7 +434,7 @@ describe("branches create integration", () => {
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain("/branches");
       assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
-      expect(out.stderrText).not.toContain("Upgrade your plan:");
+      expect(out.stderrText).not.toContain("Plans and add-ons:");
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

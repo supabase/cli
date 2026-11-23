@@ -3,6 +3,7 @@
  * endpoint; lazy Storage members may be woken by the first gateway request.
  */
 
+import { X509Certificate } from "node:crypto";
 import { Data, Effect, FileSystem, Match, Option, Path } from "effect";
 import type { Observation, ServiceInstance, Stack } from "@supabase/stack/effect";
 import {
@@ -19,9 +20,10 @@ import { StorageGatewayStatusError } from "./storage-gateway.errors.ts";
 import type { StorageCredentials } from "./storage-credentials.ts";
 import { type ConfigFileRef, configSetting } from "./config-advice.ts";
 import { findConfigFileRef } from "./config-file-ref.ts";
+import { selectedStackFlags, type StackSelectorFlags } from "./stack-target.ts";
 
-const INSPECT_OR_RESTART_SUGGESTION =
-  "Run supabase stack status to inspect the stack, or supabase stack restart.";
+const inspectOrRestartSuggestion = (stackFlags: string): string =>
+  `Run supabase stack status${stackFlags} to inspect the stack, or supabase stack restart${stackFlags}.`;
 
 /** The instruction to enable Storage; without a known config file it stays format-neutral. */
 export const enableStorageAdvice = (configFile: ConfigFileRef | undefined): string =>
@@ -63,10 +65,14 @@ const capabilityState = (observation: Observation | undefined) => {
   return observation.lifecycle;
 };
 
-/** Resolves bucket-seeding credentials from a configured Storage instance. */
+/**
+ * Resolves bucket-seeding credentials from a configured Storage instance; `apiCert` is the
+ * certificate the stack saved at start, trusted while its API serves HTTPS.
+ */
 export const stackStorageCredentialsFor = (
   storage: ServiceInstance<"storage">,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   storage.status.pipe(
     Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -81,7 +87,7 @@ export const stackStorageCredentialsFor = (
           return Effect.fail(
             new StackStorageUnavailableError({ message: describeStorageCapability(observation) }),
           );
-        return storageCredentialsFrom(observation, serviceRoleKey);
+        return storageCredentialsFrom(observation, serviceRoleKey, apiCert);
       },
     ),
   );
@@ -117,37 +123,64 @@ export const describeStorageCapability = (observation: Observation | undefined):
   return "Storage is available for this stack.";
 };
 
-const notRunningSuggestion = (lifecycle: "starting" | "stopping" | "stopped"): string =>
+const notRunningSuggestion = (
+  lifecycle: "starting" | "stopping" | "stopped",
+  stackFlags: string,
+): string =>
   Match.value(lifecycle).pipe(
     Match.when("starting", () => "The stack is still starting; retry shortly."),
     Match.when(
       "stopping",
-      () => "The stack is shutting down; run supabase start once it has stopped.",
+      () => `The stack is shutting down; run supabase start${stackFlags} once it has stopped.`,
     ),
-    Match.when("stopped", () => "Run supabase start."),
+    Match.when("stopped", () => `Run supabase start${stackFlags}.`),
     Match.exhaustive,
   );
 
+/* Self-signed means it is its own issuer and verifies under its own key; unparsable is not. */
+const selfSigned = (pem: string): Effect.Effect<boolean> =>
+  Effect.try(() => {
+    const cert = new X509Certificate(pem);
+    return cert.subject === cert.issuer && cert.verify(cert.publicKey);
+  }).pipe(Effect.orElseSucceed(() => false));
+
+/* A saved cert with a self-signed root becomes the only trusted CA; a CA-issued one is verified
+   against the default trust store and `NODE_EXTRA_CA_CERTS`. */
+const savedApiCa = (apiCert: string): Effect.Effect<string | undefined> =>
+  Effect.forEach(
+    apiCert.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu) ?? [],
+    selfSigned,
+  ).pipe(Effect.map((results) => (results.includes(true) ? apiCert : undefined)));
+
+/* An HTTPS endpoint never uses `config.toml`'s current cert; trust follows the saved one. */
 const storageCredentialsFrom = (
   observation: Observation,
   serviceRoleKey: string,
+  apiCert: string | undefined,
 ): Effect.Effect<StorageCredentials, StackStorageCapabilityError> => {
   const endpoint = observation.endpoints.find(({ name }) => name === "http");
   return endpoint === undefined
     ? Effect.fail(
         new StackStorageCapabilityError({ message: "The stack exposes no Storage endpoint." }),
       )
-    : Effect.succeed({
-        baseUrl: `http://${endpoint.host}:${endpoint.port}`,
-        apiKey: serviceRoleKey,
-        localKongCa: undefined,
-      });
+    : (endpoint.scheme === "https" && apiCert !== undefined
+        ? savedApiCa(apiCert)
+        : Effect.undefined
+      ).pipe(
+        Effect.map((localKongCa) => ({
+          baseUrl: `${endpoint.scheme ?? "http"}://${endpoint.host}:${endpoint.port}`,
+          apiKey: serviceRoleKey,
+          localKongCa,
+        })),
+      );
 };
 
 /** Resolves the composition Storage endpoint without launching the owner or any member. */
 export const stackStorageEndpointFor = (
   stack: Stack,
   configFile?: ConfigFileRef,
+  /** The selector flags, with a leading space, that keep the printed advice on this stack. */
+  stackFlags = "",
 ): Effect.Effect<StorageCredentials, StackStorageUnavailableError | StackStorageCapabilityError> =>
   Effect.gen(function* () {
     const composition = yield* stack.composition.describe.pipe(
@@ -164,14 +197,14 @@ export const stackStorageEndpointFor = (
     if (storage === undefined)
       return yield* new StackStorageCapabilityError({
         message: "Storage is disabled for this stack.",
-        suggestion: `${enableStorageAdvice(configFile)}, then run supabase start without --exclude storage.`,
+        suggestion: `${enableStorageAdvice(configFile)}, then run supabase start${stackFlags} without --exclude storage.`,
         disabled: true,
       });
     const database = members.find((instance) => instance.service === "database");
     if (database === undefined)
       return yield* new StackStorageUnavailableError({
         message: "The stack has no primary database composition member.",
-        suggestion: INSPECT_OR_RESTART_SUGGESTION,
+        suggestion: inspectOrRestartSuggestion(stackFlags),
       });
     const databaseObservation = yield* database.status.pipe(
       Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -181,12 +214,12 @@ export const stackStorageEndpointFor = (
         message: "The primary database is not ready for Storage requests.",
         suggestion:
           databaseObservation.health === "starting"
-            ? notRunningSuggestion("starting")
+            ? notRunningSuggestion("starting", stackFlags)
             : databaseObservation.lifecycle === "starting" ||
                 databaseObservation.lifecycle === "stopping" ||
                 databaseObservation.lifecycle === "stopped"
-              ? notRunningSuggestion(databaseObservation.lifecycle)
-              : INSPECT_OR_RESTART_SUGGESTION,
+              ? notRunningSuggestion(databaseObservation.lifecycle, stackFlags)
+              : inspectOrRestartSuggestion(stackFlags),
       });
     const storageObservation = yield* storage.status.pipe(
       Effect.mapError((cause) => new StackStorageCapabilityError({ message: cause.message })),
@@ -194,7 +227,7 @@ export const stackStorageEndpointFor = (
     if (classifyStorageCapability(storageObservation) !== "proceed")
       return yield* new StackStorageCapabilityError({
         message: describeStorageCapability(storageObservation),
-        suggestion: "Run supabase stack restart, then retry.",
+        suggestion: `Run supabase stack restart${stackFlags}, then retry.`,
       });
     const identity = yield* stack.credentials.get.pipe(
       Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
@@ -202,19 +235,26 @@ export const stackStorageEndpointFor = (
     if (identity === undefined)
       return yield* new StackStorageUnavailableError({
         message: "The stack has no saved credentials.",
-        suggestion: INSPECT_OR_RESTART_SUGGESTION,
+        suggestion: inspectOrRestartSuggestion(stackFlags),
       });
-    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey);
+    const apiTls = yield* stack.apiTls.get.pipe(
+      Effect.mapError((cause) => new StackStorageUnavailableError({ message: cause.message })),
+    );
+    return yield* storageCredentialsFrom(storageObservation, identity.serviceRoleKey, apiTls?.cert);
   });
 
 /** Storage credentials for the project stack, opening it without launching the owner. */
 export const stackStorageEndpoint: Effect.Effect<
   StorageCredentials,
   StackStorageUnavailableError | StackStorageCapabilityError,
-  CommandSettings | StackApi | Path.Path | FileSystem.FileSystem
+  CommandSettings | StackApi | Path.Path | FileSystem.FileSystem | StackSelectorFlags
 > = Effect.gen(function* () {
   const opened = yield* stackOpenProjectBy(
-    (cause) => new StackStorageUnavailableError({ message: cause.message }),
+    (cause) =>
+      new StackStorageUnavailableError({
+        message: cause.message,
+        ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
+      }),
   );
   if (Option.isNone(opened))
     return yield* new StackStorageUnavailableError({
@@ -223,7 +263,7 @@ export const stackStorageEndpoint: Effect.Effect<
     });
   const settings = yield* CommandSettings;
   const configFile = yield* findConfigFileRef(settings.workdir);
-  return yield* stackStorageEndpointFor(opened.value, configFile);
+  return yield* stackStorageEndpointFor(opened.value, configFile, yield* selectedStackFlags);
 }).pipe(Effect.scoped);
 
 /**
@@ -234,11 +274,12 @@ export const stackStorageEndpoint: Effect.Effect<
 export const withStackStorageGuidance = <A, E, R>(
   target: { readonly local: boolean },
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | StackStorageCapabilityError, R> =>
+): Effect.Effect<A, E | StackStorageCapabilityError, R | StackSelectorFlags> =>
   Effect.gen(function* () {
     if (!target.local) return yield* effect;
     const backend = yield* currentStackBackend;
     if (backend.kind !== "stack") return yield* effect;
+    const stackFlags = yield* selectedStackFlags;
     return yield* effect.pipe(
       Effect.catch((error): Effect.Effect<never, E | StackStorageCapabilityError> => {
         if (!(error instanceof StorageGatewayStatusError)) return Effect.fail(error);
@@ -249,8 +290,7 @@ export const withStackStorageGuidance = <A, E, R>(
             message: `The stack gateway returned HTTP ${error.status} for Storage${
               body.length === 0 ? "." : `: ${body}`
             }`,
-            suggestion:
-              "Run supabase logs --service storage to inspect Storage, then supabase stack restart.",
+            suggestion: `Run supabase logs --service storage${stackFlags} to inspect Storage, then supabase stack restart${stackFlags}.`,
             cause: error,
           }),
         );

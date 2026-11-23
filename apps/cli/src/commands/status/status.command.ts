@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -75,15 +76,16 @@ const statusRuntimeLayer = Layer.mergeAll(
 );
 
 export const statusCommand = Command.make("status", config).pipe(
+  withSidebar({ category: "general", title: "Retrieve container status" }),
   Command.withDescription("Show status of local Supabase containers."),
   Command.withShortDescription("Show status of local Supabase containers"),
   Command.withExamples([
     {
-      command: "supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL",
-      description: "Output env vars with custom variable names",
+      command: "supabase status",
+      description: "Show local Supabase status",
     },
     {
-      command: "supabase status -o json",
+      command: "supabase status --output-format json",
       description: "Output status as JSON",
     },
   ]),

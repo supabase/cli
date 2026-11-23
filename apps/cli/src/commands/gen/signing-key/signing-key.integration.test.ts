@@ -1,10 +1,24 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
+  fakeConsole,
+  mockTelemetryRuntime,
   mockAnalytics,
   mockOutput,
   mockRuntimeInfo,
@@ -207,6 +221,24 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 describe("gen signing-key integration", () => {
+  it.effect("shows each supported algorithm in a separate help paragraph", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Command.runWith(testRoot, { version: "test" })(["gen", "signing-key", "--help"]).pipe(
+        Effect.provide([
+          setup().layer,
+          processControlLayer,
+          mockTelemetryRuntime(),
+          CliOutput.layer(textCliOutputFormatter(undefined, {})),
+        ]),
+        Effect.provideService(Console.Console, console),
+      );
+      expect(Bun.stripANSI(calls.join("\n"))).toContain(
+        "Supported algorithms:\n\n  ES256 - ECDSA with P-256 curve and SHA-256 (recommended)\n\n  RS256 - RSA with SHA-256",
+      );
+    }),
+  );
+
   it.effect("prints a generated key to stdout when no signing_keys_path is configured", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {

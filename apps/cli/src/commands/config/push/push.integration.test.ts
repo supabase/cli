@@ -2150,7 +2150,7 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
           Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe(
-          "[auth.external.slack] in supabase/config.toml is no longer supported. Use [auth.external.slack_oidc] instead.",
+          "auth.external.slack in supabase/config.toml is no longer supported. Use auth.external.slack_oidc instead.",
         );
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));

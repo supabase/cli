@@ -12,6 +12,7 @@ export const Config = Schema.Struct({
   jwtSecret: Schema.optionalKey(Schema.String),
   jwks: Schema.optionalKey(Schema.String),
   maxRows: Schema.optionalKey(Schema.Finite),
+  dbPool: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -46,6 +47,9 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           : { PGRST_DB_EXTRA_SEARCH_PATH: creation.config.extraSearchPath }),
         PGRST_DB_ANON_ROLE: creation.config.anonRole ?? "anon",
         PGRST_DB_MAX_ROWS: String(creation.config.maxRows ?? 1000),
+        ...(creation.config.dbPool === undefined
+          ? {}
+          : { PGRST_DB_POOL: String(creation.config.dbPool) }),
         // `info` logs every request, which Studio's PostgREST logs page shows.
         PGRST_LOG_LEVEL: "info",
         ...(jwtSecret === undefined ? {} : { PGRST_JWT_SECRET: jwtSecret }),

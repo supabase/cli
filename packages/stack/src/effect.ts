@@ -45,7 +45,7 @@ import { failureKind, isStackFailureKind, type StackFailureKind } from "./Failur
 import type { ArtifactSelection } from "./Artifacts.ts";
 import { collectDataConflicts } from "./internal/data-conflicts.ts";
 import { initializedDatabaseIds } from "./internal/database-reuse.ts";
-import { failureMessage } from "./internal/failure-message.ts";
+import { failureMessage, rpcClientFailureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
@@ -78,6 +78,7 @@ import type {
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
+export { apiTlsContext } from "./HttpProxy.ts";
 export { gatewayLog };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
@@ -178,7 +179,7 @@ const failure = (operation: string, cause: unknown, kind?: StackFailureKind): St
   return new StackError({
     operation,
     message: Schema.is(RpcClientError)(cause)
-      ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
+      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}`
       : failureMessage(cause),
     ...(ownerAbsent(cause) || stackGone(cause)
       ? { reason: "owner-unavailable" as const }
@@ -298,6 +299,10 @@ export interface Stack {
   };
   readonly credentials: {
     readonly get: Effect.Effect<StackCredentials | undefined, StackError>;
+  };
+  /** The certificate the API port serves HTTPS with since the last start, for host clients. */
+  readonly apiTls: {
+    readonly get: Effect.Effect<{ readonly cert: string } | undefined, StackError>;
   };
   readonly composition: {
     readonly supabase: (
@@ -861,6 +866,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.mapError((cause) => failure("credentials", cause)),
       ),
     },
+    apiTls: {
+      get: state.read(saved.id).pipe(
+        Effect.map((current) =>
+          current?.apiTls === undefined ? undefined : { cert: current.apiTls.cert },
+        ),
+        Effect.mapError((cause) => failure("apiTls", cause)),
+      ),
+    },
     composition: {
       supabase: (
         services: ReadonlyArray<ServiceCreationInput>,
@@ -875,6 +888,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.retainMembers === undefined
               ? {}
               : { retainMembers: options.retainMembers }),
+            ...(options?.apiTls === undefined ? {} : { apiTls: options.apiTls }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
       plan: Effect.fn("Stack.plan")(function* (

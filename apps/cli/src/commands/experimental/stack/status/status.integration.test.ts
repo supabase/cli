@@ -100,7 +100,6 @@ const StatusEndpointsReport = Schema.Struct({
 });
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
   stack: Option.none(),
-  stackId: Option.none(),
   env: false,
   overrideName: [],
   ...input,
@@ -172,6 +171,7 @@ const makeStack = (
     get: (_id) => Effect.die("unused"),
     list: Effect.succeed([...services]),
   },
+  apiTls: { get: Effect.undefined },
   credentials: {
     get: credentialsUnavailable
       ? Effect.fail(new StackError({ operation: "credentials", message: "owner unreachable" }))

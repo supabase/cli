@@ -1,6 +1,7 @@
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { STACK_SELECTOR_FLAG_NAMES } from "../../../../command-internal/stack-target.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -17,7 +18,14 @@ export const inspectDbTotalIndexSizeCommand = Command.make(
   // Removed: fails before any Management API call, so no flag changes what it calls.
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["db-url", "linked", "local", "project-ref", "remote"],
+    noApiEffectFlags: [
+      "db-url",
+      "linked",
+      "local",
+      "project-ref",
+      "remote",
+      ...STACK_SELECTOR_FLAG_NAMES,
+    ],
   }),
   Command.withHandler(() =>
     removedCommand("Use `supabase inspect db index-stats` instead.").pipe(

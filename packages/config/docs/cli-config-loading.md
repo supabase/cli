@@ -52,8 +52,8 @@ rule.)
 
 ## The `/io` facade
 
-`@supabase/config` (`.`), `@supabase/config/effect`, and `@supabase/config/io` are the package's
-three published entrypoints (see the package README's "Entrypoints" section for the full
+`@supabase/config` (`.`), `@supabase/config/effect`, `@supabase/config/io`, and
+`@supabase/config/convert` are the package's four published module entrypoints (see the package README's "Entrypoints" section for the full
 contract). `./io` is the one whose names diverge from the vocabulary above: it is a Promise-based
 facade over `./effect`'s programs, for non-Effect consumers, and its seven exports (verified
 against `packages/config/src/node.ts`/`bun.ts`) are:
@@ -97,7 +97,7 @@ to check only that exact directory, with no ancestor climb.
 
 Within one discovered `supabase/` directory, `config.json` or `config.jsonc` takes precedence over
 `config.toml` when both exist. Discovery never fails on a `config.json` + `config.jsonc` pair; loading
-and saving do.
+and saving do. `supabase config convert` migrates a `config.toml` project to `config.jsonc`.
 
 This produces a `CliProjectPaths` (the type is exported from `@supabase/config`):
 

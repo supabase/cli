@@ -18,10 +18,21 @@ export interface GenTypesGenerateInput {
   /** A `--lang` value: the name of one of the registry's `languages`. */
   readonly lang: string;
   readonly includedSchemas: ReadonlyArray<string>;
+  /**
+   * The `--schema` names, the only ones reported missing: defaults such as `graphql_public` are
+   * absent on plain Postgres.
+   */
+  readonly requestedSchemas: ReadonlyArray<string>;
   /** PostgREST's `db-extra-search-path`, whose views lead from a generated view to its tables. */
   readonly extraSearchPath: ReadonlyArray<string>;
   /** Registry option values by name; ones the language does not declare are dropped. */
   readonly options: OptionValues;
+}
+
+interface GenTypesGenerateResult {
+  readonly source: string;
+  /** Unique requested schema names absent from introspection. */
+  readonly missingSchemas: ReadonlyArray<string>;
 }
 
 export type GenTypesGenerateError =
@@ -33,7 +44,7 @@ interface GenTypesGeneratorShape {
   /** Connects to `input.conn`, introspects it, and generates `input.lang` source. */
   readonly generate: (
     input: GenTypesGenerateInput,
-  ) => Effect.Effect<string, GenTypesGenerateError | DbConnectError, Scope.Scope>;
+  ) => Effect.Effect<GenTypesGenerateResult, GenTypesGenerateError | DbConnectError, Scope.Scope>;
 }
 
 /** Introspection or code generation failed against the target database's schema. */

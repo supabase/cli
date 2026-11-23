@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../../command-internal/command-sidebar.ts";
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { inspectDbDbStats } from "./db-stats.handler.ts";
@@ -12,6 +13,7 @@ import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 
 export const inspectDbDbStatsCommand = Command.make("db-stats", INSPECT_DB_FLAGS).pipe(
+  withSidebar({ title: "Show statistics related to database usage" }),
   Command.withDescription("Show stats such as cache hit rates, total sizes, and WAL size."),
   Command.withShortDescription("Show database stats"),
   withPermissions(INSPECT_DB_PERMISSIONS),

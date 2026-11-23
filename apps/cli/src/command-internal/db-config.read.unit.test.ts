@@ -2488,7 +2488,7 @@ describe("readDbConfig auth.Enabled validation", () => {
   it.effect("rejects the removed linkedin provider, naming linkedin_oidc", () =>
     failsWith(
       ["[auth.external.linkedin]", "enabled = true"],
-      "[auth.external.linkedin] in supabase/config.toml is no longer supported. Use [auth.external.linkedin_oidc] instead.",
+      "auth.external.linkedin in supabase/config.toml is no longer supported. Use auth.external.linkedin_oidc instead.",
     ),
   );
 

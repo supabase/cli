@@ -1,3 +1,4 @@
+import { withSidebar } from "../../../command-internal/command-sidebar.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -14,6 +15,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { STACK_SELECTOR_FLAGS } from "../../../command-internal/stack-target.ts";
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
@@ -26,16 +28,9 @@ const config = {
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationUpCommand = Command.make("up", config).pipe(
+  withSidebar({ title: "Apply pending migration files" }),
   Command.withDescription("Apply pending migrations to a database."),
   Command.withShortDescription("Apply pending migrations to a database"),
-  withPermissions(
-    compose(
-      { operations: [], noApiEffectFlags: ["include-all"] },
-      dbConfig,
-      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      branchResolution,
-    ),
-  ),
   Command.withHandler((flags) =>
     migrationUp(flags).pipe(
       withCommandTelemetry({
@@ -50,4 +45,13 @@ export const migrationUpCommand = Command.make("up", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["include-all"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
+    ),
+  ),
 );

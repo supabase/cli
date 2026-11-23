@@ -130,8 +130,8 @@ const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
 // Value-taking flags for `scanArgvFlags`: each consumes the next argv token
-// as its value. `--skip-url-validation` is this command's only boolean flag,
-// so it's excluded.
+// as its value. The boolean flags (`--skip-url-validation`, `--dedicated-scope`)
+// are excluded.
 const SSO_ADD_SCAN_SPEC = {
   valueFlagNames: new Set([
     "project-ref",
@@ -173,6 +173,9 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     );
     const skipUrlValidation = yield* Effect.fromResult(
       argvBoolValue(occurrences, "skip-url-validation"),
+    ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
+    const dedicatedScope = yield* Effect.fromResult(
+      argvBoolValue(occurrences, "dedicated-scope"),
     ).pipe(Effect.mapError((message) => new SsoInvalidFlagValueError({ message })));
     const nameIdFormat = yield* Effect.fromResult(
       argvEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
@@ -291,6 +294,8 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         if (format !== undefined) body.name_id_format = format;
       }
 
+      if (occurrences.has("dedicated-scope")) body.dedicated_scope = dedicatedScope;
+
       yield* requireHostedMutationConsent({
         action: "Add an SSO provider",
         details: [
@@ -298,6 +303,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
           ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
           ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
           ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(occurrences.has("dedicated-scope") ? [`Dedicated scope: ${dedicatedScope}`] : []),
         ],
       });
 
@@ -371,7 +377,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         return;
       }
 
-      yield* output.raw(renderSingleProvider(provider));
+      yield* output.raw(renderSingleProvider(provider, ref));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

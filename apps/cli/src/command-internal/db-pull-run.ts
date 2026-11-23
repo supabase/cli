@@ -8,7 +8,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { bold } from "./colors.ts";
-import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
+import { isIPv6ConnectivityError, pgDumpFailureSuggestion } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import {
   hostedMutationPreapproval,
@@ -458,11 +458,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             reprintOnRetry: Effect.void,
           });
           if (dumpResult.exitCode !== 0) {
+            const suggestion = pgDumpFailureSuggestion(dumpResult.stderr);
             return yield* new DbPullDumpError({
               message: `error running container: exit ${dumpResult.exitCode}`,
-              ...(isIPv6ConnectivityError(dumpResult.stderr)
-                ? { suggestion: ipv6Suggestion() }
-                : {}),
+              ...(suggestion === undefined ? {} : { suggestion }),
             });
           }
         }

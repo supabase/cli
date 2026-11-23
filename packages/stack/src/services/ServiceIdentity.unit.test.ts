@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 import * as Realtime from "./Realtime.ts";
 import type { ServiceEndpoint } from "./Recipe.ts";
 import * as Rest from "./Rest.ts";
@@ -52,6 +52,20 @@ it.effect("probes PostgREST readiness on its admin server port", () =>
     expect(spec.healthPath).toBe("/ready");
     expect(env.PGRST_SERVER_PORT).toBe("54321");
     expect(env.PGRST_ADMIN_SERVER_PORT).toBe("54322");
+  }),
+);
+
+it.effect("forwards the PostgREST pool size only when dbPool is set", () =>
+  Effect.gen(function* () {
+    const restEnv = (config: Rest.Config) =>
+      Schema.decodeEffect(Rest.Creation)({ service: "rest", pin: selection.rest, config }).pipe(
+        Effect.flatMap((creation) => Rest.makeSpec().env(creation, new Map(), false)),
+      );
+    const databaseUrl = "postgresql://localhost/postgres";
+
+    expect((yield* restEnv({ databaseUrl, dbPool: 10 })).PGRST_DB_POOL).toBe("10");
+    expect(yield* restEnv({ databaseUrl })).not.toHaveProperty("PGRST_DB_POOL");
+    expect(Exit.isFailure(yield* Effect.exit(restEnv({ databaseUrl, dbPool: 0 })))).toBe(true);
   }),
 );
 

@@ -19,9 +19,8 @@ const mapOrgsListError = mapHttpError({
   statusMessage: (status, body) => `Unexpected error retrieving organizations: ${body} (${status})`,
 });
 
-// Order matches the `--region` enum choices.
+/* `--region` enum order, with private ap-east-1 last so it is not the focused default. */
 const REGION_CODES = [
-  "ap-east-1",
   "ap-northeast-1",
   "ap-northeast-2",
   "ap-south-1",
@@ -39,6 +38,7 @@ const REGION_CODES = [
   "us-east-2",
   "us-west-1",
   "us-west-2",
+  "ap-east-1",
 ] as const;
 
 /**

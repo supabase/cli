@@ -15,6 +15,7 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { INLINE_ROOT_CERT_ENV } from "./pg-dump.env.ts";
 
 /**
  * Runs a pg_dump/pg_dumpall bash script in a one-shot container, streaming stdout
@@ -96,6 +97,23 @@ const CONTAINER_TLS_FILES = [
 
 const CONTAINER_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
 const CONTAINER_PRIVATE_KEY = "/tmp/supabase-client.key";
+const CONTAINER_INLINE_ROOT_CERT = "/tmp/supabase-root.crt";
+
+/* libpq reads root certs only from a file, so a native pg_dump gets the inline CA as a temp file. */
+const nativeInlineRootCert = Effect.fn("PgDump.nativeInlineRootCert")(function* (
+  env: Readonly<Record<string, string>>,
+) {
+  const { [INLINE_ROOT_CERT_ENV]: pem, ...rest } = env;
+  if (pem === undefined) return env;
+  const fs = yield* FileSystem.FileSystem;
+  const unwritable = (error: { readonly message: string }) =>
+    new DbConnectError({ message: `failed to write the Supabase root CA: ${error.message}` });
+  const file = yield* fs
+    .makeTempFileScoped({ prefix: "supabase-root-", suffix: ".crt" })
+    .pipe(Effect.mapError(unwritable));
+  yield* fs.writeFileString(file, pem).pipe(Effect.mapError(unwritable));
+  return { ...rest, PGSSLROOTCERT: file };
+});
 
 const HOST_CA_BUNDLES = [
   "/etc/ssl/cert.pem",
@@ -171,12 +189,16 @@ const containerTlsFiles = Effect.fnUntraced(function* (
     mounts.push({ source, target, readOnly: true });
     mounted[key] = target;
   }
-  if (usesDefaultTrustRoots(env)) mounted["PGSSLROOTCERT"] = CONTAINER_CA_BUNDLE;
-  const key = mounted["PGSSLKEY"];
   let prelude = "";
+  if (env[INLINE_ROOT_CERT_ENV] !== undefined) {
+    /* Written inside the container, so no bind mount is needed for the pinned Supabase CA. */
+    prelude += `printf '%s' "$${INLINE_ROOT_CERT_ENV}" > ${CONTAINER_INLINE_ROOT_CERT} || exit 1\n`;
+    mounted["PGSSLROOTCERT"] = CONTAINER_INLINE_ROOT_CERT;
+  } else if (usesDefaultTrustRoots(env)) mounted["PGSSLROOTCERT"] = CONTAINER_CA_BUNDLE;
+  const key = mounted["PGSSLKEY"];
   if (key !== undefined) {
     /* libpq rejects a key Docker Desktop shares with loose permissions; use a private copy. */
-    prelude = `(umask 077 && cp ${key} ${CONTAINER_PRIVATE_KEY}) || exit 1\n`;
+    prelude += `(umask 077 && cp ${key} ${CONTAINER_PRIVATE_KEY}) || exit 1\n`;
     mounted["PGSSLKEY"] = CONTAINER_PRIVATE_KEY;
   }
   /* SELinux blocks label-confined containers from reading host files. */
@@ -457,35 +479,40 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       runtime.kind === "container" && runtimeInfo.platform === "linux"
         ? ["host.docker.internal:host-gateway"]
         : [];
-    const tls =
-      runtime.kind === "container"
-        ? yield* containerTlsFiles(params.env, params.script)
-        : {
-            env: yield* nativeTlsEnv(
-              params.env,
-              runtimeInfo.homeDir,
-              params.client.pin.upstreamVersion,
-            ),
-            mounts: [],
-            securityOpt: [],
-            script: params.script,
-          };
-    return yield* bundled.run({
-      pin: params.client.pin,
-      runtime,
-      argv: ["bash", "-c", tls.script, "--"],
-      env: tls.env,
-      mounts: tls.mounts,
-      securityOpt: tls.securityOpt,
-      network: yield* bundledDumpNetwork(
-        Option.getOrUndefined(networkIdFlag),
-        params.forceHostNetwork === true,
-        params.projectEnvValues ?? {},
-      ),
-      extraHosts,
-      onStdout: params.onStdout,
-      teeStderr: true,
-    });
+    const pin = params.client.pin;
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const tls =
+          runtime.kind === "container"
+            ? yield* containerTlsFiles(params.env, params.script)
+            : {
+                env: yield* nativeTlsEnv(
+                  yield* nativeInlineRootCert(params.env),
+                  runtimeInfo.homeDir,
+                  pin.upstreamVersion,
+                ),
+                mounts: [],
+                securityOpt: [],
+                script: params.script,
+              };
+        return yield* bundled.run({
+          pin,
+          runtime,
+          argv: ["bash", "-c", tls.script, "--"],
+          env: tls.env,
+          mounts: tls.mounts,
+          securityOpt: tls.securityOpt,
+          network: yield* bundledDumpNetwork(
+            Option.getOrUndefined(networkIdFlag),
+            params.forceHostNetwork === true,
+            params.projectEnvValues ?? {},
+          ),
+          extraHosts,
+          onStdout: params.onStdout,
+          teeStderr: true,
+        });
+      }),
+    );
   }
   return yield* streamPgDump({
     ...params,

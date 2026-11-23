@@ -7,6 +7,7 @@ import {
   ContractReset,
   ContractTarget,
   type ContractTargetError,
+  ContractTrust,
   inviteTemplateMarker,
 } from "./target.ts";
 
@@ -18,6 +19,7 @@ interface ContractCase {
     ContractCallError | ContractTargetError | HttpClientError.HttpClientError | Schema.SchemaError,
     | ContractTarget
     | ContractReset
+    | ContractTrust
     | HttpClient.HttpClient
     | Socket.WebSocketConstructor
     | Scope.Scope
@@ -53,11 +55,46 @@ const sdk = <R extends { readonly data: unknown; readonly error: unknown }>(
       : Effect.fail(new ContractCallError({ message: `${operation} failed`, cause: result.error })),
   );
 
+/* Bun's WebSocket trusting the setup's certificate, for Realtime over `wss:`. */
+const trustingWebSocket = (ca: string) =>
+  class extends WebSocket {
+    constructor(url: string | URL, protocols?: string | Array<string>) {
+      super(url, { tls: { ca }, ...(protocols === undefined ? {} : { protocols }) });
+    }
+  };
+
+/* The first channel join on a fresh stack also pays Realtime's tenant startup, which can pass the 10s client default on a slow runner. */
+const REALTIME_JOIN_TIMEOUT_MS = 30_000;
+
 const contractClient = (key: "PUBLISHABLE_KEY" | "ANON_KEY" | "SECRET_KEY") =>
-  ContractTarget.useSync((target) =>
-    createClient(target.API_URL, target[key], {
+  Effect.gen(function* () {
+    const target = yield* ContractTarget;
+    const ca = yield* ContractTrust;
+    const base = yield* FetchHttpClient.Fetch;
+    return createClient(target.API_URL, target[key], {
       auth: { persistSession: false, autoRefreshToken: false },
-    }),
+      realtime: {
+        timeout: REALTIME_JOIN_TIMEOUT_MS,
+        ...(ca === undefined ? {} : { transport: trustingWebSocket(ca) }),
+      },
+      ...(ca === undefined
+        ? {}
+        : {
+            global: {
+              fetch: Object.assign(
+                (input: Parameters<typeof base>[0], init?: BunFetchRequestInit) =>
+                  base(input, { ...init, tls: { ca } }),
+                { preconnect: base.preconnect },
+              ),
+            },
+          }),
+    });
+  });
+
+/** The fetch options every contract HTTP request takes: the setup's certificate, plus `extra`. */
+const requestInit = (extra: BunFetchRequestInit = {}) =>
+  ContractTrust.useSync((ca): BunFetchRequestInit =>
+    ca === undefined ? extra : { ...extra, tls: { ca } },
   );
 
 const unique = (prefix: string) =>
@@ -160,6 +197,8 @@ const signUpConfirmationLink = Effect.fn("Contract.signUpConfirmationLink")(func
     .replaceAll("&amp;", "&")
     .match(/https?:\/\/[^\s"'<>]+\/verify\?[^\s"'<>]+/);
   if (link === null) return yield* mailError("no verify link");
+  /* Under TLS, Auth links name the HTTPS host URL. */
+  if ((yield* ContractTrust) !== undefined) expect(link[0]).toMatch(/^https:\/\//u);
   return link[0];
 });
 
@@ -178,7 +217,10 @@ const authCases: ReadonlyArray<ContractCase> = [
     run: Effect.gen(function* () {
       const email = `${yield* unique("confirmed")}@example.com`;
       const verified = yield* HttpClient.get(yield* signUpConfirmationLink(email)).pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.provideServiceEffect(
+          FetchHttpClient.RequestInit,
+          requestInit({ redirect: "manual" }),
+        ),
       );
       expect(verified.status).toBe(303);
       expect(verified.headers.location).toContain("access_token=");
@@ -317,7 +359,7 @@ const invokesEcho = (key: "PUBLISHABLE_KEY" | "ANON_KEY") =>
   Effect.gen(function* () {
     const client = yield* contractClient(key);
     const data = yield* sdk("invoke echo", (signal) => client.functions.invoke("echo", { signal }));
-    expect(data).toEqual({ ok: true });
+    expect(data).toMatchObject({ ok: true });
   });
 
 const functionsCases: ReadonlyArray<ContractCase> = [
@@ -329,6 +371,17 @@ const functionsCases: ReadonlyArray<ContractCase> = [
   {
     name: "Functions invokes a function with the legacy anon key",
     run: invokesEcho("ANON_KEY"),
+    timeout: COLD_LAUNCH_TIMEOUT_MS,
+  },
+  {
+    name: "Functions sees SUPABASE_DB_URL for the postgres role",
+    run: Effect.gen(function* () {
+      const client = yield* contractClient("PUBLISHABLE_KEY");
+      const data = yield* sdk("invoke echo", (signal) =>
+        client.functions.invoke("echo", { signal }),
+      );
+      expect(data).toMatchObject({ dbUser: "postgres" });
+    }),
     timeout: COLD_LAUNCH_TIMEOUT_MS,
   },
   {
@@ -428,13 +481,20 @@ const contractCases: ReadonlyArray<ContractCase> = [
 /** Runs every contract case against one setup's running stack. */
 export const describeContract = <E>(
   setup: string,
-  target: Layer.Layer<ContractTarget | ContractReset, E>,
+  target: Layer.Layer<ContractTarget | ContractReset | ContractTrust, E>,
 ) =>
-  layer(Layer.mergeAll(target, FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal), {
-    /* Guards the stack start, including first image pulls or native artifact downloads. */
-    timeout: "5 minutes",
-    excludeTestServices: true,
-  })(`consumer contract (${setup})`, (it) => {
+  layer(
+    Layer.mergeAll(
+      Layer.effect(FetchHttpClient.RequestInit, requestInit()),
+      FetchHttpClient.layer,
+      Socket.layerWebSocketConstructorGlobal,
+    ).pipe(Layer.provideMerge(target)),
+    {
+      /* Guards the stack start, including first image pulls or native artifact downloads. */
+      timeout: "5 minutes",
+      excludeTestServices: true,
+    },
+  )(`consumer contract (${setup})`, (it) => {
     for (const { name, run, timeout } of contractCases)
       it.effect(name, () => run, timeout ?? 60_000);
   });

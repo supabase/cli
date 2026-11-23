@@ -38,6 +38,7 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigConvertError
 CliConfigFileConflictError
 CliConfigFlagConflictError
 CliConfigLoadError
@@ -71,6 +72,15 @@ ComputeSourceMissingError
 ComputeStacksValidationError
 ComputeUnavailableError
 ComputeUploadFailedError
+ConfigConvertAlreadyJsonError
+ConfigConvertFileChangedError
+ConfigConvertLoadConfigError
+ConfigConvertOutputFlagUnsupportedError
+ConfigConvertReasonWithoutTomlTargetError
+ConfigConvertTomlExistsError
+ConfigConvertUnsupportedError
+ConfigConvertWorkdirError
+ConfigConvertWriteError
 ConfigDiffLoadConfigError
 ConfigDiffOutputFlagUnsupportedError
 ConfigDiffReadNetworkError
@@ -110,6 +120,10 @@ ConfigPushSslEnforcementUpdateStatusError
 ConfigPushStorageUpdateNetworkError
 ConfigPushStorageUpdateStatusError
 ConfigPushWorkdirError
+ConfigValidateLoadError
+ConfigValidateOutputFlagUnsupportedError
+ConfigValidateProblemsError
+ConfigValidateWorkdirError
 ConflictingFunctionDeployFlagsError
 ConflictingFunctionDownloadFlagsError
 ContainerCreateError
@@ -186,6 +200,7 @@ DbSetupError
 DbStartFromBackupUnsupportedError
 DeclarativeApplyError
 DeclarativeCompatibilityError
+DeclarativeDestructiveChangesError
 DeclarativeDiffError
 DeclarativeMutuallyExclusiveFlagsError
 DeclarativeNoFilesGeneratedError
@@ -206,7 +221,6 @@ DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerRunError
-DocsExamplesError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
@@ -223,6 +237,7 @@ ExperimentalStackInstallError
 ExperimentalStackListError
 ExperimentalStackLogsError
 ExperimentalStackOutdatedError
+ExperimentalStackPruneError
 ExperimentalStackRestartError
 ExperimentalStackStartError
 ExperimentalStackStatusError
@@ -570,6 +585,7 @@ TestNewInvalidNameError
 TestNewWriteError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
+UnknownComputeSecretsScopeError
 UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError

@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 import { withRecordValueDecodingDefault } from "../lib/schema.ts";
+import { type CliConfigTableRuleIssue, tableRuleFilter } from "../lib/table-rule.ts";
 
 const tags = ["auth"];
 
@@ -36,19 +37,47 @@ const defaultContentPath = "";
 const templateName = Schema.String;
 const notificationName = Schema.String;
 
-function requiredWhenEnabled<
-  T extends Record<string, string | number | boolean | undefined> & { enabled: boolean },
->(path: string, predicate: (value: T) => boolean, message: string) {
-  return Schema.makeFilter((value: T) => {
-    if (!value.enabled || predicate(value)) {
-      return undefined;
-    }
+interface SmtpInput {
+  readonly enabled: boolean;
+  readonly host?: string;
+  readonly port?: number;
+  readonly user?: string;
+  readonly pass?: string;
+  readonly admin_email?: string;
+}
 
-    return {
-      path: [path],
-      issue: message,
-    };
-  });
+const isFilled = (field: string | undefined) => field !== undefined && field !== "";
+
+const smtpKeys = ["host", "port", "user", "pass", "admin_email"] as const;
+
+type SmtpRequirementKey = (typeof smtpKeys)[number];
+
+const smtpRequirements: Record<SmtpRequirementKey, (value: SmtpInput) => boolean> = {
+  host: (value: SmtpInput) => isFilled(value.host),
+  port: (value: SmtpInput) => value.port !== undefined,
+  user: (value: SmtpInput) => isFilled(value.user),
+  pass: (value: SmtpInput) => isFilled(value.pass),
+  admin_email: (value: SmtpInput) => isFilled(value.admin_email),
+};
+
+function smtpRequirementIssues(
+  value: SmtpInput,
+  key: SmtpRequirementKey,
+): ReadonlyArray<CliConfigTableRuleIssue> {
+  return !value.enabled || smtpRequirements[key](value)
+    ? []
+    : [{ path: [key], message: `Missing required field in config: auth.email.smtp.${key}` }];
+}
+
+const smtpRequirementFilter = (key: SmtpRequirementKey) =>
+  tableRuleFilter((value: SmtpInput) => smtpRequirementIssues(value, key));
+
+/** The `[auth.email.smtp]` required-when-enabled issues; paths are relative to that table. */
+export function cliConfigSmtpIssues(
+  value: SmtpInput,
+  keys: ReadonlyArray<SmtpRequirementKey> = smtpKeys,
+): ReadonlyArray<CliConfigTableRuleIssue> {
+  return keys.flatMap((key) => smtpRequirementIssues(value, key));
 }
 
 const template = Schema.Struct({
@@ -178,31 +207,11 @@ export const email = Schema.Struct({
       ),
     })
       .check(
-        requiredWhenEnabled(
-          "host",
-          (value) => value.host !== undefined && value.host !== "",
-          "Missing required field in config: auth.email.smtp.host",
-        ),
-        requiredWhenEnabled(
-          "port",
-          (value) => value.port !== undefined,
-          "Missing required field in config: auth.email.smtp.port",
-        ),
-        requiredWhenEnabled(
-          "user",
-          (value) => value.user !== undefined && value.user !== "",
-          "Missing required field in config: auth.email.smtp.user",
-        ),
-        requiredWhenEnabled(
-          "pass",
-          (value) => value.pass !== undefined && value.pass !== "",
-          "Missing required field in config: auth.email.smtp.pass",
-        ),
-        requiredWhenEnabled(
-          "admin_email",
-          (value) => value.admin_email !== undefined && value.admin_email !== "",
-          "Missing required field in config: auth.email.smtp.admin_email",
-        ),
+        smtpRequirementFilter("host"),
+        smtpRequirementFilter("port"),
+        smtpRequirementFilter("user"),
+        smtpRequirementFilter("pass"),
+        smtpRequirementFilter("admin_email"),
       )
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),

@@ -24,10 +24,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["branching_development_write"], ["branching_production_write"]],
     oauthScope: "environment:write",
   },
-  "v1-merge-a-branch": {
-    fga: [["branching_development_write"], ["branching_production_write"]],
-    oauthScope: "environment:write",
-  },
+  "v1-merge-a-branch": { fga: [["branching_production_write"]], oauthScope: "environment:write" },
   "v1-reset-a-branch": {
     fga: [["branching_development_write"], ["branching_production_write"]],
     oauthScope: "environment:write",
@@ -248,6 +245,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v1-get-security-advisors": { fga: [["advisors_read"]], oauthScope: "database:read" },
   "v1-get-project-logs-all": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
   "v1-get-project-logs": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
+  "v1-post-project-logs": { fga: [["analytics_logs_read"]], oauthScope: "analytics:read" },
   "v1-get-project-usage-api-count": { fga: [["analytics_usage_read"]] },
   "v1-get-project-usage-request-count": { fga: [["analytics_usage_read"]] },
   "v1-get-project-function-combined-stats": { fga: [["analytics_usage_read"]] },
@@ -280,6 +278,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v1-list-all-functions": { fga: [["edge_functions_read"]], oauthScope: "edge_functions:read" },
   "v1-create-a-function": { fga: [["edge_functions_write"]], oauthScope: "edge_functions:write" },
   "v1-bulk-update-functions": {
+    fga: [["edge_functions_write"]],
+    oauthScope: "edge_functions:write",
+  },
+  "v1-delete-all-functions": {
     fga: [["edge_functions_write"]],
     oauthScope: "edge_functions:write",
   },
@@ -335,6 +337,31 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-get-warehouse-capacity": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-query-stats": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-disable-warehouse": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-get-warehouse-teardown": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-enable-warehouse": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-create-warehouse-setup": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
+  "v2-get-warehouse-setup": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-status": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-connection": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-list-warehouse-tables": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-table-layout": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-update-warehouse-table-layout": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
   "v2-list-log-drains": { fga: [["analytics_config_read"]], oauthScope: "analytics_config:read" },
   "v2-create-log-drain": {
     fga: [["analytics_config_write"]],
@@ -367,6 +394,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
         "storage_config_read",
       ],
     ],
+  },
+  "v2-delete-project-function": {
+    fga: [["edge_functions_write"]],
+    oauthScope: "edge_functions:write",
   },
   "v2-list-notebooks": { fga: [["project_notebooks_read"]], oauthScope: "database:read" },
   "v2-create-notebook": { fga: [["project_notebooks_write"]], oauthScope: "database:write" },

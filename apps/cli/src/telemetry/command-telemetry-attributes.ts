@@ -2,16 +2,36 @@ import { Context, Effect } from "effect";
 import type { StackRuntime } from "../command-internal/stack-runtime.ts";
 import type { ServeEndReason } from "../shared/functions/serve.ts";
 import {
+  PropConfigFormat,
   PropConfigKey,
+  PropConvertMovedCommentCount,
+  PropConvertReason,
+  PropConvertTarget,
   PropEdgeRuntimeExitCode,
   PropOrioleDb,
   PropServeEndReason,
   PropStackRuntime,
 } from "../shared/telemetry/event-catalog.ts";
 
+export const CONVERT_REASONS = [
+  "editor",
+  "third-party-tool",
+  "older-cli",
+  "ci-or-deploy",
+  "ai-agent",
+  "preference",
+  "other",
+] as const;
+
+export type ConvertReason = (typeof CONVERT_REASONS)[number];
+
 /** Properties that code below a command handler adds to its `cli_command_executed` event. */
 export interface CommandTelemetryAttributeValues {
+  readonly [PropConvertTarget]?: "toml" | "jsonc";
+  readonly [PropConvertReason]?: ConvertReason;
+  readonly [PropConvertMovedCommentCount]?: number;
   readonly [PropConfigKey]?: string;
+  readonly [PropConfigFormat]?: "toml" | "json" | "jsonc";
   readonly [PropOrioleDb]?: boolean;
   readonly [PropStackRuntime]?: StackRuntime;
   readonly [PropServeEndReason]?: ServeEndReason;

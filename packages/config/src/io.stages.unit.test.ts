@@ -172,7 +172,7 @@ enabled = true
         expect(failure).toMatchObject({
           _tag: "CliConfigRemovedKeyError",
           removedKeys: [
-            { key: "[remotes.staging.inbucket]", replacement: "[remotes.staging.local_smtp]" },
+            { key: "remotes.staging.inbucket", replacement: "remotes.staging.local_smtp" },
           ],
         });
       }),

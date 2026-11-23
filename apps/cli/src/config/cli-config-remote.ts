@@ -38,6 +38,24 @@ export const selectCliConfigRemote = (
   )?.name;
 };
 
+/** The name of an earlier remote with the same `project_id`, recording this one otherwise; remotes without one never collide. */
+export const earlierRemoteWithProjectId = (
+  seen: Map<string, string>,
+  name: string,
+  projectId: string | undefined,
+): string | undefined => {
+  if (projectId === undefined) return undefined;
+  const prior = seen.get(projectId);
+  if (prior === undefined) seen.set(projectId, name);
+  return prior;
+};
+
+export const remoteProjectIdFormatMessage = (name: string): string =>
+  `Invalid config for remotes.${name}.project_id. Must be like: abcdefghijklmnopqrst`;
+
+export const isValidRemoteProjectId = (projectId: string | undefined): boolean =>
+  projectId !== undefined && PROJECT_REF_PATTERN.test(projectId);
+
 /**
  * The load failure for a duplicate or malformed remote `project_id`, if any. Runs on every load,
  * regardless of which remote is selected.
@@ -48,13 +66,10 @@ export const cliConfigRemoteFailure = (
 ): string | undefined => {
   const seen = new Map<string, string>();
   for (const { name, block } of remoteBlocks(remotes)) {
-    const projectId = matchProjectId(name, block, lookup);
-    if (projectId === undefined) continue;
-    const prior = seen.get(projectId);
+    const prior = earlierRemoteWithProjectId(seen, name, matchProjectId(name, block, lookup));
     if (prior !== undefined) {
       return `duplicate project_id for [remotes.${name}] and [remotes.${prior}]`;
     }
-    seen.set(projectId, name);
   }
   for (const { name, block } of remoteBlocks(remotes)) {
     const override = lookup(cliRemoteProjectIdEnvName(name));
@@ -62,9 +77,7 @@ export const cliConfigRemoteFailure = (
     const projectId =
       override ??
       (literal === undefined ? undefined : expandCliConfigEnvReference(literal, lookup));
-    if (projectId === undefined || !PROJECT_REF_PATTERN.test(projectId)) {
-      return `Invalid config for remotes.${name}.project_id. Must be like: abcdefghijklmnopqrst`;
-    }
+    if (!isValidRemoteProjectId(projectId)) return remoteProjectIdFormatMessage(name);
   }
   return undefined;
 };

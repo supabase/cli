@@ -1,3 +1,9 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
+import { FlagDocumentation } from "../../command-internal/flag-documentation.ts";
+import {
+  STACK_SELECTOR_FLAGS,
+  STACK_SELECTOR_FLAG_NAMES,
+} from "../../command-internal/stack-target.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -20,14 +26,17 @@ const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
   type: Flag.Literals("type", ["all", "security", "performance", "health"] as const).pipe(
     Flag.withDescription("Type of issues to check: all, security, performance, health."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "all" }),
     Flag.optional,
   ),
   severity: Flag.Literals("severity", ["info", "warning", "critical"] as const).pipe(
     Flag.withDescription("Minimum issue severity to display: info, warning, critical."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "info" }),
     Flag.optional,
   ),
   failOn: Flag.Literals("fail-on", ["none", "info", "warning", "critical"] as const).pipe(
     Flag.withDescription("Minimum displayed issue severity to exit with non-zero status."),
+    Flag.annotate(FlagDocumentation, { defaultValue: "none" }),
     Flag.optional,
   ),
 } as const;
@@ -35,6 +44,7 @@ const config = {
 export type IssuesFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const issuesCommand = Command.make("issues", config).pipe(
+  withSidebar({ category: "projects", title: "Check project issues" }),
   Command.withDescription("Checks security, performance, and health issues."),
   Command.withShortDescription("Checks security, performance, and health issues"),
   withPermissions(
@@ -72,7 +82,7 @@ export const issuesCommand = Command.make("issues", config).pipe(
             when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
           },
         ],
-        noApiEffectFlags: ["severity", "fail-on"],
+        noApiEffectFlags: ["severity", "fail-on", ...STACK_SELECTOR_FLAG_NAMES],
       },
       withCondition(projectRefPicker, { dbTarget: ["linked"] }),
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
@@ -97,6 +107,7 @@ export const issuesCommand = Command.make("issues", config).pipe(
   Command.provide(advisorChecksRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  Command.withGlobalFlags(STACK_SELECTOR_FLAGS),
   withTargetPolicy({
     group: "selectable",
     consent: "none",

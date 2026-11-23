@@ -1209,6 +1209,37 @@ describe("withCommandTelemetry", () => {
     );
   });
 
+  it.live("classifies a config validate run that reports problems as a config error", () => {
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+
+    return Effect.gen(function* () {
+      const pc = yield* ProcessControl;
+      yield* pc.setExitCode(1);
+    }).pipe(
+      withCommandTelemetry(),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["config", "validate"]) }),
+          commandRuntimeLayer(["config", "validate"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "tag:ConfigValidateProblemsError",
+          });
+        }),
+      ),
+    );
+  });
+
   it.live("classifies db advisors machine-mode fail-on like its typed text-mode error", () => {
     const analytics = mockContextualAnalytics();
     const processControl = mockProcessControl();

@@ -14,7 +14,7 @@ import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
 const currentPostgresTag = imageTag(currentPostgres) ?? "";
-// PG13/15 and PG14 now come from the Dockerfile's generated `pg15`/hand-pinned `pg14` stages
+// PG15 and PG14 now come from the Dockerfile's generated `pg15`/hand-pinned `pg14` stages
 // (the single version table), not hardcoded fallback constants.
 const pg15Image = dockerfileServiceImageRaw("pg15");
 const pg15Tag = imageTag(pg15Image) ?? "";
@@ -52,10 +52,6 @@ describe("resolveDbImage", () => {
   it.effect("resolves the default Postgres image per major version", () =>
     Effect.gen(function* () {
       const dir = yield* withTemp;
-      expect(yield* resolve(dir, 13)).toEqual({
-        image: pg15Image,
-        configImage: pg15Image,
-      });
       expect(yield* resolve(dir, 14)).toEqual({
         image: pg14Image,
         configImage: pg14Image,
@@ -137,10 +133,6 @@ describe("resolveDbImage", () => {
       return Effect.gen(function* () {
         const dir = yield* withTemp;
         expect(yield* resolve(dir, 15)).toEqual({
-          image: pinned,
-          configImage: pg15Image,
-        });
-        expect(yield* resolve(dir, 13)).toEqual({
           image: pinned,
           configImage: pg15Image,
         });

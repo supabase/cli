@@ -38,13 +38,11 @@ const isRemovedKeyError = taggedAs<CliConfigRemovedKeyError>("CliConfigRemovedKe
 const isParseError = taggedAs<CliConfigParseError>("CliConfigParseError");
 const isValueError = taggedAs<CliConfigValueError>("CliConfigValueError");
 
-const removedKeyPath = (displayKey: string): string | undefined => {
-  const path = displayKey.replaceAll(/[[\]]/g, "");
-  return REMOVED_KEY_PATHS.find(
+const removedKeyPath = (path: string): string | undefined =>
+  REMOVED_KEY_PATHS.find(
     (canonical) =>
       path === canonical || (path.startsWith("remotes.") && path.endsWith(`.${canonical}`)),
   );
-};
 
 const knownPrefix = (segments: ReadonlyArray<string>): string | undefined => {
   for (let length = segments.length; length > 0; length--) {

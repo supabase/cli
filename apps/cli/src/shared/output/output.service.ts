@@ -32,6 +32,8 @@ interface OutputSelectBehavior {
    * signed token).
    */
   readonly stream?: "stdout" | "stderr";
+  /** Skips clack's "Operation cancelled." line when the picker is cancelled; the cancel still interrupts. */
+  readonly silentCancel?: boolean;
 }
 
 /**
@@ -52,7 +54,12 @@ interface OutputShape {
   readonly task: (message: string) => Effect.Effect<OutputTask>;
   readonly promptText: (
     message: string,
-    opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
+    opts?: {
+      validate?: (v: string) => string | undefined;
+      defaultValue?: string;
+      /* Editable starting text on an interactive terminal, a placeholder elsewhere. */
+      initialValue?: string;
+    },
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptPassword: (message: string) => Effect.Effect<string, NonInteractiveError>;
   readonly promptConfirm: (

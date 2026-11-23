@@ -79,5 +79,5 @@ export const lockSchemaDocument = () => {
   };
 };
 
-/** The path under `apps/docs/public` that serves the schema published at `url`. */
+/** The URL path mirrored under `apps/cli` for the schema published at `url`. */
 export const publishedSchemaPath = (url: string): string => new URL(url).pathname;

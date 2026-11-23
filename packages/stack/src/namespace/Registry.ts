@@ -33,6 +33,9 @@ export const StackKeysInput = Schema.Struct({
 });
 export interface StackKeysInput extends Schema.Schema.Type<typeof StackKeysInput> {}
 
+export const ApiTls = Schema.Struct({ cert: Schema.String, key: Schema.String });
+export type ApiTls = Schema.Schema.Type<typeof ApiTls>;
+
 export const StackCredentials = Schema.Struct({
   jwtSecret: Schema.String,
   postgresRootKey: Schema.String,
@@ -71,6 +74,8 @@ export const SavedStack = Schema.Struct({
   ),
   composition: CompositionConfig,
   credentials: Schema.optionalKey(StackCredentials),
+  /** The pair the shared API port serves HTTPS with; absent is plain. */
+  apiTls: Schema.optionalKey(ApiTls),
 });
 export interface SavedStack extends Schema.Schema.Type<typeof SavedStack> {}
 

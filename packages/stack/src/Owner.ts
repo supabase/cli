@@ -26,6 +26,7 @@ import {
   isSchemaWriter,
   type SchemaWriterService,
 } from "./internal/schema-writers.ts";
+import { API_TLS_CHECK_PATH, apiTlsContext } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -76,6 +77,7 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import { apiTlsRuntimeLabel, checkApiTlsReach } from "./runtime/ApiTlsSupport.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import { confirmStackDataRoot } from "./namespace/Paths.ts";
@@ -305,6 +307,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     service: GatewayLog.gatewayLog.service,
   });
   const definitionGate = yield* Semaphore.make(1);
+  /* Serialises compose, starts and restarts with their checks; when both are needed,
+     `definitionGate` is taken first. */
+  const lifecycle = yield* Semaphore.make(1);
   const { id: stackId, runtime } = options.saved;
   const project = projectSegmentFor(options.saved.identity, path);
   const routeKeys = {
@@ -753,6 +758,93 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     },
     Effect.mapError(serviceError("compose")),
   );
+  /* A stopped stack takes the requested API TLS; a recompose that retains members without one
+     keeps the saved TLS. */
+  const applyApiTls = Effect.fn("Owner.applyApiTls")(function* (
+    apiTls: SupabaseCompositionOptions["apiTls"],
+    retainMembers: boolean,
+  ) {
+    if (apiTls === undefined && retainMembers) return;
+    if (apiTls !== undefined)
+      yield* apiTlsContext(apiTls).pipe(Effect.mapError(serviceError("bind")));
+    const previous = yield* options.state
+      .withLock(
+        readSaved.pipe(
+          Effect.flatMap(({ apiTls: kept, ...current }) =>
+            options.state
+              .save(apiTls === undefined ? current : { ...current, apiTls })
+              .pipe(Effect.as(kept)),
+          ),
+        ),
+      )
+      .pipe(Effect.mapError(serviceError("state")));
+    /* An endpoint claim at owner startup can have opened the listener with the previous TLS; a
+       failed reopen saves that TLS again before the listener opens with it. */
+    yield* network
+      .reopenApi(
+        options.state
+          .withLock(
+            readSaved.pipe(
+              Effect.flatMap(({ apiTls: _failed, ...current }) =>
+                Effect.uninterruptible(
+                  options.state.save(
+                    previous === undefined ? current : { ...current, apiTls: previous },
+                  ),
+                ),
+              ),
+            ),
+          )
+          .pipe(Effect.mapError(serviceError("state"))),
+      )
+      .pipe(Effect.catchTag("NetworkError", (error) => Effect.fail(serviceError("bind")(error))));
+  });
+
+  /* Under TLS on an engine, the database container must read this check's reply from the API
+     port in plain after a start or restart; otherwise the stack stops and the start fails. An
+     instance started alone is checked only while the database runs, and stops too on failure. */
+  const reachApiTls = (instance?: string) =>
+    Effect.gen(function* () {
+      if (runtime === "native" || options.engineTarget === undefined) return;
+      const members = new Set((yield* orchestrator.composition).members.map(({ id }) => id));
+      const database = (yield* orchestrator.instances).find(
+        (entry) => entry.service === "database" && members.has(entry.id),
+      )?.id;
+      if (instance !== undefined) {
+        const running =
+          database !== undefined &&
+          (yield* orchestrator.status(database).pipe(
+            Effect.map((status) => status.lifecycle === "running"),
+            Effect.orElseSucceed(() => false),
+          ));
+        if (!running) return;
+      }
+      yield* checkApiTlsReach({
+        spawner: Context.get(services, ChildProcessSpawner.ChildProcessSpawner),
+        target: options.engineTarget,
+        stack: { id: stackId, root: path.resolve(options.root), database },
+        runtime: apiTlsRuntimeLabel(options.engineTarget),
+        port: yield* network.apiTlsPort,
+        path: API_TLS_CHECK_PATH,
+        answering: network.checkApi,
+        body: crypto.uuidV4().pipe(Effect.map((nonce) => `supabase-stack ${stackId} ${nonce}`)),
+        /* The composition stops first, so no dependent keeps the instance up; both stops run, and
+           the first failure is reported. */
+        stop:
+          instance === undefined
+            ? orchestrator.stopComposition
+            : Effect.gen(function* () {
+                const composition = yield* Effect.exit(orchestrator.stopComposition);
+                const stopped = yield* Effect.exit(orchestrator.stop(instance));
+                if (Exit.isFailure(composition)) return yield* Effect.failCause(composition.cause);
+                if (Exit.isFailure(stopped)) return yield* Effect.failCause(stopped.cause);
+              }),
+      }).pipe(
+        Effect.mapError(
+          (error) => new ServiceError({ operation: "start", message: error.message }),
+        ),
+      );
+    });
+
   const compose = Effect.fn("Owner.compose")(
     function* (
       inputs: ReadonlyArray<ServiceCreationInput>,
@@ -770,13 +862,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (
               Effect.map((creation) => ({ id, creation })),
             ),
           status: orchestrator.status,
+          validated: applyApiTls(
+            compositionOptions.apiTls,
+            compositionOptions.retainMembers === true,
+          ),
           create: addInstance,
           destroy: orchestrator.destroy,
           bind: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
           address: (id, endpoint, from) =>
             orchestrator.get(id).pipe(
               Effect.flatMap((entry) => entry.namespace.address(endpoint, from)),
-              Effect.map(({ host, port }) => publicUrl(host, port)),
+              Effect.map(({ host, port, scheme }) => publicUrl(host, port, scheme)),
             ),
           output: (id, name) =>
             orchestrator
@@ -889,15 +985,25 @@ const makeOwner = Effect.fn("Owner.make")(function* (
           );
         }),
       ).pipe(rpcError("createService")),
-    startService: ({ id }) => orchestrator.start(id).pipe(rpcError("startService")),
+    startService: ({ id }) =>
+      orchestrator.start(id).pipe(
+        Effect.tap(() => reachApiTls(id)),
+        lifecycle.withPermit,
+        rpcError("startService"),
+      ),
     readyService: ({ id }) => orchestrator.ready(id).pipe(rpcError("readyService")),
     stopService: ({ id }) => orchestrator.stop(id).pipe(rpcError("stopService")),
     // A config-changing restart can adopt saved credentials, so it serializes with definition
     // changes that introduce or roll them back.
-    restartService: ({ id, config }) =>
-      (config === undefined ? restart(id, config) : definitionChange(restart(id, config))).pipe(
+    restartService: ({ id, config }) => {
+      const checked = restart(id, config).pipe(
+        Effect.tap(() => reachApiTls(id)),
+        lifecycle.withPermit,
+      );
+      return (config === undefined ? checked : definitionChange(checked)).pipe(
         rpcError("restartService"),
-      ),
+      );
+    },
     destroyService: ({ id }) =>
       definitionChange(
         confirmStackDataRoot(options.state.root, stackId).pipe(
@@ -957,18 +1063,25 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
-    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers }) =>
-      definitionChange(compose(services, { reuseIds, keys, eager, retainMembers })).pipe(
-        rpcError("supabaseComposition"),
-      ),
+    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers, apiTls }) =>
+      definitionChange(
+        lifecycle.withPermit(compose(services, { reuseIds, keys, eager, retainMembers, apiTls })),
+      ).pipe(rpcError("supabaseComposition")),
     configureComposition: (configuration) =>
       definitionChange(configure(configuration)).pipe(rpcError("configureComposition")),
     startComposition: () =>
-      orchestrator.startComposition.pipe(Effect.flatMap(observeAll), rpcError("startComposition")),
+      orchestrator.startComposition.pipe(
+        Effect.tap(() => reachApiTls()),
+        lifecycle.withPermit,
+        Effect.flatMap(observeAll),
+        rpcError("startComposition"),
+      ),
     stopComposition: () =>
       orchestrator.stopComposition.pipe(Effect.flatMap(observeAll), rpcError("stopComposition")),
     restartComposition: () =>
       orchestrator.restartComposition.pipe(
+        Effect.tap(() => reachApiTls()),
+        lifecycle.withPermit,
         Effect.flatMap(observeAll),
         rpcError("restartComposition"),
       ),

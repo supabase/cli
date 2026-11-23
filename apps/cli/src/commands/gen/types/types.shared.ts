@@ -21,9 +21,10 @@ const DURATION_PART_PATTERN = new RegExp(
   "g",
 );
 
-const DurationJson = Schema.fromJsonString(Schema.String);
+const JsonString = Schema.fromJsonString(Schema.String);
 
-const quoteDuration = (raw: string) => Schema.encodeEffect(DurationJson)(raw).pipe(Effect.orDie);
+export const quoteJsonString = (raw: string) =>
+  Schema.encodeEffect(JsonString)(raw).pipe(Effect.orDie);
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
@@ -36,7 +37,7 @@ export function parseQueryTimeoutMillis(
     const input = raw.trim();
     if (input.length === 0) {
       return yield* new InvalidGenTypesDurationError({
-        message: `invalid duration ${yield* quoteDuration(raw)}`,
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
       });
     }
 
@@ -55,7 +56,7 @@ export function parseQueryTimeoutMillis(
       }
       if (match.index !== consumed) {
         return yield* new InvalidGenTypesDurationError({
-          message: `invalid duration ${yield* quoteDuration(raw)}`,
+          message: `invalid duration ${yield* quoteJsonString(raw)}`,
         });
       }
       const amount = Number.parseFloat(rawNumber);
@@ -69,7 +70,7 @@ export function parseQueryTimeoutMillis(
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
       return yield* new InvalidGenTypesDurationError({
-        message: `invalid duration ${yield* quoteDuration(raw)}`,
+        message: `invalid duration ${yield* quoteJsonString(raw)}`,
       });
     }
 

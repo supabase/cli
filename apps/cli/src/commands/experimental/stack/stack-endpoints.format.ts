@@ -1,7 +1,7 @@
 import type { Observation } from "@supabase/stack/effect";
 
 const endpointUrl = (endpoint: Observation["endpoints"][number]) =>
-  `${endpoint.protocol}://${endpoint.host}:${endpoint.port}`;
+  `${endpoint.scheme ?? endpoint.protocol}://${endpoint.host}:${endpoint.port}`;
 
 export const endpointReports = (observation: Observation | undefined) =>
   Object.fromEntries(

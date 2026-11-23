@@ -407,7 +407,7 @@ const recreateLocalDatabase14 = <E>(
                 }),
             ),
           );
-        yield* initSchema14(session, fs, path, tmpDir, setup.majorVersion);
+        yield* initSchema14(session, fs, path, tmpDir);
         // Same drop-then-conditionally-recreate sequence fresh setup runs
         // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs pg_net
         // unconditionally, so without this drop a reset with webhooks disabled would leave

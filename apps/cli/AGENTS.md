@@ -22,7 +22,6 @@ src/commands/<command>/
   <command>.command.ts   # command definition, flags, layer provision
   <command>.handler.ts   # command implementation
   <command>.errors.ts    # domain errors
-  SIDE_EFFECTS.md        # required compatibility contract
 ```
 
 Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
@@ -37,24 +36,34 @@ When two commands need the same responsibility, share it at the narrowest common
 only when a second concrete consumer exists, and move existing call sites together when the
 responsibility should evolve as one. Do not automatically extract every helper used twice.
 
-Config validation has one home: `src/command-internal/config-validate.ts` and
-`validateResolvedConfig`. Both config pipelines use it; extend the parity test when shared
-validation changes. `resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
+Config validation has one home: the check units in `src/command-internal/config-check-*-units.ts`
+(auth and platform families, over `config-check-core.ts` and the primitives in `config-validate.ts`),
+ordered by `LOCAL_CHECK_ORDER` and `DB_CHECK_ORDER` in `config-check-units.ts` and run by
+`runConfigUnitsFirst`. `commands/config/validate/validate.units.ts` holds the units only `config validate` runs, and `validate.engine.ts` beside it runs them.
+`authDurationUnits` sit outside `LOCAL_CHECK_ORDER`: `start` runs them through
+`resolveStartAuthDurations`, `config validate` adds them after the local units, and other commands
+accept a malformed duration. Both config pipelines run the shared units; extend the parity test when shared validation changes.
+Runtime resolvers read shared helpers from `local-config-helpers.ts`, never build a validation view.
+`resolveEmailTemplateContentPath` rejects absolute paths, traversal, and
 symlinks escaping the project root; every `content_path` consumer gets this containment.
+
+## Description Markdown
+
+Command, short, argument, flag, and example descriptions allow paragraphs, inline Markdown, and
+code blocks. Other block structures, HTML, and images fail the command-tree authoring check.
+Follow the [description contract](docs/README.md#command-description-markdown) for rendering
+limits; put richer content in reference page bodies.
 
 ## CLI compatibility
 
 The established CLI surface is a contract: command paths, flags, output text and streams,
 filesystem paths, API routes and request shapes, exit codes, and telemetry event timing and
-payloads. Use current tests, command `SIDE_EFFECTS.md`, and shipped behavior as the source of
-truth. Update tests and side-effect documentation with intentional behavior changes.
+payloads. Use current tests, the error-tag fixture, the telemetry event catalog, and shipped
+behavior as the source of truth. Update the tests, fixture, catalog entries, and user docs that
+an intentional behavior change affects.
 
 State locations are also public: preserve `~/.supabase/…`, `<workdir>/supabase/.temp/…`, and
 native keyring entries. Do not move or rename them.
-
-Every command has a `SIDE_EFFECTS.md` based on the [template](src/SIDE_EFFECTS_TEMPLATE.md), documenting exact
-files and formats, API calls and shapes, environment variables, and exit codes. Keep it accurate;
-it is the command compatibility checklist and an input to E2E coverage.
 
 Every applicable command must preserve these invariants:
 
@@ -93,11 +102,23 @@ rather than deleting it; `db remote commit` is the reference:
   `withJsonErrorHandling`. Provide only `commandRuntimeLayer` and `telemetryStateLayer`.
 - Keep the old flag and argument config so existing invocations reach the removal error, not a
   parse error, and register the command with `Command.unlisted`.
-- Delete the handler, its tests, and its docs pages, and drop it from `DOCS_EXCLUDED`.
-- `SIDE_EFFECTS.md` documents exit 1, the removal message and suggestion, and the post-run
-  `telemetry.json` read and write under `SUPABASE_HOME`.
+- Delete the handler, its tests, and its docs pages, and remove its `withDeprecated` annotation.
 - Test every tombstone through the real parser with and without its old flags, asserting the
   `RemovedSurfaceError` message and suggestion.
+
+## Reference Overlays
+
+Website-only explanations stay in `apps/cli/docs/supabase/`. Command definitions own invocation examples.
+Overlays are human-authored or edited under explicit human instruction. Do not add, rewrite, or remove
+an overlay without explicit authorization to edit it. A command implementation request does not grant
+that authorization, even when general instructions require documentation updates.
+
+When command behavior changes, inspect the affected overlays, including those absent from the diff.
+When overlay claims change, check them against the implementation. Report contradictions with the
+existing claim, its location, and implementation evidence. Check defaults, prerequisites, side effects,
+confirmation behavior, limitations, and recovery instructions. Do not turn this check into requests
+for more coverage, new sections, or stylistic rewrites. Report the discrepancy and wait for authorization
+before editing. Do not infer authorship or authorization from prose style or absent PR metadata.
 
 ## Config values
 
@@ -171,7 +192,7 @@ Experimental paths may change outside the stable compatibility promise, but befo
 family identify published config, disk, server, and telemetry boundaries and record the approved
 compatibility decision in the PR. For the Compute transition, no local compatibility aliases or
 migrations are required. Compute error tags intentionally start new fingerprints; server-owned
-contracts remain unchanged. Update tests, generated schemas, and side-effect documentation.
+contracts remain unchanged. Update tests, generated schemas, and user docs.
 
 ## Telemetry
 
@@ -198,8 +219,8 @@ path-valued `--output` remains redacted. Keep free-form user content redacted.
 Do not remove, rename, or reshape custom events. Preserve login aliasing after token persistence,
 link project and organization identity after the link write (including branch-link metadata),
 stack-started after health succeeds, and upgrade-suggested billing-gate events with their existing
-envelope and payload semantics. Use the catalog and the relevant command `SIDE_EFFECTS.md` for
-the complete current event contract.
+envelope and payload semantics. Use the catalog and the telemetry tests for the complete current
+event contract.
 
 ## Error classification
 
@@ -230,11 +251,12 @@ layer to move spinners; that would change text output globally. Handlers check `
 use established encoders before the `output.format` branch.
 
 Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the error.
-`mapHttpError` attaches it from the Management API's `entitlement_required` body. The json and
-stream-json error object carries it, the text layer's `fail` prints the upgrade hint from it, and
-`withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a mapped
-status error must forward it. `suggestUpgrade` prints and fires only on its entitlements-lookup
-fallback.
+`mapHttpError` attaches it from the Management API's `entitlement_required` body, and an
+`executeRaw` caller that builds its own status error attaches it with `planGateFromResponse`. The
+json and stream-json error object carries it, the text layer's `fail` prints the upgrade hint from
+it, and `withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a
+mapped status error must forward it. `suggestUpgrade` prints and fires only on its
+entitlements-lookup fallback.
 
 ## Targets and hosted consent
 

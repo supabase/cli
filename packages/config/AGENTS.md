@@ -5,8 +5,8 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 
 ## Entrypoints
 
-Six supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): four
-module entrypoints (`.`, `./io`, `./effect`, `./internal`) plus two generated JSON Schema
+Seven supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): five
+module entrypoints (`.`, `./io`, `./effect`, `./convert`, `./internal`) plus two generated JSON Schema
 artifacts (`./schema.json`, `./project-schema.json`).
 
 - `@supabase/config` (`.`) — pure, browser/edge-safe surface. `CliConfigSchema`/`ProjectConfigSchema`
@@ -22,6 +22,12 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`, `DiffProjectConfigOptions` — a pure,
   synchronous comparison between two `ProjectConfig` projections (ADR 0022), promoted here from
   `./internal` now that Studio is a second consumer.
+- `@supabase/config/convert` — the `config.toml` ↔ `config.jsonc` converters as plain, synchronous,
+  effect-free code: `convertCliConfigTomlToJsonc(source)` and `convertCliConfigJsoncToToml(source)`
+  return the converted document or throw `CliConfigConvertError` (a plain `Error` subclass with
+  `_tag`, `reason`, `detail`, `sourceLine?`), plus the `CliConfigConverted`/`CliConfigConvertedToml`
+  and `MovedTomlComment`/`MovedJsoncComment` types. Its import graph reaches only
+  `smol-toml` and `jsonc-parser` (pinned by `src/entrypoint-purity.unit.test.ts`).
 - `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
   consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
   Has zero internal consumers by design — nothing inside this monorepo should import it.
@@ -39,16 +45,16 @@ artifacts (`./schema.json`, `./project-schema.json`).
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
   `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
   `ENV_CAPTURE_REGEX`, and `withoutSafeIntegerBounds` for the CLI's published lock schema), the
-  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, and `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document). It also carries
+  JSONC parser (`parseJsonc`, `JsoncSyntaxError`) and `cliConfigFormatForPath`, `findUnknownCliConfigKeys` (schema-derived unknown-key paths of a raw document, each with the keys its parent table accepts), `decodeCliConfigWithoutTableRules` (the decode with the table rules left out) with the table rule functions (`cliConfigSmtpIssues`, `cliConfigExternalProviderIssues` with `EXTERNAL_PROVIDER_IDS` (the built-in provider ids), `cliConfigSmsProviderIssues` with `SMS_PROVIDER_REQUIRED_FIELDS`, `cliConfigServiceVersionIssues`, `cliConfigMigrationChecksIssues`), `collectCliConfigEnvReferences` and `cliConfigStandIn`, `scanCliConfigDocument` (a caller-owned scan of raw TOML/JSON/JSONC text whose `locate` finds the line/column of a key or value; `CliConfigLocation` is a position). It also carries
   `supabase config pull`/`diff`'s own support surface
   (CLI-2064): the format-preserving surgical editor (`applyConfigEdits` and its
   `ConfigEdit`/`ConfigEditOutcome`/`ConfigEditRefusal`/`ConfigEditRefusalReason`/`ConfigEditValue`/
   `AppliedConfigEdit` types — the config diff engine itself, `diffProjectConfig` and its
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
-  `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `updateJsonDocument` (comment-preserving JSON/JSONC rewrite), `convertCliConfigTomlToJsonc` and `convertCliConfigJsoncToToml` (`supabase config convert`, with `--to toml` for the reverse: pure, verified converters that carry comments over; `./internal` wraps the plain `./convert` functions in an Effect failing with `CliConfigConvertError`) with their `MovedTomlComment`/`CliConfigConvertedToml`/`MovedJsoncComment` types, `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
+  `remoteProjectIdEntries`, the atomic single-file writers `writeCliConfigDocumentText` (replace) and
+  `createCliConfigDocumentText` (create, never replacing)/`CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
   `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
   `[remotes.*]` block a caller-supplied `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
   env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside

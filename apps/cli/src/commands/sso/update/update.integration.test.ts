@@ -1362,6 +1362,23 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "renders the dedicated-scope URLs taken from the provider fetched before the PUT",
+    () => {
+      const { layer, out } = setup({
+        getBody: {
+          ...EXISTING_PROVIDER,
+          saml: { entity_id: "https://example.com", dedicated_scope: true },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* ssoUpdate(defaultFlags);
+        expect(out.stdoutText).toContain(`/auth/v1/sso/${VALID_PROVIDER_ID}/saml/acs`);
+        expect(out.stdoutText).toContain(`/auth/v1/sso/${VALID_PROVIDER_ID}/saml/metadata`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("a GET body that fails the provider schema aborts before the PUT", () => {
     const { layer, api } = setup({
       getBody: { id: VALID_PROVIDER_ID, domains: ["not-an-object"] },

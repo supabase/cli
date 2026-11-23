@@ -8,6 +8,7 @@ import type { ServiceCreation } from "../services/Catalog.ts";
 import {
   makeSupabaseComposition,
   planEndpointReplan,
+  planSupabaseComposition,
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
 import { selection } from "../../tests/pins.ts";
@@ -117,6 +118,7 @@ it.live(
         const operations: SupabaseCompositionOperations = {
           currentComposition: Effect.succeed({ members: [], dependencies: [] }),
           randomToken: Effect.succeed("token"),
+          validated: Effect.void,
           get: () => Effect.die("get is unused"),
           status: () => Effect.die("status is unused"),
           create: (creation) => Effect.succeed({ id: idFor(creation.service), creation }),
@@ -150,6 +152,14 @@ it.live(
         if (configuredStudio?.creation.service !== "studio")
           return yield* Effect.die("Studio was not configured");
         expect(configuredStudio.creation.config.functionsUrl).toBe(`url::${functionsId}`);
+        const configuredFunctions = configured.find(
+          ({ creation }) => creation.service === "functions",
+        );
+        if (configuredFunctions?.creation.service !== "functions")
+          return yield* Effect.die("Functions was not configured");
+        expect(configuredFunctions.creation.config.databaseUrl).toBe(
+          `functionsDatabaseUrl::${idFor("database")}`,
+        );
 
         const orchestrator = yield* Orchestrator.make<Orchestrator.RegisteredInstance>();
         const database = yield* makeInstance(orchestrator, idFor("database"), {
@@ -212,9 +222,77 @@ it.live(
     ).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("gives Auth, Studio and Functions the API's HTTPS host URL, keeping Studio's own", () =>
+  Effect.gen(function* () {
+    const host = "https://127.0.0.1:54321";
+    const runtime = "http://host.supabase.internal:54321";
+    const derived = (studio: Record<string, string>) =>
+      Effect.gen(function* () {
+        const inputs: ReadonlyArray<ServiceCreation> = [
+          {
+            service: "auth",
+            pin: selection.auth,
+            config: { jwtSecret: "https-host-jwt-secret-with-32-chars", jwtExpiry: 3600 },
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "functions",
+            pin: selection.functions,
+            config: { functionsRoot: "/project/supabase/functions" },
+            endpoints: { http: { port: "auto" } },
+          },
+          withValues(
+            {
+              service: "studio",
+              pin: selection.studio,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+            studio,
+          ),
+        ];
+        const byId = new Map<string, ServiceCreation>(
+          inputs.map((creation) => [creation.service, creation]),
+        );
+        const configured = yield* makeSupabaseComposition(
+          {
+            currentComposition: Effect.succeed({ members: [], dependencies: [] }),
+            randomToken: Effect.succeed("token"),
+            validated: Effect.void,
+            get: () => Effect.die("get is unused"),
+            status: () => Effect.die("status is unused"),
+            create: (creation) => Effect.succeed({ id: creation.service, creation }),
+            destroy: () => Effect.die("destroy is unused"),
+            bind: () => Effect.void,
+            address: (_id, _endpoint, from) => Effect.succeed(from === "host" ? host : runtime),
+            output: (id, name) => Effect.succeed(`${name}::${id}`),
+            updateCreation: (id, values) => {
+              const base = byId.get(id);
+              return base === undefined
+                ? Effect.die(`Unknown instance ${id}`)
+                : Effect.succeed({ id, creation: withValues(base, values) });
+            },
+            replaceCreation: () => Effect.die("replaceCreation is unused"),
+            configure: () => Effect.void,
+          },
+          inputs,
+        );
+        return new Map(configured.map(({ creation }) => [creation.service, creation.config]));
+      });
+    const configs = yield* derived({});
+    expect(configs.get("auth")).toMatchObject({ externalApiUrl: `${host}/auth/v1` });
+    expect(configs.get("studio")).toMatchObject({ apiUrl: runtime, publicApiUrl: host });
+    expect(configs.get("functions")).toMatchObject({ apiUrl: runtime, hostApiUrl: host });
+    expect(
+      (yield* derived({ publicApiUrl: "https://studio.example.com" })).get("studio"),
+    ).toMatchObject({ publicApiUrl: "https://studio.example.com" });
+  }),
+);
+
 it("does not let an excluded sibling's stale fixed port mask a shared endpoint's own change", () => {
   const fixedPort = 54_321;
-  const saved: Pick<SavedStack, "instances" | "composition"> = {
+  const saved: Pick<SavedStack, "instances" | "composition" | "runtime"> = {
+    runtime: "docker",
     instances: [
       {
         id: "rest-1",
@@ -260,7 +338,8 @@ it("does not let an excluded sibling's stale fixed port mask a shared endpoint's
 });
 
 it("releases the shared listener's automatic claim when another sharing service takes a fixed port", () => {
-  const saved: Pick<SavedStack, "instances" | "composition"> = {
+  const saved: Pick<SavedStack, "instances" | "composition" | "runtime"> = {
+    runtime: "docker",
     instances: [
       {
         id: "auth-1",
@@ -280,4 +359,27 @@ it("releases the shared listener's automatic claim when another sharing service 
   ];
   expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
   expect(planEndpointReplan(saved, [])).toBeUndefined();
+});
+
+it("plans a container limit edit as a change only on a container runtime", () => {
+  const auth = (memoryBytes: number): ServiceCreation => ({
+    service: "auth",
+    pin: selection.auth,
+    config: {},
+    endpoints: {},
+    container: { memoryBytes },
+  });
+  const saved = (runtime: SavedStack["runtime"]) => ({
+    runtime,
+    instances: [{ id: "auth-1", creation: auth(256 * 1024 ** 2) }],
+    composition: { members: [{ id: "auth-1", activation: "eager" as const }], dependencies: [] },
+  });
+  const requested = [auth(512 * 1024 ** 2)];
+
+  expect(planSupabaseComposition(saved("docker"), requested)).toMatchObject([
+    { id: "auth-1", change: "changed", paths: ["container.memoryBytes"] },
+  ]);
+  expect(planSupabaseComposition(saved("native"), requested)).toMatchObject([
+    { id: "auth-1", change: "unchanged" },
+  ]);
 });

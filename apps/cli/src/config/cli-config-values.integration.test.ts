@@ -2251,8 +2251,8 @@ enabled = false
       expect(failure).toMatchObject({
         _tag: "CliConfigRemovedKeyError",
         removedKeys: [
-          { key: "[inbucket]", replacement: "[local_smtp]" },
-          { key: "[auth.external.slack]", replacement: "[auth.external.slack_oidc]" },
+          { key: "inbucket", replacement: "local_smtp" },
+          { key: "auth.external.slack", replacement: "auth.external.slack_oidc" },
         ],
       });
       expect(loaded.materialized.config.local_smtp.enabled).toBe(true);
@@ -2423,7 +2423,7 @@ describe("CliConfigValues failure telemetry", () => {
     const sink = {
       record: (values: CommandTelemetryAttributeValues) =>
         Effect.sync(() => {
-          records.push(values);
+          if ("config_key" in values) records.push(values);
           attributes = { ...attributes, ...values };
         }),
     };
@@ -2535,5 +2535,75 @@ describe("CliConfigValues failure telemetry", () => {
         expect(configKey()).toBeUndefined();
       }),
     ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+});
+
+describe("CliConfigValues config format telemetry", () => {
+  const loadRecordingFormat = (root: string) =>
+    Effect.gen(function* () {
+      let format: CommandTelemetryAttributeValues["config_format"];
+      const exit = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(
+        Effect.provide(configValuesLayer()),
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) =>
+            Effect.sync(() => {
+              if ("config_format" in values) format = values.config_format;
+            }),
+        }),
+        Effect.exit,
+      );
+      return { exit, format };
+    });
+
+  const projectWith = (name: string, content: string) =>
+    Effect.gen(function* () {
+      const root = yield* project("");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.remove(path.join(root, "supabase", "config.toml"));
+      yield* fs.writeFileString(path.join(root, "supabase", name), content);
+      return root;
+    });
+
+  it.live.each([
+    { name: "config.toml", content: "[db]\nport = 54400\n", expected: "toml" },
+    { name: "config.json", content: '{"db": {"port": 54400}}', expected: "json" },
+    {
+      name: "config.jsonc",
+      content: '{\n  // port\n  "db": { "port": 54400, },\n}\n',
+      expected: "jsonc",
+    },
+  ])("records $expected for a project with $name", ({ name, content, expected }) =>
+    Effect.gen(function* () {
+      const root = yield* projectWith(name, content);
+
+      const { exit, format } = yield* loadRecordingFormat(root);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(format).toBe(expected);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records the format of a config file that fails to parse", () =>
+    Effect.gen(function* () {
+      const root = yield* projectWith("config.jsonc", '{ "db": { "port": ');
+
+      const { exit, format } = yield* loadRecordingFormat(root);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(format).toBe("jsonc");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("records no format when the project has no config file", () =>
+    Effect.gen(function* () {
+      const root = yield* projectWith("unrelated.txt", "");
+
+      const { format } = yield* loadRecordingFormat(root);
+
+      expect(format).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });

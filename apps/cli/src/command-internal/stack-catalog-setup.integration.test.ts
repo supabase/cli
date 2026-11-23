@@ -128,7 +128,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                       args: ["--dbname", databaseUrl, "-At"],
                       stdin: Stream.make(
                         new TextEncoder().encode(
-                          "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('auth.sessions')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('storage.s3_multipart_uploads')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing'), coalesce(to_regprocedure('supabase_functions.http_request()')::text,'missing');",
+                          "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('auth.sessions')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('storage.s3_multipart_uploads')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing'), coalesce(to_regprocedure('supabase_functions.http_request()')::text,'missing'), (select tableowner from pg_tables where tablename = 'catalog_overlay');",
                         ),
                       ),
                       stdout: (bytes) =>
@@ -139,7 +139,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   );
                   expect(query.exitCode, errors.join("")).toBe(0);
                   expect(rows.join("").trim()).toBe(
-                    "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay|supabase_functions.http_request()",
+                    "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay|supabase_functions.http_request()|postgres",
                   );
                   // pg_net queues webhook requests under the image's function policy.
                   const pgNet: Array<string> = [];

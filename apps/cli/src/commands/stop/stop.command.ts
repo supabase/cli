@@ -1,3 +1,4 @@
+import { withSidebar } from "../../command-internal/command-sidebar.ts";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
@@ -52,8 +53,15 @@ const stopRuntimeLayer = Layer.mergeAll(
 );
 
 export const stopCommand = Command.make("stop", config).pipe(
+  withSidebar({ category: "general" }),
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
+  Command.withExamples([
+    {
+      command: "supabase stop --all",
+      description: "Stop all local Supabase projects on this machine",
+    },
+  ]),
   withPermissions({
     operations: [],
     noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],

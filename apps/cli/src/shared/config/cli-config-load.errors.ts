@@ -9,6 +9,9 @@ import {
 /** The config document, project env files, or remote selection could not be loaded. */
 export class CliConfigLoadError extends Data.TaggedError("CliConfigLoadError")<{
   readonly message: string;
+  /** The project env file, relative to the workdir, a read or parse failure is about. */
+  readonly file?: string;
+  readonly fileFailure?: "read" | "parse";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

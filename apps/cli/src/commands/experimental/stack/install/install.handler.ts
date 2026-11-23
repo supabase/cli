@@ -3,7 +3,10 @@ import type { PreparedRelease } from "@supabase/stack/internal/artifacts";
 import { Effect, Path, Ref, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackConfigSuggestion,
+} from "../../../../command-internal/stack-config.ts";
 import {
   LockResolutionError,
   lockedResolution,
@@ -103,6 +106,7 @@ export const stackInstall = Effect.fn("experimental.stack.install")(function* (
           : new StackCommandInstallError({
               reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
               message: error.message,
+              suggestion: stackConfigSuggestion(error),
               cause: error,
             }),
       ),

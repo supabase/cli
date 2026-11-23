@@ -137,8 +137,15 @@ const derivedInputs: Partial<
     analyticsBackend: "analytics",
     functionsRoot: "functions",
   },
-  functions: { apiUrl: "api", databaseUrl: "database" },
+  functions: { apiUrl: "api", hostApiUrl: "api", databaseUrl: "database" },
 };
+
+/**
+ * A Functions instance's `hostApiUrl`: only an HTTPS host API origin differs from the banner's
+ * plain loopback default, so a plain one is left out.
+ */
+export const functionsHostApiUrl = (apiHostUrl: string | undefined): string | undefined =>
+  apiHostUrl?.startsWith("https:") === true ? apiHostUrl : undefined;
 
 /** Derived inputs a project may set itself; a plan compares one whenever the request sets it. */
 const overridableInputs: Partial<Record<ServiceCreation["service"], ReadonlyArray<string>>> = {
@@ -202,6 +209,11 @@ export interface SupabaseCompositionOperations<E = SupabaseCompositionError> {
     creation: ServiceCreation,
   ) => Effect.Effect<SupabaseCompositionEntry, E>;
   readonly configure: (configuration: CompositionConfig) => Effect.Effect<void, E>;
+  /**
+   * Runs once the request is valid, before any instance or binding changes; a later failure keeps
+   * its effects.
+   */
+  readonly validated: Effect.Effect<void, E>;
 }
 
 export interface SupabaseCompositionOptions {
@@ -215,6 +227,8 @@ export interface SupabaseCompositionOptions {
    * endpoint start eagerly, and other members start on their first connection.
    */
   readonly eager?: boolean;
+  /** Serves the shared API port over HTTPS with this PEM pair; plain HTTP only from loopback. */
+  readonly apiTls?: { readonly cert: string; readonly key: string };
 }
 
 /** How a saved instance differs from a requested creation once package-managed inputs are set aside. */
@@ -282,6 +296,7 @@ const comparable = (
   creation: ServiceCreationInput,
   sharedPort: number | undefined,
   compared: ReadonlySet<string>,
+  containerized: boolean,
 ) => {
   const managed = managedInputs(creation.service);
   const config: Record<string, unknown> = Object.fromEntries(
@@ -291,6 +306,8 @@ const comparable = (
     pin: creation.pin,
     endpoints: withSharedApiPort(creation, sharedPort),
     config,
+    // The native runtime ignores container limits, so a limit edit is no change there.
+    container: containerized ? creation.container : undefined,
   };
 };
 
@@ -301,6 +318,7 @@ const compareCreation = (
   sharedPort: number | undefined,
   memberKinds: ReadonlySet<ServiceCreation["service"]>,
   initializedData: boolean,
+  containerized: boolean,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
   // Without its supplying member, the composition keeps the project's own value of an input.
@@ -312,12 +330,14 @@ const compareCreation = (
       .filter(([, source]) => !memberKinds.has(source))
       .map(([input]) => input),
   ]);
-  const requestedComparable = comparable(requested, sharedPort, compared);
+  const requestedComparable = comparable(requested, sharedPort, compared, containerized);
   const paths = [
     ...new Set(
-      differences(comparable(saved, undefined, compared), requestedComparable, "").map((path) =>
-        path.startsWith("pin.") ? "pin" : path,
-      ),
+      differences(
+        comparable(saved, undefined, compared, containerized),
+        requestedComparable,
+        "",
+      ).map((path) => (path.startsWith("pin.") ? "pin" : path)),
     ),
   ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
@@ -392,7 +412,7 @@ const sharedApiPortFor = (
 
 /** Compares each saved instance of a requested kind with its request, without changing state. */
 export const planSupabaseComposition = (
-  saved: Pick<SavedStack, "instances" | "composition">,
+  saved: Pick<SavedStack, "instances" | "composition" | "runtime">,
   requested: ReadonlyArray<ServiceCreationInput>,
   options: PlanInputs = {},
 ): ReadonlyArray<PlannedInstance> => {
@@ -416,6 +436,7 @@ export const planSupabaseComposition = (
               sharedPort,
               memberKinds,
               options.initializedDatabases?.has(id) ?? true,
+              saved.runtime !== "native",
             ),
           },
         ];
@@ -495,7 +516,7 @@ const endpointRewrite = (
  * second instance beside the stopped one.
  */
 export const planEndpointReplan = (
-  saved: Pick<SavedStack, "instances" | "composition">,
+  saved: Pick<SavedStack, "instances" | "composition" | "runtime">,
   requested: ReadonlyArray<ServiceCreationInput>,
   initializedDatabases?: ReadonlySet<string>,
 ): EndpointReplan | undefined => {
@@ -677,6 +698,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
         }
       }
 
+      yield* operations.validated;
       const createdIds: Array<string> = [];
       const compose = Effect.gen(function* () {
         const replacedByKind = new Map<ServiceCreation["service"], SupabaseCompositionEntry>();
@@ -777,7 +799,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
         }
         const configured = yield* Effect.forEach(configuredEntries, (entry) =>
           Effect.gen(function* () {
-            const extra: Record<string, string> =
+            const extra: Record<string, string | undefined> =
               entry.creation.service === "auth" && apiHostUrl !== undefined
                 ? {
                     externalApiUrl: `${apiHostUrl}/auth/v1`,
@@ -796,7 +818,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                       publicApiUrl: entry.creation.config.publicApiUrl ?? apiHostUrl,
                     }
                   : entry.creation.service === "functions" && apiRuntimeUrl !== undefined
-                    ? { apiUrl: apiRuntimeUrl }
+                    ? { apiUrl: apiRuntimeUrl, hostApiUrl: functionsHostApiUrl(apiHostUrl) }
                     : {};
             const values = { ...configInputs.get(entry.id), ...extra };
             if (entry.creation.service === "studio") {
@@ -817,7 +839,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
               database !== undefined &&
               endpointNames(database.creation).includes("sql")
             )
-              values.databaseUrl = yield* operations.output(database.id, "databaseUrl");
+              values.databaseUrl = yield* operations.output(database.id, "functionsDatabaseUrl");
             if (Object.keys(values).length > 0) {
               return yield* operations.updateCreation(entry.id, values);
             }

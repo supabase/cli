@@ -42,6 +42,7 @@ import {
   writeLock,
 } from "@supabase/stack/effect";
 import { planSupabaseComposition } from "@supabase/stack/internal/composition";
+import { normalizeCliError } from "../../../../shared/output/normalize-error.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -94,13 +95,16 @@ import {
   StackTargetResolver,
 } from "../../../../command-internal/stack-target.ts";
 import { stackStart } from "./start.handler.ts";
+import {
+  KONG_LOCAL_TLS_CERT,
+  KONG_LOCAL_TLS_KEY,
+} from "../../../start/templates/kong-local-tls.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const flags = (exclude: ReadonlyArray<string> = []) => ({
   exclude,
   stack: Option.none<string>(),
-  stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "background" as const,
   frozen: false,
@@ -330,7 +334,10 @@ const credentialsFor = (
   };
 };
 
-const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
+const fakeStack = (
+  compositionStart?: Stack["composition"]["start"],
+  databaseStart?: Effect.Effect<void, StackError>,
+) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
   const memberCreations = new Map<string, ServiceCreation>();
   let stopped = 0;
@@ -338,6 +345,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let hostDestroyed = 0;
   let composed = 0;
   let catalogApplied = 0;
+  const catalogOverlays: Array<boolean> = [];
   let compositionStarts = 0;
   let lifecycle: "stopped" | "running" = "stopped";
   let activations = new Map<string, "eager" | "lazy">();
@@ -347,6 +355,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** The endpoint changes a simulated owner startup re-planned, until the next `applyStartupReplan`. */
   let pendingStartupChanges: ReadonlyArray<EndpointPortChange> = [];
   let savedCredentials = credentialsFor(undefined, undefined);
+  let composedApiTls: { readonly cert: string; readonly key: string } | undefined;
   const memberView = (id: string): MemberView => {
     const status = memberStatuses.get(id);
     const memberLifecycle = status?.lifecycle ?? lifecycle;
@@ -362,7 +371,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   /** Builds a member from a creation, tracking it for a later `reassignEndpoint`. */
   const buildMember = (id: string, creation: ServiceCreation) => {
     memberCreations.set(id, creation);
-    return instance(creation, id, () => memberView(id));
+    const member = instance(creation, id, () => memberView(id));
+    return databaseStart === undefined || member.service !== "database"
+      ? member
+      : { ...member, start: databaseStart };
   };
   const stack: Stack = {
     id: "a".repeat(64),
@@ -376,6 +388,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
         return Effect.succeed(members);
       },
     },
+    apiTls: { get: Effect.undefined },
     credentials: {
       get: Effect.sync(() => savedCredentials),
     },
@@ -387,6 +400,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
+          composedApiTls = options?.apiTls;
           savedCredentials = credentialsFor(
             creations.find((creation) => creation.service === "database"),
             options,
@@ -417,6 +431,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
           Effect.map((instances) =>
             planSupabaseComposition(
               {
+                runtime: "native",
                 instances,
                 composition: {
                   members: members.map(({ id }) => ({
@@ -477,6 +492,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get composed() {
       return composed;
     },
+    /** The API TLS the last compose was given. */
+    get composedApiTls() {
+      return composedApiTls;
+    },
     /** Whether a detached owner is still up, the way a live stack's would be between calls. */
     get hostRunning() {
       return lifecycle === "running";
@@ -487,8 +506,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     get compositionStarts() {
       return compositionStarts;
     },
-    applyCatalog() {
+    get catalogOverlays() {
+      return catalogOverlays;
+    },
+    applyCatalog(overlay: boolean) {
       catalogApplied += 1;
+      catalogOverlays.push(overlay);
     },
     get savedCredentials() {
       return savedCredentials;
@@ -536,6 +559,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       const liveCreations = new Map(instances.map(({ id, creation }) => [id, creation]));
       const planned = planSupabaseComposition(
         {
+          runtime: "native",
           instances,
           composition: {
             members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
@@ -591,9 +615,13 @@ const layers = (
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
-    resolve: () =>
+    resolve: (input) =>
       Effect.succeed({
         projectRoot: root,
+        /* As the real resolver does, a value that is not the stack's ID prefix names the stack. */
+        ...(input.stack === undefined || fixture.stack.id.startsWith(input.stack)
+          ? {}
+          : { name: input.stack }),
         ...(existing ? { id: fixture.stack.id } : {}),
         runtime: "native" as const,
         hostRunning: existing && fixture.hostRunning,
@@ -624,7 +652,7 @@ const layers = (
     ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
-      apply: () => Effect.sync(() => fixture.applyCatalog()),
+      apply: (input) => Effect.sync(() => fixture.applyCatalog(input.overlay !== undefined)),
     }),
     Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
     Layer.succeed(YesFlag, false),
@@ -772,6 +800,29 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
+  it.effect("fails a removed config key with its replacement as the suggestion", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-removed-key-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "removed-key"\n\n[inbucket]\nenabled = true\n',
+      );
+      const fixture = fakeStack();
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(normalizeCliError(error)).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: "inbucket in supabase/config.toml is no longer supported. Use local_smtp instead.",
+        suggestion: "Update supabase/config.toml, then rerun the command.",
+      });
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
   it.effect("refuses an unreadable Auth email template before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -791,6 +842,79 @@ describe("experimental stack start", () => {
         message: expect.stringContaining("auth.email.template.invite.content_path"),
       });
       expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "rejects an api.tls pair that does not load, or has no IP SAN for 127.0.0.1, before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const certs = `${import.meta.dirname}/../../../../../../../packages/stack/tests/certs`;
+        const pairs = [
+          { cert: "not a pem", key: "not a pem", reason: "" },
+          {
+            cert: yield* fs.readFileString(`${certs}/dns-only.crt`),
+            key: yield* fs.readFileString(`${certs}/localhost.key`),
+            reason: "the certificate has no IP subject alternative name for 127.0.0.1",
+          },
+        ];
+        for (const { cert, key, reason } of pairs) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-pair-" });
+          yield* fs.makeDirectory(`${root}/supabase/certs`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            '[api.tls]\nenabled = true\ncert_path = "certs/api.crt"\nkey_path = "certs/api.key"\n',
+          );
+          yield* fs.writeFileString(`${root}/supabase/certs/api.crt`, cert);
+          yield* fs.writeFileString(`${root}/supabase/certs/api.key`, key);
+          let created = false;
+          const fixture = fakeStack();
+          const base = layers(root, fixture, mockOutput(), false);
+          const api = Layer.succeed(StackApi, {
+            create: () =>
+              Effect.sync(() => {
+                created = true;
+                return fixture.stack;
+              }),
+            open: () => Effect.succeed(fixture.stack),
+            discover: () => Effect.succeed([]),
+            find: () => Effect.die("identity not used"),
+            findDeleted: () => Effect.die("identity not used"),
+          });
+          const result = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.merge(base, api)),
+          );
+          expect(result).toMatchObject({
+            reason: "invalid-config",
+            message: expect.stringContaining(
+              "Invalid config for api.tls: failed to load TLS key pair",
+            ),
+          });
+          expect(result.message).toContain(reason);
+          expect(created).toBe(false);
+        }
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("composes the stack with the api.tls pair only while api.tls is enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-tls-on-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const start = (config: string) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, config);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          return fixture.composedApiTls;
+        });
+      expect(yield* start('project_id = "start-tls"\n[api.tls]\nenabled = true\n')).toEqual({
+        cert: KONG_LOCAL_TLS_CERT,
+        key: KONG_LOCAL_TLS_KEY,
+      });
+      expect(yield* start('project_id = "start-tls"\n')).toBeUndefined();
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -910,6 +1034,7 @@ describe("experimental stack start", () => {
             "analytics",
             "pooler",
           ]),
+          stack: Option.some("feature"),
           runtime: "auto",
         }).pipe(Effect.provide(Layer.merge(layers(root, fixture, output, false), overrides)));
         expect(createdRuntimes).toEqual(["podman"]);
@@ -918,6 +1043,10 @@ describe("experimental stack start", () => {
           message: expect.stringContaining(
             "Docker didn't answer, so this new stack uses the Podman runtime",
           ),
+        });
+        expect(output.messages).toContainEqual({
+          type: "info",
+          message: expect.stringContaining("`supabase stack destroy --stack feature`"),
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -1057,10 +1186,10 @@ describe("experimental stack start", () => {
       const byPrefix = mockOutput();
       yield* stackStart({
         ...flags(excluded),
-        stackId: Option.some(fixture.stack.id.slice(0, 8)),
+        stack: Option.some(fixture.stack.id.slice(0, 8)),
       }).pipe(Effect.provide(layers(root, fixture, byPrefix, true, true)));
       expect(byPrefix.stdoutText).toContain(
-        `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
+        `Run supabase status --env --workdir ${workdir} --stack ${fixture.stack.id} to export`,
       );
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -1168,6 +1297,67 @@ describe("experimental stack start", () => {
         detail: "analytics (analytics-member-1): Service health timed out",
       });
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("points at running stacks when PostgreSQL runs out of shared memory segments", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      const fixture = fakeStack(
+        undefined,
+        Effect.fail(
+          new StackError({
+            operation: "start",
+            message:
+              "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+          }),
+        ),
+      );
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({
+        suggestion: expect.stringMatching(
+          /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+        ),
+      });
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "points at running stacks when a relaunched PostgreSQL runs out of shared memory segments",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* lockProject();
+        const fixture = fakeStack(
+          Effect.fail(
+            new StackError({
+              operation: "composition.start",
+              message: "Composition start had failures",
+              outcomes: [
+                {
+                  id: "database-member-1",
+                  succeeded: false,
+                  error:
+                    "database-member-1 failed: PostgreSQL exited with code 1: FATAL:  could not create shared memory segment: No space left on device",
+                },
+              ],
+            }),
+          ),
+        );
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        expect(error).toMatchObject({
+          message: "Composition start had failures",
+          suggestion: expect.stringMatching(
+            /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
+          ),
+        });
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("loads Functions env only when Functions are selected", () =>
@@ -1318,6 +1508,23 @@ describe("experimental stack start", () => {
         expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
         expect(fixture.catalogApplied).toBe(1);
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect("applies the project overlay once when a later start adds a service", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-overlay-once-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "overlay-once"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["storage"])).pipe(Effect.provide(layers(root, fixture)));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.members.some(({ service }) => service === "storage")).toBe(true);
+      expect(fixture.catalogOverlays).toEqual([true, false]);
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>
@@ -1852,7 +2059,7 @@ describe("experimental stack start", () => {
         expect(error).toMatchObject({
           reason: "invalid-config",
           message: expect.stringContaining("[api] port: saved"),
-          suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
+          suggestion: `Run \`supabase stack stop --stack ${fixture.stack.id}\`, then \`supabase stack start --stack ${fixture.stack.id}\` to apply the new ports.`,
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -1973,12 +2180,10 @@ describe("experimental stack start", () => {
 
         const envelope = yield* machineEnvelope(stdio.stdout[0]);
         expect(envelope.error).toMatchObject({
-          suggestion: expect.stringContaining(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          ),
+          suggestion: expect.stringContaining(`supabase stack destroy --stack ${fixture.stack.id}`),
         });
         expect(envelope.recreate_command).toBe(
-          `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          `supabase stack destroy --stack ${fixture.stack.id}`,
         );
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -2248,7 +2453,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
           suggestion: expect.stringContaining(
-            `Revert [db] major_version to its saved value to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\` to recreate the stack`,
+            `Revert [db] major_version to its saved value to keep the stack and its data, or run \`supabase stack destroy --stack ${fixture.stack.id}\` to recreate the stack`,
           ),
         });
         expect(error).toMatchObject({ suggestion: expect.stringContaining("database data") });
@@ -2342,7 +2547,7 @@ describe("experimental stack start", () => {
           reason: "invalid-config",
           message: `The saved stack cannot adopt these changes: ${target.changes}`,
           suggestion: expect.stringContaining(
-            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\``,
+            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack ${fixture.stack.id}\``,
           ),
         });
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
@@ -2421,9 +2626,7 @@ describe("experimental stack start", () => {
           expect(error.suggestion).toContain(
             "This CLI release starts a different [db] orioledb_version than the saved stack.",
           );
-          expect(error.suggestion).toContain(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          );
+          expect(error.suggestion).toContain(`supabase stack destroy --stack ${fixture.stack.id}`);
         }
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
@@ -2462,9 +2665,7 @@ describe("experimental stack start", () => {
           editable: true,
         },
       ]);
-      expect(envelope.recreate_command).toBe(
-        `supabase stack destroy --stack-id ${fixture.stack.id}`,
-      );
+      expect(envelope.recreate_command).toBe(`supabase stack destroy --stack ${fixture.stack.id}`);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
@@ -2501,11 +2702,11 @@ describe("experimental stack start", () => {
           editable: true,
         },
       ]);
-      expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);
+      expect(event.recreate_command).toBe(`supabase stack destroy --stack ${fixture.stack.id}`);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
+  it.effect("always suggests the full ID for a named stack, naming the stack as plain text", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-named-destroy-" });
@@ -2538,7 +2739,7 @@ describe("experimental stack start", () => {
 
       expect(error).toMatchObject({
         suggestion: expect.stringContaining(
-          `supabase stack destroy --stack-id ${fixture.stack.id}\` (stack feature-a)`,
+          `supabase stack destroy --stack ${fixture.stack.id}\` (stack feature-a)`,
         ),
       });
       expect(error).toBeInstanceOf(StackCommandStartError);

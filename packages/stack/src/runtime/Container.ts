@@ -33,6 +33,14 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly kind?: StackFailureKind;
 }> {}
 
+/** Resource limits for a service's container; native processes ignore them. */
+/** Container limits, bounded below by the smallest values Docker accepts. */
+export const ContainerResources = Schema.Struct({
+  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(6 * 1024 ** 2))),
+  cpus: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0.01))),
+});
+export interface ContainerResources extends Schema.Schema.Type<typeof ContainerResources> {}
+
 interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
@@ -59,6 +67,8 @@ interface ContainerSpec {
   readonly stopSignal?: "SIGINT" | "SIGTERM";
   /** `uid:gid` the container runs as, overriding the image's own user. */
   readonly user?: string;
+  /** Memory (with swap pinned to the same value, so it cannot exceed it) and CPU limits. */
+  readonly resources?: ContainerResources;
 }
 
 export interface ContainerProcess {
@@ -134,15 +144,22 @@ const engineKind = (
           ? "port-allocation"
           : undefined;
 
+const DAEMON_PROBE_TIMEOUT = "2 seconds";
+const DAEMON_PROBE_FORMAT = {
+  docker: "{{.ServerVersion}} running={{.ContainersRunning}}",
+  podman: "{{.Version.Version}} running={{.Store.ContainerStore.Running}}",
+} as const;
+
 /** Names the stalled engine subcommand and its latest stderr, never the full argv. */
 const commandTimedOut = (
   args: ReadonlyArray<string>,
   timeout: Duration.Input,
   stderr: string,
+  daemon: string,
 ): Cause.TimeoutError => {
   const tail = stderr.trim().slice(-2000);
   return new Cause.TimeoutError(
-    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}`,
+    `Engine command '${args[0] ?? "command"}' did not finish within ${Duration.format(Duration.fromInputUnsafe(timeout))}${tail.length > 0 ? `; stderr: ${tail}` : ""}; daemon: ${daemon}`,
   );
 };
 
@@ -193,7 +210,7 @@ const transientPullFailure = (error: ContainerError) =>
  * Runs one engine CLI invocation outside the owner's command runner, for resolving its target
  * itself. `pin` precedes `args` so the failure names the subcommand, not a pin flag.
  */
-const runRaw = (
+export const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   engine: ContainerEngine,
   args: ReadonlyArray<string>,
@@ -580,9 +597,9 @@ export const makeContainerRuntime = (options: {
                 Effect.timeoutOrElse({
                   duration: timeout,
                   orElse: () =>
-                    Ref.get(stderrSoFar).pipe(
-                      Effect.flatMap((stderr) =>
-                        Effect.fail(commandTimedOut(args, timeout, stderr)),
+                    Effect.all([Ref.get(stderrSoFar), daemonState]).pipe(
+                      Effect.flatMap(([stderr, daemon]) =>
+                        Effect.fail(commandTimedOut(args, timeout, stderr, daemon)),
                       ),
                     ),
                 }),
@@ -591,6 +608,28 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
       );
     });
+
+    // Separates a daemon-wide stall from one engine call stuck on a single object; runs
+    // without its own command timeout so a stalled probe cannot probe again.
+    const daemonState: Effect.Effect<string> = run(
+      ["info", "--format", DAEMON_PROBE_FORMAT[engine]],
+      { timeout: undefined },
+    ).pipe(
+      Effect.timeout(DAEMON_PROBE_TIMEOUT),
+      Effect.map((info) => ({ outcome: "responsive", text: `responsive (${info})` })),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.succeed({
+            outcome: "unresponsive",
+            text: `unresponsive to info within ${DAEMON_PROBE_TIMEOUT}`,
+          }),
+        ContainerError: (error) =>
+          Effect.succeed({ outcome: "failed", text: `info failed: ${error.message}` }),
+      }),
+      Effect.tap(({ outcome }) => Effect.annotateCurrentSpan("container.daemon_state", outcome)),
+      Effect.map(({ text }) => text),
+      Effect.withSpan("Container.daemonState"),
+    );
 
     const mirrored = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
     const present = (image: string) =>
@@ -770,6 +809,10 @@ export const makeContainerRuntime = (options: {
         "image.name": image,
         ...(spec.service === undefined ? {} : { "container.service": spec.service }),
         "container.ports": spec.ports ?? [],
+        ...(spec.resources?.memoryBytes === undefined
+          ? {}
+          : { "container.memory_bytes": spec.resources.memoryBytes }),
+        ...(spec.resources?.cpus === undefined ? {} : { "container.cpus": spec.resources.cpus }),
       });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
@@ -863,6 +906,15 @@ export const makeContainerRuntime = (options: {
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
         ...(spec.stopSignal === undefined ? [] : ["--stop-signal", spec.stopSignal]),
+        ...(spec.resources?.memoryBytes === undefined
+          ? []
+          : [
+              "--memory",
+              String(spec.resources.memoryBytes),
+              "--memory-swap",
+              String(spec.resources.memoryBytes),
+            ]),
+        ...(spec.resources?.cpus === undefined ? [] : ["--cpus", String(spec.resources.cpus)]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         image,
@@ -1044,7 +1096,47 @@ export const makeContainerRuntime = (options: {
                     )
                     .pipe(Effect.mapError((cause) => errorFor("start", cause)))
                 : undefined;
-              if (!interactive) yield* run(["start", name]);
+              if (!interactive)
+                yield* run(["start", name]).pipe(
+                  // A loaded engine can start the process yet keep the CLI waiting past its
+                  // timeout, so the container's own state decides whether the start failed.
+                  Effect.catchTag("ContainerError", (failure) =>
+                    failure.kind !== "engine-timeout"
+                      ? Effect.fail(failure)
+                      : run(
+                          [
+                            "inspect",
+                            "--format",
+                            "status={{.State.Status}} started={{.State.StartedAt}} pid={{.State.Pid}} error={{.State.Error}}",
+                            name,
+                          ],
+                          { timeout: "5 seconds" },
+                        ).pipe(
+                          Effect.orElseSucceed(() => "unavailable"),
+                          Effect.flatMap((state) =>
+                            state.startsWith("status=running ")
+                              ? Effect.logWarning(
+                                  `Container ${name} is running although '${failure.message}'; container state: ${state}`,
+                                ).pipe(
+                                  Effect.andThen(
+                                    Effect.annotateCurrentSpan(
+                                      "container.start_timeout_running",
+                                      true,
+                                    ),
+                                  ),
+                                )
+                              : Effect.fail(
+                                  new ContainerError({
+                                    operation: failure.operation,
+                                    message: `${failure.message}; container state: ${state}`,
+                                    cause: failure.cause,
+                                    kind: failure.kind,
+                                  }),
+                                ),
+                          ),
+                        ),
+                  ),
+                );
               const wait: Effect.Effect<number, ContainerError> =
                 attached === undefined
                   ? run(["wait", name], {}).pipe(

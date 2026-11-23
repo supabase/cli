@@ -1,4 +1,5 @@
 import { Schema, SchemaTransformation } from "effect";
+import { type CliConfigTableRuleIssue, tableRuleFilter } from "./lib/table-rule.ts";
 
 /** The security rules `[db.migrations.checks]` accepts, named as in the database linter. */
 export const MIGRATION_CHECK_RULES = [
@@ -130,7 +131,7 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
 const isObjectName = Schema.is(ObjectName);
 
 interface RawIssue {
-  readonly path: ReadonlyArray<PropertyKey>;
+  readonly path: ReadonlyArray<string | number>;
   readonly issue: string;
 }
 
@@ -182,17 +183,19 @@ const exclusionIssues = (exclude: unknown): Array<RawIssue> => {
   });
 };
 
-const migrationChecksIssues = (
+/** Rule-name, severity and exclusion issues of the raw `[db.migrations.checks]` table, before decoding drops unknown keys. */
+export const cliConfigMigrationChecksIssues = (
   section: Readonly<Record<string, unknown>>,
-): ReadonlyArray<RawIssue> | undefined => {
-  const issues = [...severityIssues(section), ...exclusionIssues(section["exclude"])];
-  return issues.length === 0 ? undefined : issues;
-};
+): ReadonlyArray<CliConfigTableRuleIssue> =>
+  [...severityIssues(section), ...exclusionIssues(section["exclude"])].map(({ path, issue }) => ({
+    path,
+    message: issue,
+  }));
 
 // Decoding starts from an open record so the filter sees unknown keys, which the loader's
 // excess-property mode would otherwise drop before validation.
 const RawMigrationChecks = Schema.Record(Schema.String, Schema.Unknown).check(
-  Schema.makeFilter(migrationChecksIssues, {
+  tableRuleFilter(cliConfigMigrationChecksIssues, {
     toJsonSchema: () =>
       Schema.toJsonSchemaDocument(TypedMigrationChecks, { onExcessProperty: "error" }).schema,
   }),
