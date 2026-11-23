@@ -577,6 +577,14 @@ describe.skipIf(sparkBin === "")("experimental spark backend (e2e)", () => {
       expect(response.ok, `Studio project detail: HTTP ${response.status}`).toBe(true);
       const detail = Schema.decodeSync(ProjectDetail)(await response.text());
       expect(detail.postgres_engine, "Studio's project detail engine").toBe("spark");
+      // Studio's SQL route on the proxy reaches Spark's query route: only the service_role key may use it.
+      const anonQuery = await fetch(`${API}/pg/query`, {
+        method: "POST",
+        signal: activeStep?.controller.signal ?? null,
+        headers: { "content-type": "application/json", apikey: anonKey },
+        body: JSON.stringify({ query: "select 1" }),
+      });
+      expect(anonQuery.status, "the anon key ran SQL through /pg/query").toBe(401);
       const historyBefore = (await run(["migration", "list"])).log;
       await check("studio.check.mjs");
       expect(await restStatus("comments?select=id"), "Studio's table is not served").toBe(200);
