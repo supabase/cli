@@ -399,7 +399,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
         project === undefined
           ? `stack ${holder.stackId}`
           : `the stack of project ${project} (stack ${holder.stackId})`;
-      return `Public port ${port} for ${key} is in use by ${where}; run \`supabase stack stop\` in that project, or configure a different port for ${key}`;
+      return `Public port ${port} for ${key} is in use by ${where}; run \`supabase stack stop --stack ${holder.stackId}\`, or configure a different port for ${key}`;
     });
 
     const acquire = Effect.fn("Ports.acquire")(function* <A, R>(

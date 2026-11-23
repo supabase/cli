@@ -23,6 +23,7 @@ import {
 import {
   mapTargetError,
   missingStackAdvice,
+  otherBranchStacks,
   rejectStackOutput,
   StackApi,
   StackTargetResolver,
@@ -259,7 +260,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
-      ...missingStackAdvice(target.name),
+      ...missingStackAdvice(target.name, yield* otherBranchStacks(target.projectRoot, target.name)),
     });
   return {
     ...target,

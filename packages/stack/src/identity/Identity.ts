@@ -4,8 +4,7 @@ import type { PlatformError } from "effect/PlatformError";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
 import { StackIdSchema } from "./StackId.ts";
 import { resolveGitBranchContext } from "./GitBranchContext.ts";
-
-const DEFAULT_STACK_NAME = "default";
+import { DEFAULT_STACK_NAME } from "../Defaults.ts";
 
 export interface StackIdentity {
   readonly projectRoot: string;
