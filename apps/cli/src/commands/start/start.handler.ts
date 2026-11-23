@@ -105,6 +105,7 @@ import {
   StatusListError,
 } from "../../command-internal/status-errors.ts";
 import { renderStatusPretty } from "../../command-internal/status-pretty.ts";
+import { maybeShowStartStackNudge } from "../../command-internal/stack-nudge.ts";
 import {
   gateStatusState,
   resolveStatusLocalState,
@@ -1162,6 +1163,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // interrupt), and there's no non-mutable way to thread a value computed mid-effect into a
     // sibling failure handler.
     let isFreshVolume = false;
+    let healthFailureIgnored = false;
 
     // 8. Bring-up order: network -> Postgres (+ health wait, gated on `--ignore-health-check`
     // like every other service below) -> the fresh-volume-gated `SetupLocalDatabase` equivalent,
@@ -1279,6 +1281,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
         if (flags.ignoreHealthCheck && isUnhealthyStartError(error)) {
           // Downgrades to a warning and short-circuits the rest of this phase, falling through
           // to the same unconditional tail every other path reaches.
+          healthFailureIgnored = true;
           yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
           return { kind: "postgresUnhealthyIgnored" as const };
         }
@@ -1584,6 +1587,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
               }
             }
             // Downgrade to a warning and fall through to the success path, no rollback.
+            healthFailureIgnored = true;
             yield* output.raw(`${healthWarningText(error)}\n`, "stderr");
             if (error.readinessAssumed !== undefined) {
               yield* output.raw(
@@ -1660,8 +1664,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(renderStatusPretty(statusValues, names));
       yield* output.raw(startSecurityNotice(), "stderr");
+      if (!healthFailureIgnored) yield* maybeShowStartStackNudge(configFile);
     } else {
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
+      if (!healthFailureIgnored) yield* maybeShowStartStackNudge(configFile);
       yield* output.success("", statusValues);
     }
   }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
