@@ -54,8 +54,8 @@ const resourceTypes = new Map([
   ["compliance", "project"],
   ["health", "project"],
 ]);
-export const unescapeIssueText = (text: string): string => text.replaceAll("\\`", "`");
-export const isUnavailableCheck = (lint: AdvisorLint): boolean =>
+const unescapeIssueText = (text: string): string => text.replaceAll("\\`", "`");
+const isUnavailableCheck = (lint: AdvisorLint): boolean =>
   lint.name === "advisor_check_unavailable" || lint.name === "project_not_active";
 export const issueCheckCoverage = (
   category: IssueCategory,
