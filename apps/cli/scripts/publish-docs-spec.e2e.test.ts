@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { parse, stringify } from "yaml";
 import { rootCommand } from "../src/cli/root.ts";
 import { buildDocsSpec } from "../src/docs/docs-spec.ts";
@@ -52,56 +52,141 @@ const localCheckout = Effect.gen(function* () {
   yield* fs.makeDirectory(directory, { recursive: true });
   const target = path.join(directory, "cli_v1_commands.yaml");
   yield* fs.writeFileString(target, "original spec\n");
-  return { root, checkout, target };
+  const sidebar = path.join(directory, "common-cli-sections.json");
+  yield* fs.writeFileString(sidebar, "original sidebar\n");
+  return { root, checkout, target, sidebar };
 });
 
 describe("local reference preview", () => {
-  it.effect("writes formatted YAML without Git or GitHub operations", () =>
+  it.effect(
+    "writes the formatted spec and its matching sidebar without Git or GitHub operations",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, checkout, target, sidebar } = yield* localCheckout;
+        const bin = path.join(root, "bin");
+        yield* fs.makeDirectory(bin);
+        // Fail closed if preview accidentally reaches the remote publishing workflow.
+        for (const command of ["git", "gh"]) {
+          const executable = path.join(bin, command);
+          yield* fs.writeFileString(
+            executable,
+            "#!/bin/sh\necho 'Unexpected publishing operation' >&2\nexit 99\n",
+          );
+          yield* fs.chmod(executable, 0o755);
+        }
+        const spec = validSpec("1.0.0");
+        const { exitCode, stdout, stderr } = yield* Effect.sync(() =>
+          runScript(
+            ["--version", "v1.0.0", "--local", path.relative(cliRoot, checkout)],
+            spec.replace("clispec:", "clispec:   "),
+            bin,
+          ),
+        );
+
+        expect(exitCode, stderr).toBe(0);
+        const written = yield* fs.readFileString(target);
+        expect(parse(written)).toEqual(parse(spec));
+        expect(written).toContain("clispec: '001'\n");
+        expect(written.endsWith("\n")).toBe(true);
+        const sections = yield* Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Array(
+              Schema.Struct({
+                items: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String }))),
+              }),
+            ),
+          ),
+        )(yield* fs.readFileString(sidebar));
+        const sidebarIds = sections.flatMap(({ items }) => (items ?? []).map(({ id }) => id));
+        const specIds = buildDocsSpec({
+          root: rootCommand,
+          version: "1.0.0",
+          overlays: new Map(),
+        }).commands.map(({ id }) => id);
+        expect(sidebarIds.sort()).toEqual(specIds.sort());
+        expect(stdout).toContain("Wrote CLI reference to ");
+        expect(yield* fs.exists(path.join(checkout, ".git"))).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("writes both outputs to custom paths without the default docs directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { root, checkout, target } = yield* localCheckout;
-      const bin = path.join(root, "bin");
-      yield* fs.makeDirectory(bin);
-      // Fail closed if preview accidentally reaches the remote publishing workflow.
-      for (const command of ["git", "gh"]) {
-        const executable = path.join(bin, command);
-        yield* fs.writeFileString(
-          executable,
-          "#!/bin/sh\necho 'Unexpected publishing operation' >&2\nexit 99\n",
-        );
-        yield* fs.chmod(executable, 0o755);
-      }
+      const checkout = yield* fs.makeTempDirectoryScoped({ prefix: "docs-custom-" });
+      yield* fs.makeDirectory(path.join(checkout, "reference"));
       const spec = validSpec("1.0.0");
-      const { exitCode, stdout, stderr } = yield* Effect.sync(() =>
+      const { exitCode, stderr } = yield* Effect.sync(() =>
         runScript(
-          ["--version", "v1.0.0", "--local", path.relative(cliRoot, checkout)],
-          spec.replace("clispec:", "clispec:   "),
-          bin,
+          [
+            "--version",
+            "1.0.0",
+            "--local",
+            checkout,
+            "--spec-path",
+            "reference/commands.yaml",
+            "--sidebar-path",
+            "reference/sidebar.json",
+          ],
+          spec,
         ),
       );
-
       expect(exitCode, stderr).toBe(0);
-      const written = yield* fs.readFileString(target);
-      expect(parse(written)).toEqual(parse(spec));
-      expect(written).toContain("clispec: '001'\n");
-      expect(written.endsWith("\n")).toBe(true);
-      expect(stdout).toContain("Wrote CLI reference to ");
-      expect(yield* fs.exists(path.join(checkout, ".git"))).toBe(false);
+      expect(
+        parse(yield* fs.readFileString(path.join(checkout, "reference/commands.yaml"))),
+      ).toEqual(parse(spec));
+      expect(yield* fs.readFileString(path.join(checkout, "reference/sidebar.json"))).toContain(
+        '"supabase-init"',
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("leaves the local spec unchanged during a dry run", () =>
+  it.effect("rejects a symlink from the sidebar to the spec without changing either", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const { checkout, target } = yield* localCheckout;
+      const { checkout, target, sidebar } = yield* localCheckout;
+      yield* fs.remove(sidebar);
+      yield* fs.symlink(target, sidebar);
+      const { exitCode, stderr } = yield* Effect.sync(() =>
+        runScript(["--version", "1.0.0", "--local", checkout], validSpec("1.0.0")),
+      );
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Refusing to write through a symlink");
+      expect(yield* fs.readFileString(target)).toBe("original spec\n");
+      expect(yield* fs.readLink(sidebar)).toBe(target);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("leaves the local spec unchanged when the sidebar destination is a directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { checkout, target, sidebar } = yield* localCheckout;
+      yield* fs.remove(sidebar);
+      yield* fs.makeDirectory(sidebar);
+      const { exitCode, stderr } = yield* Effect.sync(() =>
+        runScript(["--version", "1.0.0", "--local", checkout], validSpec("1.0.0")),
+      );
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Expected a regular file at");
+      expect(yield* fs.readFileString(target)).toBe("original spec\n");
+      expect((yield* fs.stat(sidebar)).type).toBe("Directory");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("leaves both local files unchanged during a dry run", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { checkout, target, sidebar } = yield* localCheckout;
       const { exitCode, stdout, stderr } = yield* Effect.sync(() =>
         runScript(["--version", "1.0.0", "--local", checkout, "--dry-run"], validSpec("1.0.0")),
       );
 
       expect(exitCode, stderr).toBe(0);
-      expect(stdout).toContain(`Would write ${validSpec("1.0.0").length} bytes to `);
+      expect(stdout).toContain(`Would write ${target} and ${sidebar}`);
       expect(yield* fs.readFileString(target)).toBe("original spec\n");
+      expect(yield* fs.readFileString(sidebar)).toBe("original sidebar\n");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -224,7 +309,7 @@ describe("publish-docs-spec.ts entrypoint", () => {
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(
-      `Would publish ${spec.length} bytes to supabase/supabase:apps/docs/spec/cli_v1_commands.yaml on branch cli/ref-doc`,
+      "Would publish apps/docs/spec/cli_v1_commands.yaml and apps/docs/spec/common-cli-sections.json to supabase/supabase on branch cli/ref-doc",
     );
   }, 30_000);
 });
