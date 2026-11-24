@@ -118,15 +118,15 @@ import {
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { normalizeCliError } from "../../../shared/output/normalize-error.ts";
-import { pgDeltaNextEngineLayer } from "../shared/pgdelta-engine.next.layer.ts";
-import { PgDeltaNextAdapter } from "../shared/pgdelta-next-adapter.service.ts";
-import { pgDeltaNextShadowLayer } from "../shared/pgdelta-next-shadow.layer.ts";
+import { pgDeltaNextEngineLayer } from "../../../command-internal/db/pgdelta/pgdelta-engine.next.layer.ts";
+import { PgDeltaNextAdapter } from "../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
+import { pgDeltaNextShadowLayer } from "../../../command-internal/db/pgdelta/pgdelta-next-shadow.layer.ts";
 import {
   PgDeltaEngine,
   type PgDeltaDatabaseDiffInput,
   type PgDeltaExplicitDiffInput,
   type PgDeltaHazardReport,
-} from "../shared/pgdelta-engine.service.ts";
+} from "../../../command-internal/db/pgdelta/pgdelta-engine.service.ts";
 import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";

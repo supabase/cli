@@ -41,7 +41,7 @@ import {
   type ShadowSourceResult,
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import type { StartSetupLocalDatabaseError } from "../../../command-internal/db-bootstrap/db-setup.ts";
-import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
+import { DeclarativeShadowDbError } from "../../../command-internal/db/pgdelta/pgdelta.errors.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 

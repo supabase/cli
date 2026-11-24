@@ -84,9 +84,12 @@ import {
   type DbSession,
   DbConnection,
 } from "../../../../../command-internal/db-connection.service.ts";
-import { PgDeltaEngine, PgDeltaEngineError } from "../../../shared/pgdelta-engine.service.ts";
-import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
-import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
+import {
+  PgDeltaEngine,
+  PgDeltaEngineError,
+} from "../../../../../command-internal/db/pgdelta/pgdelta-engine.service.ts";
+import { DeclarativeShadowDbError } from "../../../../../command-internal/db/pgdelta/pgdelta.errors.ts";
+import { DeclarativeSeam } from "../../../../../command-internal/db/pgdelta/pgdelta.seam.service.ts";
 import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";

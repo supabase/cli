@@ -1,10 +1,7 @@
 import { DateTime, Option, Predicate } from "effect";
 
-import { formatGeneralFloat } from "../../../command-internal/format-float.ts";
-import {
-  renderTablewriter as renderRowsTable,
-  toCsv as renderRowsCsv,
-} from "../../../command-internal/tabular-output.ts";
+import { formatGeneralFloat } from "../format-float.ts";
+import { renderTablewriter as renderRowsTable, toCsv as renderRowsCsv } from "../tabular-output.ts";
 
 // `JSON.rawJSON` (ES2025, in Bun) wraps a string so `JSON.stringify` emits it verbatim as a
 // number token, used for exact int8/bigint precision. TypeScript's bundled lib doesn't declare it.

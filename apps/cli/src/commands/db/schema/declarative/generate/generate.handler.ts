@@ -17,7 +17,7 @@ import { resolveTarget } from "../../../../../command-internal/target/resolve-ta
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
-import { DeclarativeWriteError } from "../../../shared/pgdelta.errors.ts";
+import { DeclarativeWriteError } from "../../../../../command-internal/db/pgdelta/pgdelta.errors.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { pgDeltaAccess } from "../declarative.gate.ts";
 import {
@@ -28,7 +28,7 @@ import {
   declarativeSchemaWrittenLine,
   warnPreservedUnmanagedDeclarativeFiles,
   writeDeclarativeSchemas,
-} from "../../../shared/pgdelta.write.ts";
+} from "../../../../../command-internal/db/pgdelta/pgdelta.write.ts";
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { prepareLocalTargetEndpoint, resolveTargetEndpoint } from "../declarative.smart-target.ts";
 

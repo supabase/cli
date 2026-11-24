@@ -31,10 +31,10 @@ import {
   updateDeclarativeSchemaPathsConfig,
   warnPreservedUnmanagedDeclarativeFiles,
   writeDeclarativeSchemas,
-} from "../commands/db/shared/pgdelta.write.ts";
+} from "./db/pgdelta/pgdelta.write.ts";
 import { resolvePullDiffEngine, schemaPathsTransitionWarning } from "./diff-engine.ts";
 import { diffMigra } from "../commands/db/shared/migra.ts";
-import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
+import { writePgDeltaMigrations } from "./db/pgdelta/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
 import { dumpNetworkMode, streamPgDumpWithClient } from "./pg-dump.run.ts";
 import {
@@ -53,7 +53,7 @@ import { debugBundleMessage } from "../commands/db/shared/debug-bundle.ts";
 import {
   PgDeltaEngine,
   type PgDeltaDatabaseEndpoint,
-} from "../commands/db/shared/pgdelta-engine.service.ts";
+} from "./db/pgdelta/pgdelta-engine.service.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend, usesStackState } from "./stack-backend.ts";

@@ -18,7 +18,10 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { MigrationListFlags } from "./list.command.ts";
-import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
+import {
+  makeMigrationListRows,
+  migrationListTableCells,
+} from "../../../command-internal/migration-list.format.ts";
 
 const listHeaders = (target: ResolvedTarget) =>
   ["Local", target.kind === "local" ? "Local DB" : "Remote", "Time (UTC)"] as const;

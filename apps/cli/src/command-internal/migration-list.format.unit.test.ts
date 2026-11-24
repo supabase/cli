@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { renderGlamourTable } from "../../../output/glamour-table.ts";
-import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
+import { renderGlamourTable } from "../output/glamour-table.ts";
+import { makeMigrationListRows, migrationListTableCells } from "./migration-list.format.ts";
 
 describe("makeMigrationListRows", () => {
   it("tabulates short numeric versions in chronological order", () => {

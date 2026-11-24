@@ -51,7 +51,7 @@ import {
   renderJson,
   renderTablewriter,
   toCsv,
-} from "./query.format.ts";
+} from "../../../command-internal/db/query.format.ts";
 import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */

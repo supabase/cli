@@ -8,8 +8,11 @@ import {
   type PgDeltaDatabaseEndpoint,
   type PgDeltaRemovalSummary,
   type PgDeltaRenderedFile,
-} from "../../shared/pgdelta-engine.service.ts";
-import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../../shared/pgdelta-files.ts";
+} from "../../../../command-internal/db/pgdelta/pgdelta-engine.service.ts";
+import {
+  LoadPgDeltaSqlFiles,
+  ReadPgDeltaExportManifest,
+} from "../../../../command-internal/db/pgdelta/pgdelta-files.ts";
 import { DeclarativeCompatibilityError, DeclarativeDiffError } from "./declarative.errors.ts";
 import {
   classifyDeclarativeLoadCompatibility,

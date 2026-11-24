@@ -3,7 +3,7 @@ import {
   formatTimestampVersion,
   parseMigrationVersion,
   sortMigrationVersions,
-} from "../../../command-internal/migration-timestamp.format.ts";
+} from "./migration-timestamp.format.ts";
 
 /** A merged local/remote migration row. `local`/`remote` are empty when absent. */
 export interface MigrationListRow {
