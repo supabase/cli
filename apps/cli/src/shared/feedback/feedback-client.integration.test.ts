@@ -30,7 +30,7 @@ const SUBMISSION: FeedbackSubmission = {
   },
 };
 
-// A recording fetch injected through supabase-js's `global.fetch` option — the
+// A recording fetch injected as the client's transport — the
 // PostgREST request goes through this instead of the network. `preconnect` is
 // part of Bun's `typeof fetch` and must exist on the impostor too.
 function recordingFetch(

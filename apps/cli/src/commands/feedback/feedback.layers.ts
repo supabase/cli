@@ -36,7 +36,7 @@ function redactDeleteToken(url: string): string {
 }
 
 /**
- * The feedback client speaks `fetch` (supabase-js), not Effect's `HttpClient`,
+ * The feedback client speaks plain `fetch`, not Effect's `HttpClient`,
  * so the two transport behaviors every command promises compose at the
  * fetch boundary instead of through `httpClientLayer`: `--debug` request
  * logging on stderr (with the delete-token filter redacted), wrapping the

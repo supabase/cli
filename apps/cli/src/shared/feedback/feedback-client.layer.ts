@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import type { Database } from "./database.types.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.ts";
@@ -79,34 +78,44 @@ function toRpcArgs(submission: FeedbackSubmission): RpcArgs {
   };
 }
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeDeleteToken = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+const decodeErrorMessage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ message: Schema.String })),
+);
+
+// `Content-Range: */<count>` from `Prefer: count=exact`; a missing header reads as no match.
+function rangeCount(response: Response): number {
+  const total = response.headers.get("content-range")?.split("/")[1];
+  return total === undefined ? 0 : Number(total);
+}
+
 export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer<FeedbackClient> {
   return Layer.sync(FeedbackClient, () => {
-    const client = createClient<Database>(options.environment.url, options.environment.key, {
-      auth: { persistSession: false },
-      global: options.fetch === undefined ? {} : { fetch: options.fetch },
-    });
+    const fetch = options.fetch ?? globalThis.fetch;
+    const { url, key } = options.environment;
 
-    // postgrest-js reports every failure as a returned `error`, never a
-    // rejection: a PostgREST error envelope keeps the HTTP status, while a
-    // thrown/timed-out/aborted fetch is converted to an envelope with
-    // `status: 0`. That status is the typed discriminator between a backend
-    // response and a transport failure. (`tryPromise`'s catch is only a safety
-    // net for a genuinely thrown builder error and is treated as transport.)
-    // Each request aborts on whichever fires first: fiber interruption (the
-    // signal `Effect.tryPromise` hands us — Ctrl-C must not let an in-flight
-    // submit commit after the command is cancelled) or the 10s timeout.
-    const run = <A>(
+    // A thrown, timed-out, or aborted fetch is a transport failure; any non-2xx PostgREST answer
+    // is a response failure. Each request aborts on whichever fires first: fiber interruption
+    // (Ctrl-C must not let an in-flight submit commit after the command is cancelled) or the
+    // 10s timeout.
+    const request = (
       operation: FeedbackBackendError["operation"],
-      request: (signal: AbortSignal) => PromiseLike<{
-        data: A;
-        error: { message: string } | null;
-        count?: number | null;
-        status: number;
-      }>,
+      path: string,
+      init: {
+        readonly method: string;
+        readonly headers?: Record<string, string>;
+        readonly body?: string;
+      },
     ) =>
       Effect.tryPromise({
         try: (signal) =>
-          request(AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])),
+          fetch(`${url}/rest/v1/${path}`, {
+            method: init.method,
+            headers: { apikey: key, "content-type": "application/json", ...init.headers },
+            ...(init.body === undefined ? {} : { body: init.body }),
+            signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+          }).then((response) => response.text().then((text) => ({ response, text }))),
         catch: (cause) =>
           new FeedbackBackendError({
             message: cause instanceof Error ? cause.message : String(cause),
@@ -114,14 +123,17 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
             reason: "transport",
           }),
       }).pipe(
-        Effect.flatMap((response) =>
-          response.error === null
-            ? Effect.succeed(response)
+        Effect.flatMap(({ response, text }) =>
+          response.ok
+            ? Effect.succeed({ response, text })
             : Effect.fail(
                 new FeedbackBackendError({
-                  message: response.error.message,
+                  message: decodeErrorMessage(text).pipe(
+                    Option.map((body) => body.message),
+                    Option.getOrElse(() => text || response.statusText),
+                  ),
                   operation,
-                  reason: response.status === 0 ? "transport" : "response",
+                  reason: "response",
                 }),
               ),
         ),
@@ -129,11 +141,13 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
 
     return FeedbackClient.of({
       submit: Effect.fn("FeedbackClient.submit")(function* (submission) {
-        const { data } = yield* run("submit", (signal) =>
-          client.rpc("submit_interfaces_feedback", toRpcArgs(submission)).abortSignal(signal),
-        );
-        if (typeof data === "string" && data.length > 0) {
-          return { deleteToken: data };
+        const { text } = yield* request("submit", "rpc/submit_interfaces_feedback", {
+          method: "POST",
+          body: encodeJson(toRpcArgs(submission)),
+        });
+        const token = decodeDeleteToken(text).pipe(Option.filter((value) => value.length > 0));
+        if (Option.isSome(token)) {
+          return { deleteToken: token.value };
         }
         return yield* new FeedbackBackendError({
           message: "feedback backend returned no delete token",
@@ -143,27 +157,25 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
       }),
 
       delete: Effect.fn("FeedbackClient.delete")(function* (token, context) {
-        const { count } = yield* run("delete", (signal) => {
-          // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete
-          // rejection; the `x-feedback-token` header is the actual security
-          // boundary (RLS matches zero rows without it). `count: "exact"` asks
-          // for a Content-Range so the caller can tell a matched delete from a
-          // zero-row one.
-          let request = client
-            .from("interfaces_feedback")
-            .delete({ count: "exact" })
-            .eq("delete_token", token)
-            .setHeader("x-feedback-token", token)
-            .abortSignal(signal);
-          if (context?.projectRef !== undefined) {
-            request = request.setHeader("x-feedback-project-ref", context.projectRef);
-          }
-          if (context?.userId !== undefined) {
-            request = request.setHeader("x-feedback-user-id", context.userId);
-          }
-          return request;
-        });
-        return { deleted: count === 1 };
+        // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete rejection; the
+        // `x-feedback-token` header is the actual security boundary (RLS matches zero rows
+        // without it). `count=exact` tells a matched delete from a zero-row one.
+        const { response } = yield* request(
+          "delete",
+          `interfaces_feedback?delete_token=eq.${encodeURIComponent(token)}`,
+          {
+            method: "DELETE",
+            headers: {
+              prefer: "count=exact",
+              "x-feedback-token": token,
+              ...(context?.projectRef === undefined
+                ? {}
+                : { "x-feedback-project-ref": context.projectRef }),
+              ...(context?.userId === undefined ? {} : { "x-feedback-user-id": context.userId }),
+            },
+          },
+        );
+        return { deleted: rangeCount(response) === 1 };
       }),
     });
   });

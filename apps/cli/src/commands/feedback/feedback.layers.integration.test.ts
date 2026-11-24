@@ -52,11 +52,9 @@ function recordingInnerFetch(respond: () => Response) {
   return { fetch, requests };
 }
 
-// The full production transport stack minus the network: real supabase-js
+// The full production transport stack minus the network: real feedback
 // client → real `feedbackFetch` (debug logging + DoH rewrite) → recording
-// inner fetch, with only the DoH resolver faked. This pins the shape supabase-js
-// hands to the transport (a WHATWG `Headers` instance) — the regression where a
-// plain-object spread dropped every header only reproduces with that shape.
+// inner fetch, with only the DoH resolver faked.
 function setupDohTransport(respond: () => Response) {
   const { logger, httpLines } = recordingLogger();
   const inner = recordingInnerFetch(respond);
@@ -73,7 +71,7 @@ function setupDohTransport(respond: () => Response) {
 }
 
 describe("feedbackFetch with --dns-resolver https", () => {
-  it.effect("preserves supabase-js auth headers through the DoH rewrite on submit", () => {
+  it.effect("preserves the PostgREST auth headers through the DoH rewrite on submit", () => {
     const { layer, requests } = setupDohTransport(
       () =>
         new Response(JSON.stringify(TOKEN), {
@@ -94,8 +92,7 @@ describe("feedbackFetch with --dns-resolver https", () => {
       // original hostname.
       expect(new URL(url).hostname).toBe(RESOLVED_IP);
       expect(headers.get("host")).toBe("feedback-project.supabase.co");
-      // supabase-js supplies these as a `Headers` instance; they must survive
-      // the rewrite or PostgREST rejects the request.
+      // They must survive the rewrite or PostgREST rejects the request.
       expect(headers.get("apikey")).toBe(TEST_ENV.key);
       expect(headers.get("content-type")).toContain("application/json");
     }).pipe(Effect.provide(layer));
