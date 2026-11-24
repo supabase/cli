@@ -25,6 +25,7 @@
   },
   "scripts": {
     "build": "pnpm build:binary && pnpm build:shim",
+    "build:aot": "bun scripts/build-aot.ts",
     "build:binary": "bun scripts/build-binary.ts",
     "build:node": "bun scripts/build-node.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
