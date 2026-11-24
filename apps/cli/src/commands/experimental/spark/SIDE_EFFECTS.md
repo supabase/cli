@@ -30,6 +30,10 @@ take `--remote[=<ref|branch>]` and its hidden aliases `--linked` and `--project-
 - Linked (`--remote`, `--remote=<ref>`, or the deprecated `--linked` and `--project-ref`): the
   project the flag, `SUPABASE_PROJECT_ID` or `supabase/.link.json` names.
 
+In the whole tree, `functions`, `secrets` and `projects api-keys` included, `--remote=` and
+`--remote=false` fail with `... leave it out to target the dev instance.` and
+`--remote doesn't take false. Leave it out to target the dev instance.`
+
 Both use the base URL from the profile's `api_url` (`SUPABASE_PROFILE`, a built-in name or a YAML
 file) and the token from `SUPABASE_ACCESS_TOKEN` or the stored login. No command calls `/_spark` or
 uses a service_role key. `link` always uses the Management API.

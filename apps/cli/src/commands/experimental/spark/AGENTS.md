@@ -31,7 +31,9 @@ or Studio.
 
 ## Layout
 
-- `spark.command.ts`: the tree `root.ts` mounts. With `resolveSparkEnabled` in `spark-project.ts`, which
+- `spark.command.ts`: the tree `root.ts` mounts, and `sparkRemoteFlagDefault`, which `src/cli/main.ts` provides as
+  `RemoteFlagDefault` (`command-internal/target/target-flags.ts`) so every `--remote` error in the tree, the mounted
+  mainline commands' included, names the dev instance. With `resolveSparkEnabled` in `spark-project.ts`, which
   `src/cli/main.ts` calls to choose the tree, it is the only code outside this folder may import.
 - `<group>/<name>/`: one folder per subcommand, `<name>.command.ts` and `<name>.handler.ts`, like
   `experimental/compute/`.

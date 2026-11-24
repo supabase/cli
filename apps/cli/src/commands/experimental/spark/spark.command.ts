@@ -42,6 +42,12 @@ const sparkGenCommand = Command.make("gen").pipe(
 );
 
 /**
+ * What leaving `--remote` out does in the Spark tree, for `--remote`'s error messages: every
+ * command there that takes it, the mounted mainline ones included, defaults to the dev instance.
+ */
+export const sparkRemoteFlagDefault = "target the dev instance";
+
+/**
  * The Spark commands of a Spark project's tree: `start`, `status` and `stop` manage the checkout's
  * dev instance, and the others target it by default.
  */

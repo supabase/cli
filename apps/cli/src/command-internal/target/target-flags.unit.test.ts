@@ -11,6 +11,7 @@ import {
   flagsForTarget,
   isRemoteFlag,
   projectTargetFlags,
+  RemoteFlagDefault,
   seedTargetGlobalFlags,
   targetFlags,
 } from "./target-flags.ts";
@@ -162,20 +163,26 @@ describe("targetFlags", () => {
     }),
   );
 
-  it.effect("names the command's own default in its messages when it declares one", () =>
-    Effect.gen(function* () {
-      const flags = targetFlags({
-        subject: "database",
-        dbUrl: false,
-        defaultTarget: "target the dev instance",
-      });
-      expect(yield* rejectedMessage(flags, ["--no-remote"])).toBe(
-        "--remote doesn't take false. Leave it out to target the dev instance.",
-      );
-      expect(yield* rejectedMessage(flags, ["--remote="])).toBe(
-        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the dev instance.",
-      );
-    }),
+  it.effect(
+    "names the command tree's default when the run provides one, hosted flags included",
+    () =>
+      Effect.gen(function* () {
+        const selectable = targetFlags({ subject: "database", dbUrl: false });
+        const hosted = projectTargetFlags();
+        const inSparkTree = Effect.provideService(RemoteFlagDefault, "target the dev instance");
+        expect(yield* rejectedMessage(selectable, ["--no-remote"]).pipe(inSparkTree)).toBe(
+          "--remote doesn't take false. Leave it out to target the dev instance.",
+        );
+        expect(yield* rejectedMessage(hosted, ["--remote=false"]).pipe(inSparkTree)).toBe(
+          "--remote doesn't take false. Leave it out to target the dev instance.",
+        );
+        expect(yield* rejectedMessage(hosted, ["--remote="]).pipe(inSparkTree)).toBe(
+          "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the dev instance.",
+        );
+        expect(yield* rejectedMessage(hosted, ["--remote="])).toBe(
+          "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.",
+        );
+      }),
   );
 
   it.effect.each([

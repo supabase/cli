@@ -26,6 +26,7 @@ import {
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import {
   sparkCommands,
+  sparkRemoteFlagDefault,
   withSparkDevInstanceDefault,
   withSparkDevInstanceProject,
 } from "../commands/experimental/spark/spark.command.ts";
@@ -402,6 +403,8 @@ export const cliEntrypointForFeatures = (
 ) => ({
   rootCommand: rootCommandForFeatures(features),
   agentDefaultOutputFormat: agentDefaultOutputFormatFor(features, args),
+  /** The `RemoteFlagDefault` the run provides; `undefined` keeps each flag's own. */
+  remoteFlagDefault: features.sparkEnabled ? sparkRemoteFlagDefault : undefined,
 });
 
 export const rootCommand = rootCommandForFeatures();

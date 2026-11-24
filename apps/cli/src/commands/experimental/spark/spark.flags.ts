@@ -17,11 +17,7 @@ import { sparkShadowLayer } from "./spark-shadow.ts";
  * none of them a command targets the dev instance.
  */
 export const sparkTargetFlags = () => {
-  const { remote, linked, projectRef } = targetFlags({
-    subject: "database",
-    dbUrl: false,
-    defaultTarget: "target the dev instance",
-  });
+  const { remote, linked, projectRef } = targetFlags({ subject: "database", dbUrl: false });
   return { remote, linked, projectRef };
 };
 

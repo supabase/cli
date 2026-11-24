@@ -7,6 +7,7 @@ import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
+import { RemoteFlagDefault } from "../command-internal/target/target-flags.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { resolveSparkEnabled } from "../commands/experimental/spark/spark-project.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
@@ -33,7 +34,11 @@ const selectionExit = await Effect.runPromiseExit(
     return { projectState, stackBackend, computeEnabled, sparkEnabled };
   }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
-const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
+const {
+  rootCommand: selectedRoot,
+  agentDefaultOutputFormat,
+  remoteFlagDefault,
+} = cliEntrypointForFeatures(
   Exit.isSuccess(selectionExit)
     ? selectionExit.value
     : { stackBackend: "legacy", computeEnabled: false },
@@ -67,6 +72,6 @@ if (
       agentDefaultOutputFormat,
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
-    }),
+    }).pipe(Effect.provideService(RemoteFlagDefault, remoteFlagDefault)),
   );
 }
