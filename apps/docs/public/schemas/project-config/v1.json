@@ -1864,6 +1864,11 @@
               "type": "string",
               "description": "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
               "examples": ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"]
+            },
+            "dev_instance": {
+              "type": "boolean",
+              "description": "Develop against a remote Spark dev instance instead of a local stack: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+              "default": false
             }
           },
           "additionalProperties": true
