@@ -49,6 +49,8 @@ import {
   failureMessage,
   lostOwnerDetail,
   type LostOwnerLease,
+  ownerLogTailBytes,
+  ownerLogTailLines,
   rpcClientFailureMessage,
 } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -398,9 +400,7 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
-const ownerLogTailBytes = 4096;
-
-/** Reads at most the last 4 KiB of the owner log and keeps its last 20 lines; empty when unreadable. */
+/** Reads the owner log tail as the spawner reports it on startup failure; empty when unreadable. */
 const ownerLogTail = Effect.fn("Stack.ownerLogTail")(function* (log: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* Effect.scoped(
@@ -410,7 +410,7 @@ const ownerLogTail = Effect.fn("Stack.ownerLogTail")(function* (log: string) {
       const file = yield* fs.open(log, { flag: "r" });
       yield* file.seek(BigInt(offset), "start");
       const bytes = Option.getOrElse(yield* file.readAlloc(size - offset), () => new Uint8Array(0));
-      return new TextDecoder().decode(bytes).trimEnd().split("\n").slice(-20).join("\n");
+      return ownerLogTailLines(bytes);
     }),
   ).pipe(Effect.orElseSucceed(() => ""));
 });
@@ -560,7 +560,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         holder.port === access.endpoint.port &&
         holder.secret === access.secret
         ? ({ _tag: "Held" } as const)
-        : ({ _tag: "Replaced", holderPid: holder.pid } as const);
+        : ({ _tag: "Replaced", role: holder.role, holderPid: holder.pid } as const);
     }).pipe(
       Effect.catch((cause) =>
         Effect.succeed({ _tag: "Unknown", reason: failureMessage(cause) } as const),
@@ -569,7 +569,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     const log = state.ownerLog(saved.id);
     // A replacement owner truncates and rewrites the log, so its tail would not be this owner's.
     const logTail =
-      lease._tag === "Replaced"
+      lease._tag === "Replaced" && lease.role === "owner"
         ? ""
         : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
     yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });
