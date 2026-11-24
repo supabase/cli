@@ -415,6 +415,13 @@ const ownerLogTail = Effect.fn("Stack.ownerLogTail")(function* (log: string) {
   ).pipe(Effect.orElseSucceed(() => ""));
 });
 
+const sameLease = (before: LostOwnerLease, after: LostOwnerLease) =>
+  before._tag === "Replaced"
+    ? after._tag === "Replaced" &&
+      after.role === before.role &&
+      after.holderPid === before.holderPid
+    : after._tag === before._tag;
+
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
 
@@ -549,14 +556,13 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
     ownerGone(cause) ? invalidate(connection) : Effect.void;
   if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
-  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (access: HostAccess) {
-    const pid = access.endpoint.pid;
-    const lease: LostOwnerLease = yield* Effect.gen(function* () {
+  const leaseOf = (access: HostAccess) =>
+    Effect.gen(function* () {
       if (!(yield* state.leased(saved.id))) return { _tag: "Released" } as const;
       const holder = yield* state.readHolder(saved.id);
       if (holder === undefined) return { _tag: "Unpublished" } as const;
       return holder.role === "owner" &&
-        holder.pid === pid &&
+        holder.pid === access.endpoint.pid &&
         holder.port === access.endpoint.port &&
         holder.secret === access.secret
         ? ({ _tag: "Held" } as const)
@@ -566,13 +572,17 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.succeed({ _tag: "Unknown", reason: failureMessage(cause) } as const),
       ),
     );
+  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (access: HostAccess) {
+    const pid = access.endpoint.pid;
+    const lease: LostOwnerLease = yield* leaseOf(access);
     const log = state.ownerLog(saved.id);
-    // A starting owner truncates the log before it publishes its holder record, so after a
-    // handoff to an owner, or to a holder not yet named, the tail may not be this owner's.
-    const logTail =
+    // A starting owner retracts the previous holder record and then truncates the log, all while
+    // holding the lease, so an unchanged lease around the read ties the tail to this owner.
+    const tail =
       lease._tag === "Unpublished" || (lease._tag === "Replaced" && lease.role === "owner")
         ? ""
         : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+    const logTail = tail.length > 0 && sameLease(lease, yield* leaseOf(access)) ? tail : "";
     yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });
     return lostOwnerDetail({ pid, lease, log, logTail });
   });
