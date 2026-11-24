@@ -14,8 +14,7 @@ import {
 import { Command } from "effect/cli";
 
 import { TerminalResponse } from "../shared/cli/terminal-response.service.ts";
-import { failureBesideClosedStdout } from "../shared/output/errors.ts";
-import { normalizeCause, normalizeCliError } from "../shared/output/normalize-error.ts";
+import { normalizeCliError } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import type { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
@@ -154,18 +153,22 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       Effect.exit,
     );
     if (Exit.isSuccess(exit)) return;
-    const cause = failureBesideClosedStdout(exit.cause);
-    if (!(yield* Ref.get(attempted)) && cause !== undefined && !Cause.hasInterruptsOnly(cause)) {
-      const typed =
-        !Cause.hasDies(cause) && !Cause.hasInterrupts(cause)
-          ? Cause.findErrorOption(cause)
-          : Option.none();
-      const report = Effect.suspend(() =>
-        isMachine(output) && Option.isSome(typed)
-          ? output.fail(normalizeCliError(typed.value))
-          : (response.reportFailure?.(cause) ?? output.fail(normalizeCause(cause))),
-      );
-      yield* beginWrite.pipe(Effect.andThen(bestEffort(report)));
+    // Only typed machine errors need the command's output context. The runner reports other
+    // failures after shutdown, so a signal during shutdown can still suppress their diagnostics.
+    if (
+      isMachine(output) &&
+      !(yield* Ref.get(attempted)) &&
+      !Cause.hasDies(exit.cause) &&
+      !Cause.hasInterrupts(exit.cause)
+    ) {
+      const typed = Cause.findErrorOption(exit.cause);
+      if (Option.isSome(typed)) {
+        yield* beginWrite.pipe(
+          Effect.andThen(
+            bestEffort(Effect.suspend(() => output.fail(normalizeCliError(typed.value)))),
+          ),
+        );
+      }
     }
     return yield* Effect.failCause(exit.cause);
   }).pipe(Effect.scoped);

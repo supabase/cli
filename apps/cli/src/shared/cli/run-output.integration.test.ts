@@ -68,11 +68,25 @@ it.live.each([
   "cleanup-defect",
   "partial-write",
   "typed-failure",
+  "text-failure",
   "held-layer-release",
   "layer-release-defect",
 ] as const)("requests the right exit without replacing terminal output: %s", (scenario) =>
   Effect.gen(function* () {
-    const out = mockOutput({ format: "json" });
+    const format = scenario === "text-failure" ? "text" : "json";
+    const out = mockOutput({ format });
+    const drainStarted = yield* Deferred.make<void>();
+    const allowDrain = yield* Deferred.make<void>();
+    const analyticsLayer = Layer.merge(
+      mockAnalytics().layer,
+      Layer.effectDiscard(
+        Effect.addFinalizer(() =>
+          Deferred.succeed(drainStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowDrain)),
+          ),
+        ),
+      ),
+    );
     const attempts: number[] = [];
     const error = Object.assign(new Error("managed failure"), { [Runtime.errorExitCode]: 7 });
     const releaseStarted = yield* Deferred.make<void>();
@@ -96,7 +110,9 @@ it.live.each([
           Effect.gen(function* () {
             const control = yield* ProcessControl;
             const writer = yield* Output;
-            if (scenario === "typed-failure") return yield* Effect.fail(error);
+            if (scenario === "typed-failure" || scenario === "text-failure") {
+              return yield* Effect.fail(error);
+            }
             yield* Effect.addFinalizer(() =>
               scenario === "warning"
                 ? Effect.fail("restoration rejected").pipe(
@@ -133,7 +149,7 @@ it.live.each([
       Command.withGlobalFlags([OutputFormatFlag]),
     );
     const argv = process.argv;
-    process.argv = [argv[0] ?? "bun", "supabase", "--output-format", "json"];
+    process.argv = [argv[0] ?? "bun", "supabase", "--output-format", format];
     processState.exit = (code) => {
       attempts.push(code);
     };
@@ -144,21 +160,29 @@ it.live.each([
         home.current,
         runCli(root, {
           agentDefaultOutputFormat: "json",
-          analyticsLayer: mockAnalytics().layer,
+          analyticsLayer,
         }),
       ).pipe(Effect.exit);
-      const exit =
-        scenario === "held-layer-release"
-          ? yield* Effect.gen(function* () {
-              const fiber = yield* run.pipe(Effect.forkChild);
-              yield* Deferred.await(releaseStarted);
-              const duringRelease = out.stdoutText;
-              yield* Deferred.succeed(allowRelease, undefined);
-              const exit = yield* Fiber.join(fiber);
-              expect(duringRelease).toBe("");
-              return exit;
-            }).pipe(Effect.ensuring(Deferred.succeed(allowRelease, undefined)))
-          : yield* run;
+      const exit = yield* Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild);
+        if (scenario === "held-layer-release") {
+          yield* Deferred.await(releaseStarted);
+          expect(out.stdoutText).toBe("");
+          yield* Deferred.succeed(allowRelease, undefined);
+        }
+        yield* Deferred.await(drainStarted);
+        expect(out.failures).toEqual(
+          scenario === "typed-failure"
+            ? [expect.objectContaining({ message: "managed failure" })]
+            : [],
+        );
+        expect(attempts).toEqual([]);
+        yield* Deferred.succeed(allowDrain, undefined);
+        return yield* Fiber.join(fiber);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(allowRelease, undefined)),
+        Effect.ensuring(Deferred.succeed(allowDrain, undefined)),
+      );
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
       expect(attempts).toEqual([
         scenario === "held-layer-release" ? 0 : scenario === "warning" ? 1 : 7,
@@ -175,6 +199,7 @@ it.live.each([
       }
       expect(out.failures).toEqual(
         scenario === "typed-failure" ||
+          scenario === "text-failure" ||
           scenario === "cleanup-defect" ||
           scenario === "layer-release-defect"
           ? [expect.objectContaining({ message: "managed failure" })]

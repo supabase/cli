@@ -281,7 +281,7 @@ describe("branches delete integration", () => {
       expect(api.requests).toEqual([]);
       expect(cache.cacheCount).toBe(0);
       expect(telemetry.flushCount).toBe(0);
-      expect(out.failures).toHaveLength(1);
+      expect(out.failures).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

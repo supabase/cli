@@ -206,3 +206,67 @@ it.live(
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
 );
+
+it.live("suppresses the text delete failure on SIGINT while telemetry drains", () =>
+  Effect.gen(function* () {
+    const home = yield* makeTempHome;
+    const fs = yield* FileSystem.FileSystem;
+    const missingRef = "missingbranchproject";
+    const drainStarted = yield* Deferred.make<void>();
+    const releaseBatch = Promise.withResolvers<Response>();
+    const deletes: string[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          fetch(request) {
+            const path = new URL(request.url).pathname;
+            if (request.method === "DELETE" && path === `/v1/branches/${missingRef}`) {
+              deletes.push(path);
+              return Response.json({ message: "Branch not found" }, { status: 404 });
+            }
+            if (request.method === "POST" && path === "/batch/") {
+              Deferred.doneUnsafe(drainStarted, Effect.void);
+              return releaseBatch.promise;
+            }
+            return new Response(null, { status: 404 });
+          },
+        }),
+      ),
+      (running) =>
+        Effect.sync(() => releaseBatch.resolve(new Response(null, { status: 204 }))).pipe(
+          Effect.andThen(Effect.promise(() => running.stop(true))),
+        ),
+    );
+    const profile = `${home.dir}/profile.yaml`;
+    yield* fs.writeFileString(
+      profile,
+      `name: delete-e2e\napi_url: ${server.url.origin}\ndashboard_url: ${server.url.origin}\nproject_host: example.invalid\n`,
+    );
+    const child = yield* spawnSupabase(
+      ["branches", "delete", missingRef, `--remote=${parent}`, "--output-format", "text", "--yes"],
+      {
+        cwd: home.dir,
+        home: home.dir,
+        env: {
+          SUPABASE_ACCESS_TOKEN: `sbp_${"a".repeat(40)}`,
+          SUPABASE_PROFILE: profile,
+          SUPABASE_TELEMETRY_DISABLED: "0",
+          DO_NOT_TRACK: "0",
+          SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_delete_e2e",
+          SUPABASE_TELEMETRY_POSTHOG_HOST: server.url.origin,
+          NO_COLOR: "1",
+        },
+      },
+    );
+    yield* Deferred.await(drainStarted).pipe(Effect.timeout("10 seconds"));
+    yield* child.kill("SIGINT");
+    const interrupted = yield* child.waitForExit();
+    expect(deletes).toEqual([`/v1/branches/${missingRef}`]);
+    expect(interrupted.exitCode, interrupted.stderr).toBe(130);
+    expect(interrupted.stdout).toBe("");
+    expect(interrupted.stderr).not.toContain("unexpected delete branch status 404");
+    expect(interrupted.stderr).not.toContain("Try rerunning the command with --debug");
+  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+);

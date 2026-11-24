@@ -818,7 +818,6 @@ export const runCli = Effect.fnUntraced(function* <
       const exit = yield* program.pipe(
         Effect.provideService(TerminalResponse, {
           markAttempt: Ref.set(terminalAttempted, true),
-          reportFailure,
         }),
         Effect.exit,
       );

@@ -102,7 +102,7 @@ it.effect("waits for required finalization before delivering the result", () => 
   }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
 });
 
-it.effect("reports a cleanup defect instead of delivering success", () => {
+it.effect("propagates a cleanup defect without attempting machine output", () => {
   const out = mockOutput({ format: "json" });
   const defect = new Error("release failed");
   return Effect.gen(function* () {
@@ -113,9 +113,8 @@ it.effect("reports a cleanup defect instead of delivering success", () => {
       }),
     ).pipe(Effect.exit);
     expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
-    expect(out.messages).toEqual([
-      expect.objectContaining({ type: "fail", message: "release failed" }),
-    ]);
+    expect(out.stdoutText).toBe("");
+    expect(out.failures).toEqual([]);
   }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
 });
 
