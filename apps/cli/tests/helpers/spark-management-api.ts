@@ -1,6 +1,6 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { makeSparkAdmin, sparkDryRun, sparkTypescriptTypes } from "@supabase/stack/spark";
-import { Data, Effect, Schema } from "effect";
+import { Data, DateTime, Effect, Option, Random, Schema } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -24,7 +24,57 @@ const MigrationBody = Schema.Struct({
   version: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
+const CreateProjectBody = Schema.Struct({
+  name: Schema.String,
+  organization_slug: Schema.String,
+  postgres_engine: Schema.optionalKey(Schema.String),
+  db_pass: Schema.optionalKey(Schema.String),
+});
+
 class BadRequest extends Data.TaggedError("BadRequest")<{ readonly message: string }> {}
+
+/** An instance owner failed to create, delete or reset a Spark instance. */
+export class SparkInstanceError extends Data.TaggedError("SparkInstanceError")<{
+  readonly message: string;
+}> {}
+
+/** Where a project's Spark serves, and the keys it accepts. */
+export interface SparkConnection {
+  readonly url: string;
+  readonly serviceRoleKey: string;
+  readonly anonKey: string;
+}
+
+/** Owns one Spark process per project ref, as the Spark host does for the platform. */
+export interface SparkInstances {
+  readonly create: (ref: string) => Effect.Effect<SparkConnection, SparkInstanceError>;
+  readonly delete: (ref: string) => Effect.Effect<void, SparkInstanceError>;
+  /** Empties the instance's database; its URL and keys stay. */
+  readonly reset: (ref: string) => Effect.Effect<SparkConnection, SparkInstanceError>;
+}
+
+type StandInOptions =
+  /** One Spark answers for every ref; `/rest/v1` and `/auth/v1` pass through to it. */
+  | { readonly sparkUrl: string; readonly serviceRoleKey: string; readonly anonKey: string }
+  /** Projects are created and deleted through the API, each on its own instance. */
+  | {
+      readonly instances: SparkInstances;
+      readonly organizations: ReadonlyArray<{
+        readonly id: string;
+        readonly slug: string;
+        readonly name: string;
+      }>;
+    };
+
+interface HostedProject {
+  readonly ref: string;
+  readonly name: string;
+  readonly organization: { readonly id: string; readonly slug: string };
+  readonly createdAt: string;
+  connection: SparkConnection;
+  /** The first `GET` after create answers `COMING_UP`, so the CLI's wait is exercised. */
+  reportedHealthy: boolean;
+}
 
 const json = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -42,23 +92,32 @@ const notForwarded = new Set([
   "accept-encoding",
 ]);
 
+const randomRef = Effect.gen(function* () {
+  let ref = "";
+  for (let i = 0; i < 20; i++)
+    ref += String.fromCharCode(97 + (yield* Random.nextIntBetween(0, 26, { halfOpen: true })));
+  return ref;
+});
+
 /**
- * The Management API routes the Spark end-to-end test's linked-project steps and the Supabase MCP
- * server call, over a local Spark's admin routes, on its own port. Any access token and project ref
- * are accepted. `/rest/v1` and `/auth/v1` pass through to Spark, so the project URL the MCP server
- * returns serves the project's Data API.
+ * The Management API routes the Spark end-to-end tests and the Supabase MCP server call, over
+ * Spark's admin routes, on its own port. Any access token is accepted. With one `sparkUrl`, every
+ * project ref is that Spark, and `/rest/v1` and `/auth/v1` pass through to it, so the project URL
+ * the MCP server returns serves the project's Data API. With `instances`, `POST /v1/projects`
+ * creates a project on its own instance, and `GET /v1/projects/{ref}` carries its `api_url`.
  */
-export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(function* (options: {
-  readonly sparkUrl: string;
-  readonly serviceRoleKey: string;
-  readonly anonKey: string;
-}) {
-  const admin = makeSparkAdmin(
-    yield* HttpClient.HttpClient,
-    options.sparkUrl,
-    options.serviceRoleKey,
-  );
-  const project = (ref: string) => ({
+export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(function* (
+  options: StandInOptions,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const hosted = new Map<string, HostedProject>();
+  const single = "sparkUrl" in options ? options : undefined;
+  const organizations =
+    "instances" in options
+      ? options.organizations
+      : [{ id: "local", slug: "local", name: "Local" }];
+
+  const singleProject = (ref: string) => ({
     id: ref,
     ref,
     name: "spark-local",
@@ -68,6 +127,50 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
     created_at: "1970-01-01T00:00:00.000Z",
     database: { host: "127.0.0.1", version: "17-spark", postgres_engine: "spark" },
   });
+  const hostedProject = (project: HostedProject, status = "ACTIVE_HEALTHY") => ({
+    id: project.ref,
+    ref: project.ref,
+    name: project.name,
+    organization_id: project.organization.id,
+    organization_slug: project.organization.slug,
+    region: "local",
+    status,
+    created_at: project.createdAt,
+    database: { host: "127.0.0.1", version: "17-spark", postgres_engine: "spark" },
+  });
+  const connectionOf = (ref: string): Option.Option<SparkConnection> =>
+    single === undefined
+      ? Option.map(Option.fromNullishOr(hosted.get(ref)), (project) => project.connection)
+      : Option.some({
+          url: single.sparkUrl,
+          serviceRoleKey: single.serviceRoleKey,
+          anonKey: single.anonKey,
+        });
+
+  const createProject = Effect.fn("SparkManagementApi.createProject")(function* () {
+    if (!("instances" in options))
+      return json({ message: "the single-Spark stand-in creates no project" }, 501);
+    const body = yield* HttpServerRequest.schemaBodyJson(CreateProjectBody).pipe(
+      Effect.mapError(invalidBody),
+    );
+    if (body.postgres_engine !== "spark")
+      return json({ message: "the Spark stand-in creates only Spark projects" }, 400);
+    const organization = organizations.find((org) => org.slug === body.organization_slug);
+    if (organization === undefined)
+      return json({ message: `no organization ${body.organization_slug}` }, 404);
+    const ref = yield* randomRef;
+    const connection = yield* options.instances.create(ref);
+    const project: HostedProject = {
+      ref,
+      name: body.name,
+      organization,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+      connection,
+      reportedHealthy: false,
+    };
+    hosted.set(ref, project);
+    return json(hostedProject(project, "COMING_UP"), 201);
+  });
 
   const projectRoute = Effect.fn("SparkManagementApi.project")(function* (
     method: string,
@@ -75,7 +178,32 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
     rest: string,
     search: URLSearchParams,
   ) {
-    if (rest === "" && method === "GET") return json(project(ref));
+    const project = hosted.get(ref);
+    if (single === undefined && project === undefined)
+      return json({ message: `Project ${ref} not found` }, 404);
+    if (rest === "" && method === "GET") {
+      if (project === undefined) return json(singleProject(ref));
+      const status = project.reportedHealthy ? "ACTIVE_HEALTHY" : "COMING_UP";
+      project.reportedHealthy = true;
+      return json({ ...hostedProject(project, status), api_url: project.connection.url });
+    }
+    if (rest === "" && method === "DELETE" && project !== undefined && "instances" in options) {
+      yield* options.instances.delete(ref);
+      hosted.delete(ref);
+      return json(hostedProject(project, "REMOVED"));
+    }
+    if (
+      rest === "/database/reset" &&
+      method === "POST" &&
+      project !== undefined &&
+      "instances" in options
+    ) {
+      project.connection = yield* options.instances.reset(ref);
+      return json({});
+    }
+    const connection = Option.getOrUndefined(connectionOf(ref));
+    if (connection === undefined) return json({ message: `Project ${ref} not found` }, 404);
+    const admin = makeSparkAdmin(client, connection.url, connection.serviceRoleKey);
     if (rest === "/database/query" && method === "POST") {
       const body = yield* HttpServerRequest.schemaBodyJson(QueryBody).pipe(
         Effect.mapError(invalidBody),
@@ -111,10 +239,10 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
     if (rest === "/api-keys/legacy" && method === "GET") return json({ enabled: true });
     if (rest === "/api-keys" && method === "GET")
       return json([
-        { name: "anon", api_key: options.anonKey, type: "legacy", id: "anon" },
+        { name: "anon", api_key: connection.anonKey, type: "legacy", id: "anon" },
         {
           name: "service_role",
-          api_key: options.serviceRoleKey,
+          api_key: connection.serviceRoleKey,
           type: "legacy",
           id: "service_role",
         },
@@ -122,15 +250,15 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
     return json({ message: `not in the Spark stand-in: ${method} /v1/projects/{ref}${rest}` }, 404);
   });
 
-  const client = yield* HttpClient.HttpClient;
   const passthrough = Effect.fn("SparkManagementApi.passthrough")(function* (
+    sparkUrl: string,
     request: HttpServerRequest.HttpServerRequest,
   ) {
     const method = request.method;
     if (!HttpMethod.isHttpMethod(method)) return json({ message: "method not allowed" }, 405);
     const hasBody = HttpMethod.hasBody(method);
     const upstream = yield* client.execute(
-      HttpClientRequest.make(method)(`${options.sparkUrl}${request.url}`, {
+      HttpClientRequest.make(method)(`${sparkUrl}${request.url}`, {
         headers: Object.fromEntries(
           Object.entries(request.headers).filter(([name]) => !notForwarded.has(name)),
         ),
@@ -151,9 +279,13 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
   const route = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = new URL(request.url, "http://localhost");
-    if (/^\/(rest|auth)\/v1(\/|$)/u.test(url.pathname)) return yield* passthrough(request);
+    if (single !== undefined && /^\/(rest|auth)\/v1(\/|$)/u.test(url.pathname))
+      return yield* passthrough(single.sparkUrl, request);
     if (url.pathname === "/v1/organizations" && request.method === "GET")
-      return json([{ id: "local", slug: "local", name: "Local" }]);
+      return json(organizations);
+    if (url.pathname === "/v1/projects" && request.method === "GET")
+      return json([...hosted.values()].map((project) => hostedProject(project)));
+    if (url.pathname === "/v1/projects" && request.method === "POST") return yield* createProject();
     const projectPath = /^\/v1\/projects\/([^/]+)(\/.*)?$/u.exec(url.pathname);
     if (projectPath === null) return json({ message: "not found" }, 404);
     return yield* projectRoute(
@@ -175,6 +307,7 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
         ),
       SparkTransportError: (error) => Effect.succeed(json({ message: error.message }, 502)),
       SparkTypegenError: (error) => Effect.succeed(json({ message: error.message }, 500)),
+      SparkInstanceError: (error) => Effect.succeed(json({ message: error.message }, 500)),
     }),
   );
 
