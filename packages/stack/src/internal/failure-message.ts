@@ -44,23 +44,32 @@ export const rpcClientFailureMessage = (error: RpcClientError): string => {
   return parts.join(": ");
 };
 
+/** The lease as a client sees it after a call to the owner at `pid` lost its connection. */
+export type LostOwnerLease =
+  | { readonly _tag: "Held" }
+  | { readonly _tag: "Released" }
+  | { readonly _tag: "Replaced"; readonly holderPid: number }
+  | { readonly _tag: "Unknown"; readonly reason: string };
+
 /** What a client observes about a stack owner after a call to it lost its connection. */
 export interface LostOwnerObservation {
   /** The pid the call was sent to. */
   readonly pid: number;
-  /** The pid of the owner that holds the lease now, if any. */
-  readonly holderPid: number | undefined;
+  readonly lease: LostOwnerLease;
   readonly log: string;
+  /** The owner log tail; absent when the log may belong to a replacement owner. */
   readonly logTail: string;
 }
 
 /** Says whether the called owner still runs and adds its log tail, so a crash reads as one. */
-export const lostOwnerDetail = ({ pid, holderPid, log, logTail }: LostOwnerObservation): string => {
+export const lostOwnerDetail = ({ pid, lease, log, logTail }: LostOwnerObservation): string => {
   const liveness =
-    holderPid === pid
+    lease._tag === "Held"
       ? `owner ${pid} still holds the stack lease`
-      : holderPid === undefined
+      : lease._tag === "Released"
         ? `owner ${pid} no longer holds the stack lease`
-        : `owner ${pid} no longer holds the stack lease; owner ${holderPid} holds it now`;
+        : lease._tag === "Replaced"
+          ? `owner ${pid} no longer holds the stack lease; owner ${lease.holderPid} holds it now`
+          : `the stack lease of owner ${pid} could not be read: ${lease.reason}`;
   return `${liveness} (owner log: ${log})${logTail.length === 0 ? "" : `\n${logTail}`}`;
 };

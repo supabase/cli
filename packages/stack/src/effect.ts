@@ -48,6 +48,7 @@ import { initializedDatabaseIds } from "./internal/database-reuse.ts";
 import {
   failureMessage,
   lostOwnerDetail,
+  type LostOwnerLease,
   rpcClientFailureMessage,
 } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -389,6 +390,23 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
+const ownerLogTailBytes = 4096;
+
+/** Reads at most the last 4 KiB of the owner log and keeps its last 20 lines; empty when unreadable. */
+const ownerLogTail = Effect.fn("Stack.ownerLogTail")(function* (log: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const size = Number((yield* fs.stat(log)).size);
+      const offset = Math.max(0, size - ownerLogTailBytes);
+      const file = yield* fs.open(log, { flag: "r" });
+      yield* file.seek(BigInt(offset), "start");
+      const bytes = Option.getOrElse(yield* file.readAlloc(size - offset), () => new Uint8Array(0));
+      return new TextDecoder().decode(bytes).trimEnd().split("\n").slice(-20).join("\n");
+    }),
+  ).pipe(Effect.orElseSucceed(() => ""));
+});
+
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
 
@@ -523,47 +541,66 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
     ownerGone(cause) ? invalidate(connection) : Effect.void;
   if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
-  /** Reads the lease and owner log after a call lost its connection to the owner at `pid`. */
-  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (pid: number) {
-    const holder = yield* state.readHolder(saved.id).pipe(Effect.orElseSucceed(() => undefined));
-    const holderPid =
-      holder?.role === "owner" &&
-      (yield* state.leased(saved.id).pipe(Effect.orElseSucceed(() => false)))
-        ? holder.pid
-        : undefined;
-    const log = state.ownerLog(saved.id);
-    const logTail = yield* fs.readFileString(log).pipe(
-      Effect.map((text) => text.slice(-4096).trimEnd().split("\n").slice(-20).join("\n")),
-      Effect.orElseSucceed(() => ""),
+  /** Reads the lease and the owner log tail after a call to `access` lost its connection. */
+  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (access: HostAccess) {
+    const pid = access.endpoint.pid;
+    const lease: LostOwnerLease = yield* Effect.gen(function* () {
+      if (!(yield* state.leased(saved.id))) return { _tag: "Released" } as const;
+      const holder = yield* state.readHolder(saved.id);
+      if (holder === undefined) return { _tag: "Unknown", reason: "no holder record" } as const;
+      return holder.role === "owner" &&
+        holder.pid === pid &&
+        holder.port === access.endpoint.port &&
+        holder.secret === access.secret
+        ? ({ _tag: "Held" } as const)
+        : ({ _tag: "Replaced", holderPid: holder.pid } as const);
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.succeed({ _tag: "Unknown", reason: failureMessage(cause) } as const),
+      ),
     );
-    yield* Effect.annotateCurrentSpan({
-      "stack.owner.pid": pid,
-      "stack.owner.leased": holderPid === pid,
-    });
-    return lostOwnerDetail({ pid, holderPid, log, logTail });
+    const log = state.ownerLog(saved.id);
+    // A replacement owner truncates and rewrites the log, so its tail would not be this owner's.
+    const logTail =
+      lease._tag === "Replaced"
+        ? ""
+        : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+    yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });
+    return lostOwnerDetail({ pid, lease, log, logTail });
   });
-  const invoke = <A, E, R>(run: (rpc: Client) => Effect.Effect<A, E, R>, reach: Reach) =>
+  /** Runs `run` on a borrowed connection, recording which owner it reached in `reached`. */
+  const invoke = <A, E, R>(
+    run: (rpc: Client) => Effect.Effect<A, E, R>,
+    reach: Reach,
+    reached?: Ref.Ref<HostAccess | undefined>,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
         const current = yield* borrow(reach);
+        if (reached !== undefined) yield* Ref.set(reached, current.access);
         return yield* run(current.rpc).pipe(Effect.tapError(dropIfGone(current)));
       }),
     ).pipe(Effect.retry({ times: 1, while: ownerGone }), Effect.provideContext(services));
-  /** Fails with the stack error, describing the owner when its connection was lost mid-call. */
-  const callFailure = (operation: string, cause: unknown) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(cached);
-      const detail =
-        Schema.is(RpcClientError)(cause) && !ownerGone(cause) && current !== undefined
-          ? yield* observeLostOwner(current.access.endpoint.pid)
-          : undefined;
-      return yield* failure(operation, cause, undefined, detail);
-    });
   const call = <A, E, R>(
     operation: string,
     run: (rpc: Client) => Effect.Effect<A, E, R>,
     reach: Reach = "launch",
-  ) => invoke(run, reach).pipe(Effect.catch((cause) => callFailure(operation, cause)));
+  ) =>
+    Effect.gen(function* () {
+      const reached = yield* Ref.make<HostAccess | undefined>(undefined);
+      return yield* invoke(run, reach, reached).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            const access = yield* Ref.get(reached);
+            const detail =
+              Schema.is(RpcClientError)(cause) && !ownerGone(cause) && access !== undefined
+                ? yield* observeLostOwner(access)
+                : undefined;
+            return yield* failure(operation, cause, undefined, detail);
+          }),
+        ),
+      );
+    });
   /** Without a live owner, or with a destroyed stack, nothing runs, so the request is already satisfied. */
   const whileRunning = <A, E, R>(
     operation: string,

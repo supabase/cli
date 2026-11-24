@@ -34,7 +34,7 @@ describe("lostOwnerDetail", () => {
   it("reports an owner that lost its lease with the tail of its log", () => {
     const detail = lostOwnerDetail({
       pid: 4242,
-      holderPid: undefined,
+      lease: { _tag: "Released" },
       log: "/state/stack/owner.log",
       logTail: "panic(main thread): Segmentation fault",
     });
@@ -46,7 +46,25 @@ describe("lostOwnerDetail", () => {
 
   it("reports an owner that still holds the lease and has an empty log", () => {
     expect(
-      lostOwnerDetail({ pid: 4242, holderPid: 4242, log: "/state/stack/owner.log", logTail: "" }),
+      lostOwnerDetail({
+        pid: 4242,
+        lease: { _tag: "Held" },
+        log: "/state/stack/owner.log",
+        logTail: "",
+      }),
     ).toBe("owner 4242 still holds the stack lease (owner log: /state/stack/owner.log)");
+  });
+
+  it("does not claim a released lease when the lease could not be read", () => {
+    expect(
+      lostOwnerDetail({
+        pid: 4242,
+        lease: { _tag: "Unknown", reason: "EACCES" },
+        log: "/state/stack/owner.log",
+        logTail: "",
+      }),
+    ).toBe(
+      "the stack lease of owner 4242 could not be read: EACCES (owner log: /state/stack/owner.log)",
+    );
   });
 });
