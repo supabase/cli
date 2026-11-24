@@ -2,7 +2,6 @@ import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandUX, ResolvedProject } from "../../../command-internal/command-executor.ts";
-import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
@@ -38,7 +37,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   const branchInput = yield* promptBranchId(flags.name, ref);
   const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
 
-  yield* requireHostedMutationConsent({
+  yield* ux.requireHostedMutationConsent({
     action: `Delete preview branch ${branchInput}`,
     details: [`Branch project ref: ${branchRef}`],
   });

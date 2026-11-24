@@ -21,12 +21,14 @@ import type { ProcessControl } from "../shared/runtime/process-control.service.t
 import type { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
 import type { Analytics } from "../shared/telemetry/analytics.service.ts";
 import type { InvalidOutputFormatError } from "./output-formats.ts";
+import { requireHostedMutationConsent } from "./hosted-consent/hosted-consent.ts";
 import type { RemovedSurfaceError } from "./removed-command.ts";
 import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import { LinkedProjectCache } from "../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 
 interface CommandUXShape {
+  readonly requireHostedMutationConsent: typeof requireHostedMutationConsent;
   readonly task: <A, E, R>(
     message: string,
     operation: Effect.Effect<A, E, R>,
@@ -81,6 +83,7 @@ const isMachine = (output: Output["Service"]) => output.format !== "text";
 // TODO(CLI-3186): Share stderr and task primitives with Output. Until then, delegate to
 // Output so messages pause the same spinner that legacy commands use.
 const commandUX = (output: Output["Service"]): CommandUXShape => ({
+  requireHostedMutationConsent,
   task: (message, operation) =>
     isMachine(output)
       ? operation
