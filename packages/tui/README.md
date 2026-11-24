@@ -5,6 +5,8 @@ program is a `Model`, a `Message` union, an `update` function and a `view`. View
 tree instead of HTML. Layout is flexbox, computed by Yoga, in terminal cells. The package is private
 and lives in this workspace; import it as `@supabase/tui`.
 
+![The gallery demo: each block in its main states, two live spinners, then a region prompt](docs/gallery.gif)
+
 ## Try it
 
 Set up the repository once, as [CONTRIBUTING.md](../../CONTRIBUTING.md#installing-mise) describes:
@@ -18,7 +20,9 @@ bun examples/counter.ts   # the smallest interactive program: up/down or +/- cha
 bun examples/counters.ts  # several counters composed into one program
 ```
 
-On a pipe, the gallery prints its static screen and stops.
+On a pipe, the gallery prints its static screen and stops. The recording above comes from
+[`docs/gallery.tape`](docs/gallery.tape); rerun it with [VHS](https://github.com/charmbracelet/vhs)
+(`vhs docs/gallery.tape` from `packages/tui`) after a visual change.
 
 To change how things look, edit one of these files and rerun the gallery:
 
