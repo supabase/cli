@@ -14,7 +14,7 @@ import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import {
   CommandExecutor,
   CommandUX,
-  PendingProjectCacheFill,
+  ResolvedProject,
   commandExecutorLayer,
   withManagedHandler,
 } from "./command-executor.ts";
@@ -129,8 +129,8 @@ it.effect.each(["cache", "flush"] as const)(
         if (failure === step) throw new Error(`${step} failed`);
       });
     return run(() =>
-      PendingProjectCacheFill.use((cacheFill) =>
-        cacheFill.request("parent").pipe(Effect.as({ value: "branch" })),
+      ResolvedProject.use((project) =>
+        project.record("parent").pipe(Effect.as({ value: "branch" })),
       ),
     ).pipe(
       Effect.tap(() =>

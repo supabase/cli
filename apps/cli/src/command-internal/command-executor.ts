@@ -36,12 +36,12 @@ interface CommandUXShape {
 
 export class CommandUX extends Context.Service<CommandUX, CommandUXShape>()("supabase/CommandUX") {}
 
-export class PendingProjectCacheFill extends Context.Service<
-  PendingProjectCacheFill,
+export class ResolvedProject extends Context.Service<
+  ResolvedProject,
   {
-    readonly request: (ref: string) => Effect.Effect<void>;
+    readonly record: (ref: string) => Effect.Effect<void>;
   }
->()("supabase/PendingProjectCacheFill") {}
+>()("supabase/ResolvedProject") {}
 
 type ResultSchema = Schema.Codec<unknown, unknown>;
 interface Declaration<Flags, S extends ResultSchema, E, R> {
@@ -66,7 +66,7 @@ interface CommandExecutorShape {
   ) => Effect.Effect<
     void,
     E | LE | InvalidOutputFormatError | RemovedSurfaceError,
-    | Exclude<Exclude<Exclude<Exclude<R, CommandUX>, PendingProjectCacheFill>, Scope.Scope>, LA>
+    | Exclude<Exclude<Exclude<Exclude<R, CommandUX>, ResolvedProject>, Scope.Scope>, LA>
     | LR
     | ExecutionServices
   >;
@@ -118,7 +118,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     const cache = yield* LinkedProjectCache;
     const telemetry = yield* TelemetryState;
     const response = yield* TerminalResponse;
-    const target = yield* Ref.make<string | undefined>(undefined);
+    const resolvedProjectRef = yield* Ref.make<string | undefined>(undefined);
     const attempted = yield* Ref.make(false);
     const beginWrite = Ref.set(attempted, true).pipe(Effect.andThen(response.markAttempt));
 
@@ -126,8 +126,8 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       // Keep handler finalizers inside the services' lifetime, and own release before delivery.
       const result = yield* Effect.suspend(() => declaration.handler(flags)).pipe(
         Effect.provideService(CommandUX, commandUX(output)),
-        Effect.provideService(PendingProjectCacheFill, {
-          request: (ref) => Ref.set(target, ref),
+        Effect.provideService(ResolvedProject, {
+          record: (ref) => Ref.set(resolvedProjectRef, ref),
         }),
         Effect.scoped,
         Effect.provideContext(services),
@@ -140,7 +140,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       }
     }).pipe(
       Effect.ensuring(
-        Ref.get(target).pipe(
+        Ref.get(resolvedProjectRef).pipe(
           Effect.flatMap((ref) =>
             ref === undefined
               ? Effect.void

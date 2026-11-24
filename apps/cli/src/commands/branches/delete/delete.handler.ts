@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { CommandUX, PendingProjectCacheFill } from "../../../command-internal/command-executor.ts";
+import { CommandUX, ResolvedProject } from "../../../command-internal/command-executor.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
@@ -23,7 +23,7 @@ const mapDeleteError = mapHttpError({
 export const branchesDelete = Effect.fn("branches.delete")(function* (flags: BranchesDeleteFlags) {
   const ux = yield* CommandUX;
   const api = yield* CommandPlatformApi;
-  const cacheFill = yield* PendingProjectCacheFill;
+  const resolvedProject = yield* ResolvedProject;
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
@@ -32,7 +32,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
   );
-  yield* cacheFill.request(ref);
+  yield* resolvedProject.record(ref);
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   const branchInput = yield* promptBranchId(flags.name, ref);
