@@ -76,6 +76,10 @@ const compile = {
       "json5",
       "xml",
       "process-report",
+      // ArkType falls back to interpreted validators when `new Function` is unavailable.
+      "interpreter",
+      "temporal",
+      "url-pattern",
     ],
   },
 };

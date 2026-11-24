@@ -1,14 +1,28 @@
+diff --git a/wasm/index.cjs b/wasm/index.cjs
+index 2b838ba2e201544dfcbba49730e7bab33eeeddd7..cc01e994a60f0ac2903312505b767c3ce60dedf2 100644
+--- a/wasm/index.cjs
++++ b/wasm/index.cjs
+@@ -96,7 +96,7 @@ function formatSqlError(error, query, options = {}) {
+ // @ts-ignore
+ const libpg_query_js_1 = __importDefault(require("./libpg-query.js"));
+ // @ts-ignore
+-const proto_js_1 = require("../proto.js");
++const proto_js_1 = { pg_query: { ParseResult: { fromObject() { throw new Error('@libpg-query/parser deparse is not available: use pgsql-deparser'); } } } };
+ let wasmModule;
+ const initPromise = (0, libpg_query_js_1.default)().then((module) => {
+     wasmModule = module;
 diff --git a/wasm/index.js b/wasm/index.js
-index 00caf4f1591549e445b97c5deeed95a9d8dabd8b..ce4a88226d12687644ca76805e08d11a6696b00e 100644
+index 00caf4f1591549e445b97c5deeed95a9d8dabd8b..a37bd75d5ead4a82f4566f4d59448b21160fa7f5 100644
 --- a/wasm/index.js
 +++ b/wasm/index.js
-@@ -65,10 +65,11 @@ export function formatSqlError(error, query, options = {}) {
+@@ -65,10 +65,10 @@ export function formatSqlError(error, query, options = {}) {
  }
  // @ts-ignore
  import PgQueryModule from './libpg-query.js';
+-// @ts-ignore
+-import { pg_query } from '../proto.js';
 +import libPgQueryWasmPath from './libpg-query.wasm' with { type: 'file' };
- // @ts-ignore
- import { pg_query } from '../proto.js';
++const pg_query = { ParseResult: { fromObject() { throw new Error('@libpg-query/parser deparse is not available: use pgsql-deparser'); } } };
  let wasmModule;
 -const initPromise = PgQueryModule().then((module) => {
 +const initPromise = PgQueryModule({ locateFile: () => libPgQueryWasmPath }).then((module) => {
