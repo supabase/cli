@@ -3,11 +3,12 @@ import {
   Context,
   Effect,
   Exit,
+  flow,
   Layer,
   Option,
   Ref,
   Schema,
-  type Scope,
+  Scope,
   type Stdio,
 } from "effect";
 import { Command } from "effect/cli";
@@ -58,13 +59,15 @@ type ExecutionServices =
   | Stdio.Stdio;
 
 interface CommandExecutorShape {
-  readonly run: <Flags extends Record<string, unknown>, S extends ResultSchema, E, R>(
+  readonly run: <Flags extends Record<string, unknown>, S extends ResultSchema, E, R, LA, LE, LR>(
     declaration: Declaration<Flags, S, E, R>,
     flags: Flags,
+    required: Layer.Layer<LA, LE, LR>,
   ) => Effect.Effect<
     void,
-    E | InvalidOutputFormatError | RemovedSurfaceError,
-    | Exclude<Exclude<Exclude<R, CommandUX>, PendingProjectCacheFill>, Scope.Scope>
+    E | LE | InvalidOutputFormatError | RemovedSurfaceError,
+    | Exclude<Exclude<Exclude<Exclude<R, CommandUX>, PendingProjectCacheFill>, Scope.Scope>, LA>
+    | LR
     | ExecutionServices
   >;
 }
@@ -81,19 +84,36 @@ const commandUX = (output: Output["Service"]): CommandUXShape => ({
   task: (message, operation) =>
     isMachine(output)
       ? operation
-      : Effect.gen(function* () {
-          const task = yield* output.task(message);
-          const result = yield* operation.pipe(Effect.tapError(() => task.fail()));
-          yield* task.clear;
-          return result;
-        }),
+      : Effect.acquireUseRelease(
+          output.task(message),
+          () => operation,
+          (task, exit) =>
+            bestEffort(
+              Effect.suspend(() =>
+                Exit.isFailure(exit) &&
+                Cause.hasFails(exit.cause) &&
+                !Cause.hasDies(exit.cause) &&
+                !Cause.hasInterrupts(exit.cause)
+                  ? task.fail()
+                  : task.clear,
+              ),
+            ),
+        ),
   message: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`, "stderr")),
 });
 
 const bestEffort = (effect: Effect.Effect<void>) => effect.pipe(Effect.ignoreCause);
 
-const run: CommandExecutorShape["run"] = (declaration, flags) =>
+const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
   Effect.gen(function* () {
+    const requiredScope = yield* Scope.fork(yield* Scope.Scope);
+    // Acquire before instrumentation, as with Command.provide. Do not borrow a memoized scope
+    // that could retain a required layer past the delivery boundary.
+    const services = yield* Layer.buildWithMemoMap(
+      required,
+      Layer.makeMemoMapUnsafe(),
+      requiredScope,
+    );
     const output = yield* Output;
     const cache = yield* LinkedProjectCache;
     const telemetry = yield* TelemetryState;
@@ -103,13 +123,15 @@ const run: CommandExecutorShape["run"] = (declaration, flags) =>
     const beginWrite = Ref.set(attempted, true).pipe(Effect.andThen(response.markAttempt));
 
     const exit = yield* Effect.gen(function* () {
-      const result = yield* Effect.scoped(
-        Effect.suspend(() => declaration.handler(flags)).pipe(
-          Effect.provideService(CommandUX, commandUX(output)),
-          Effect.provideService(PendingProjectCacheFill, {
-            request: (ref) => Ref.set(target, ref),
-          }),
-        ),
+      // Keep handler finalizers inside the services' lifetime, and own release before delivery.
+      const result = yield* Effect.suspend(() => declaration.handler(flags)).pipe(
+        Effect.provideService(CommandUX, commandUX(output)),
+        Effect.provideService(PendingProjectCacheFill, {
+          request: (ref) => Ref.set(target, ref),
+        }),
+        Effect.scoped,
+        Effect.provideContext(services),
+        Scope.use(requiredScope),
       );
       if (isMachine(output)) {
         const encoded = yield* Schema.encodeEffect(declaration.output)(result).pipe(Effect.orDie);
@@ -146,7 +168,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags) =>
       yield* beginWrite.pipe(Effect.andThen(bestEffort(report)));
     }
     return yield* Effect.failCause(exit.cause);
-  });
+  }).pipe(Effect.scoped);
 
 export const commandExecutorLayer = Layer.succeed(CommandExecutor, { run });
 
@@ -155,9 +177,25 @@ export const withManagedHandler = <
   S extends ResultSchema,
   E,
   R,
+  LA,
+  LE,
+  LR,
+  CA,
+  CE,
+  CR,
 >(
-  declaration: Declaration<Flags, S, E, R>,
+  declaration: Declaration<Flags, S, E, R> & {
+    readonly runtime: {
+      readonly required: Layer.Layer<LA, LE, LR>;
+      readonly completion: Layer.Layer<CA, CE, CR>;
+    };
+  },
 ) =>
-  Command.withHandler((flags: Flags) =>
-    CommandExecutor.use((executor) => executor.run(declaration, flags)),
+  flow(
+    Command.withHandler((flags: Flags) =>
+      CommandExecutor.use((executor) =>
+        executor.run(declaration, flags, declaration.runtime.required),
+      ),
+    ),
+    Command.provide(declaration.runtime.completion),
   );

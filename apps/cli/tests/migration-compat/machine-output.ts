@@ -21,7 +21,7 @@ export function normalizeStdout(format: MachineFormat, stdout: string) {
   if (!stdout.endsWith("\n")) throw new Error("stdout must end with a newline");
   const body = stdout.slice(0, -1);
   if (format === "json") {
-    if (body.endsWith("\n")) throw new Error("stdout must end with a single newline");
+    if (body !== body.trimEnd()) throw new Error("JSON must be followed immediately by one LF");
     return parseJson(body);
   }
   return body.split("\n").map((line, index) => {

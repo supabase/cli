@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Runtime, Schema } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Runtime, Schema } from "effect";
 import { Command } from "effect/cli";
 import process from "node:process";
 import { vi } from "vitest";
@@ -61,39 +61,57 @@ vi.mock("../runtime/process-control.layer.ts", async () => {
 
 const home = useTempWorkdir("supabase-managed-output-");
 
-it.live.each(["warning", "cleanup-defect", "partial-write", "typed-failure"] as const)(
-  "requests the right exit without replacing terminal output: %s",
-  (scenario) =>
-    Effect.gen(function* () {
-      const out = mockOutput({ format: "json" });
-      const attempts: number[] = [];
-      const error = Object.assign(new Error("managed failure"), { [Runtime.errorExitCode]: 7 });
-      const root = Command.make("supabase").pipe(
-        withManagedHandler({
-          output: Schema.Struct({ value: Schema.String }),
-          handler: () =>
-            Effect.gen(function* () {
-              const control = yield* ProcessControl;
-              const writer = yield* Output;
-              if (scenario === "typed-failure") return yield* Effect.fail(error);
-              yield* Effect.addFinalizer(() =>
-                scenario === "warning"
-                  ? Effect.fail("restoration rejected").pipe(
-                      Effect.catch((reason) =>
-                        writer.raw(`Cleanup warning: ${reason}\n`, "stderr"),
-                      ),
-                      Effect.andThen(control.setExitCode(1)),
-                    )
-                  : scenario === "cleanup-defect"
-                    ? Effect.die(error)
-                    : Effect.void,
-              );
-              return { value: "done" };
-            }),
-        }),
-        Command.withGlobalFlags([OutputFormatFlag]),
-        Command.provide(
-          Layer.mergeAll(
+const RequiredResource = Context.Service<string>("test/RequiredResource");
+
+it.live.each([
+  "warning",
+  "cleanup-defect",
+  "partial-write",
+  "typed-failure",
+  "held-layer-release",
+  "layer-release-defect",
+] as const)("requests the right exit without replacing terminal output: %s", (scenario) =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "json" });
+    const attempts: number[] = [];
+    const error = Object.assign(new Error("managed failure"), { [Runtime.errorExitCode]: 7 });
+    const releaseStarted = yield* Deferred.make<void>();
+    const allowRelease = yield* Deferred.make<void>();
+    const required = Layer.effect(
+      RequiredResource,
+      Effect.acquireRelease(Effect.succeed("done"), () =>
+        scenario === "held-layer-release"
+          ? Deferred.succeed(releaseStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(allowRelease)),
+            )
+          : scenario === "layer-release-defect"
+            ? Effect.die(error)
+            : Effect.void,
+      ),
+    );
+    const root = Command.make("supabase").pipe(
+      withManagedHandler({
+        output: Schema.Struct({ value: Schema.String }),
+        handler: () =>
+          Effect.gen(function* () {
+            const control = yield* ProcessControl;
+            const writer = yield* Output;
+            if (scenario === "typed-failure") return yield* Effect.fail(error);
+            yield* Effect.addFinalizer(() =>
+              scenario === "warning"
+                ? Effect.fail("restoration rejected").pipe(
+                    Effect.catch((reason) => writer.raw(`Cleanup warning: ${reason}\n`, "stderr")),
+                    Effect.andThen(control.setExitCode(1)),
+                  )
+                : scenario === "cleanup-defect"
+                  ? Effect.die(error)
+                  : Effect.void,
+            );
+            return { value: yield* RequiredResource };
+          }),
+        runtime: {
+          required,
+          completion: Layer.mergeAll(
             scenario === "partial-write"
               ? Layer.effect(
                   Output,
@@ -110,40 +128,62 @@ it.live.each(["warning", "cleanup-defect", "partial-write", "typed-failure"] as 
             mockTelemetryStateLayer,
             commandRuntimeLayer(["test"]),
           ),
-        ),
-      );
-      const argv = process.argv;
-      process.argv = [argv[0] ?? "bun", "supabase", "--output-format", "json"];
-      processState.exit = (code) => {
-        attempts.push(code);
-      };
-      processState.output = out;
-      try {
-        const exit = yield* withEnvVar(
-          "SUPABASE_HOME",
-          home.current,
-          runCli(root, {
-            agentDefaultOutputFormat: "json",
-            analyticsLayer: mockAnalytics().layer,
-          }),
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-        expect(attempts).toEqual([scenario === "warning" ? 1 : 7]);
-        if (scenario === "warning") {
-          expect(out.stderrText).toBe("Cleanup warning: restoration rejected\n");
-          expect(out.stdoutText).toBe('{"value":"done"}\n');
-        } else if (scenario === "partial-write") {
-          expect(out.stdoutText).toBe('{"value":');
-        }
-        expect(out.failures).toEqual(
-          scenario === "typed-failure" || scenario === "cleanup-defect"
-            ? [expect.objectContaining({ message: "managed failure" })]
-            : [],
-        );
-      } finally {
-        process.argv = argv;
-        processState.exit = undefined;
-        processState.output = undefined;
+        },
+      }),
+      Command.withGlobalFlags([OutputFormatFlag]),
+    );
+    const argv = process.argv;
+    process.argv = [argv[0] ?? "bun", "supabase", "--output-format", "json"];
+    processState.exit = (code) => {
+      attempts.push(code);
+    };
+    processState.output = out;
+    try {
+      const run = withEnvVar(
+        "SUPABASE_HOME",
+        home.current,
+        runCli(root, {
+          agentDefaultOutputFormat: "json",
+          analyticsLayer: mockAnalytics().layer,
+        }),
+      ).pipe(Effect.exit);
+      const exit =
+        scenario === "held-layer-release"
+          ? yield* Effect.gen(function* () {
+              const fiber = yield* run.pipe(Effect.forkChild);
+              yield* Deferred.await(releaseStarted);
+              const duringRelease = out.stdoutText;
+              yield* Deferred.succeed(allowRelease, undefined);
+              const exit = yield* Fiber.join(fiber);
+              expect(duringRelease).toBe("");
+              return exit;
+            }).pipe(Effect.ensuring(Deferred.succeed(allowRelease, undefined)))
+          : yield* run;
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(attempts).toEqual([
+        scenario === "held-layer-release" ? 0 : scenario === "warning" ? 1 : 7,
+      ]);
+      if (scenario === "warning") {
+        expect(out.stderrText).toBe("Cleanup warning: restoration rejected\n");
+        expect(out.stdoutText).toBe('{"value":"done"}\n');
+      } else if (scenario === "partial-write") {
+        expect(out.stdoutText).toBe('{"value":');
+      } else if (scenario === "held-layer-release") {
+        expect(out.stdoutText).toBe('{"value":"done"}\n');
+      } else {
+        expect(out.stdoutText).toBe("");
       }
-    }),
+      expect(out.failures).toEqual(
+        scenario === "typed-failure" ||
+          scenario === "cleanup-defect" ||
+          scenario === "layer-release-defect"
+          ? [expect.objectContaining({ message: "managed failure" })]
+          : [],
+      );
+    } finally {
+      process.argv = argv;
+      processState.exit = undefined;
+      processState.output = undefined;
+    }
+  }),
 );

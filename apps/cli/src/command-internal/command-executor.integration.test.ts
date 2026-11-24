@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
 
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
+import { Output } from "../shared/output/output.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -12,6 +13,7 @@ import { LinkedProjectCache } from "../telemetry/linked-project-cache.service.ts
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import {
   CommandExecutor,
+  CommandUX,
   PendingProjectCacheFill,
   commandExecutorLayer,
   withManagedHandler,
@@ -28,13 +30,52 @@ const collaborators = (out: ReturnType<typeof mockOutput>) =>
 const output = Schema.Struct({ value: Schema.String });
 
 it("requires the handler to return the declared result", () => {
-  withManagedHandler(
+  withManagedHandler({
+    output,
     // @ts-expect-error The declared schema requires a string value.
-    { output, handler: () => Effect.succeed({ value: 1 }) },
-  );
+    handler: () => Effect.succeed({ value: 1 }),
+    runtime: { required: Layer.empty, completion: Layer.empty },
+  });
 });
 const run = <E, R>(handler: () => Effect.Effect<typeof output.Type, E, R>) =>
-  CommandExecutor.use((executor) => executor.run({ output, handler }, {}));
+  CommandExecutor.use((executor) => executor.run({ output, handler }, {}, Layer.empty));
+
+it.effect.each(["interrupt", "defect"] as const)("clears a text task once on %s", (outcome) => {
+  const out = mockOutput({ format: "text" });
+  const defect = new Error("operation failed");
+  let clears = 0;
+  return Effect.gen(function* () {
+    const exit = yield* run(() =>
+      CommandUX.use((ux) =>
+        ux.task("Working", outcome === "interrupt" ? Effect.interrupt : Effect.die(defect)),
+      ),
+    ).pipe(Effect.exit);
+    expect(clears).toBe(1);
+    if (outcome === "interrupt")
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    else expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
+  }).pipe(
+    Effect.provideServiceEffect(
+      Output,
+      Output.use((writer) =>
+        Effect.succeed({
+          ...writer,
+          task: (label) =>
+            writer.task(label).pipe(
+              Effect.map((task) => ({
+                ...task,
+                clear: Effect.sync(() => {
+                  clears++;
+                  throw new Error("clear failed");
+                }),
+              })),
+            ),
+        }),
+      ),
+    ),
+    Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))),
+  );
+});
 
 it.effect("waits for required finalization before delivering the result", () => {
   const out = mockOutput({ format: "json" });

@@ -9,7 +9,7 @@ import { branchPrompt } from "../branches.prompt.ts";
 import { branchRef } from "../../../command-internal/branch-ref.resolver.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withManagedHandler } from "../../../command-internal/command-executor.ts";
-import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { managementApiRuntime } from "../../../command-internal/management-api-runtime.layer.ts";
 import { branchesDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
@@ -42,7 +42,10 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
       linkedProjectCache,
     ),
   ),
-  withManagedHandler({ output: BranchesDeleteResult, handler: branchesDelete }),
-  Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
+  withManagedHandler({
+    output: BranchesDeleteResult,
+    handler: branchesDelete,
+    runtime: managementApiRuntime(["branches", "delete"]),
+  }),
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

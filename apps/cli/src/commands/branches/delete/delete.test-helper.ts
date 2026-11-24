@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 
 import {
   CommandExecutor,
@@ -10,5 +10,5 @@ import { branchesDelete } from "./delete.handler.ts";
 
 export const runBranchesDelete = (flags: BranchesDeleteFlags) =>
   CommandExecutor.use((executor) =>
-    executor.run({ output: BranchesDeleteResult, handler: branchesDelete }, flags),
+    executor.run({ output: BranchesDeleteResult, handler: branchesDelete }, flags, Layer.empty),
   ).pipe(Effect.provide([commandExecutorLayer, commandRuntimeLayer(["branches", "delete"])]));
