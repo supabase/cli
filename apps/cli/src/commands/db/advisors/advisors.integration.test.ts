@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { vi } from "vitest";
@@ -326,7 +326,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return {
     layer,
@@ -400,7 +400,7 @@ describe("db advisors — local", () => {
         { kind: "query", sql: QUERY_SQL, params: undefined },
         { kind: "exec", sql: "rollback" },
       ]);
-    }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+    }).pipe(Effect.provide(Layer.mergeAll(layer, NodeServices.layer)), provideEnv(env));
   });
 
   it.effect("queries the local database and prints the pretty JSON array", () => {
@@ -469,7 +469,7 @@ describe("db advisors — local", () => {
           expect(Cause.pretty(exit.cause)).toContain("failed to prepare lint session");
         }
         expect(connection.execs).toEqual(["begin", "rollback"]);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)), provideEnv(env));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, NodeServices.layer)), provideEnv(env));
     },
   );
 
@@ -601,7 +601,7 @@ describe("db advisors — linked", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },
@@ -632,7 +632,7 @@ describe("db advisors — linked", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(layer, NodeServices.layer)),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Stack } from "@supabase/stack/effect";
@@ -36,7 +36,7 @@ const stackFixture = (output: string | ReadonlyArray<Uint8Array>) => {
     },
   } as unknown as Stack;
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(RuntimeInfo, {
       cwd: "/tmp",
@@ -187,7 +187,7 @@ describe("managed pg_dump runner", () => {
         expect(exitCode).toBe(0);
         expect(stdout).toBe(`${expected === undefined ? "" : `${expected}\n`}RESET ALL;\n`);
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("keeps data dump filters and quoted extra flags in the Stack tool arguments", () => {
@@ -342,7 +342,7 @@ last line';
               );
               expect(exitCode).toBe(0);
               expect(output).toBe(`${longSetting}${expected}`);
-            }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+            }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
         );
 
         it.live(
@@ -383,7 +383,7 @@ last line';
               );
               expect(exitCode).toBe(0);
               expect(Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))).toEqual(expectedBytes);
-            }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+            }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
         );
       }
     });

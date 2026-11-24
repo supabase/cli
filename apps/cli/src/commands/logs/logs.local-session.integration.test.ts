@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { DateTime, Effect, FileSystem, Layer, Option, Path, PlatformError, Schema } from "effect";
 import type { SavedStack } from "@supabase/stack/effect";
@@ -80,7 +80,7 @@ it.effect("loads every newer line without resurrecting initial history omitted b
     yield* session.load(30, emit);
     expect(rows).toEqual([]);
     expect(test.resolutions()).toBe(1);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -103,7 +103,7 @@ it.effect(
       rows.length = 0;
       yield* session.load(20, emit);
       expect(rows).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("retries a failed read without committing the cursor or requested window", () =>
@@ -144,7 +144,7 @@ it.effect("retries a failed read without committing the cursor or requested wind
     fail = false;
     expect(yield* session.load(20, emit)).toMatchObject({ end: iso(20) });
     expect(rows.map(({ text }) => text)).toEqual(["retry"]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("freezes the requested lower bound and extends an explicit end on later loads", () =>
@@ -176,7 +176,7 @@ it.effect("freezes the requested lower bound and extends an explicit end on late
     rows.length = 0;
     expect(yield* session.load(20, emit)).toMatchObject({ end: iso(20) });
     expect(rows.map(({ text }) => text)).toEqual(["after"]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -212,7 +212,7 @@ it.effect(
       );
       yield* session.load(20, emit);
       expect(rows.map(({ text }) => text)).toEqual(["new current"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -246,7 +246,7 @@ it.effect(
       rows.length = 0;
       yield* session.load(40, emit);
       expect(rows).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("requires a resource instance ID instead of a service name", () =>
@@ -257,7 +257,7 @@ it.effect("requires a resource instance ID instead of a service name", () =>
       10,
     ).pipe(Effect.provide(test.layer), Effect.flip);
     expect(invalid.message).toBe("No service matches mail.");
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("permits retained local ranges longer than a day", () =>
@@ -280,7 +280,7 @@ it.effect("permits retained local ranges longer than a day", () =>
       }),
     );
     expect(rows.map(({ text }) => text)).toEqual(["retained"]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("advances a failed initial load to the retry time without committing a cursor", () =>
@@ -319,7 +319,7 @@ it.effect("advances a failed initial load to the retry time without committing a
       ),
     ).toMatchObject({ end: iso(20) });
     expect(rows.map(({ text }) => text)).toEqual(["available on retry"]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reports rotated-away pending history once and resumes the remaining segment", () =>
@@ -345,7 +345,7 @@ it.effect("reports rotated-away pending history once and resumes the remaining s
     rows.length = 0;
     yield* session.load(30, emit);
     expect(rows).toEqual([]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("does not treat a gap resume cursor as a scanned row in an empty rotated segment", () =>
@@ -372,5 +372,5 @@ it.effect("does not treat a gap resume cursor as a scanned row in an empty rotat
     rows.length = 0;
     yield* session.load(40, emit);
     expect(rows).toEqual([]);
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import {
   ConfigProvider,
   Context,
@@ -477,7 +477,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     ),
   );
   const workdirFiles = Layer.effectDiscard(writeWorkdirFiles).pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 
   const out = mockOutput({
@@ -552,8 +552,8 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
       ? linkedCache.layer
       : realLinkedProjectCache({ httpClient: recorded.httpClientLayer, cliSettings }),
     cliSettings,
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     cliConfigValuesTestLayer,
     projectRefLayer,
     recorded === undefined
@@ -577,7 +577,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     opts.commandPath === undefined
       ? Layer.empty
       : commandRuntimeLayer(opts.commandPath).pipe(
-          Layer.provide([BunServices.layer, BunCrypto.layer]),
+          Layer.provide([NodeServices.layer, NodeCrypto.layer]),
         ),
     unusedStackServices,
     stackApi.layer,

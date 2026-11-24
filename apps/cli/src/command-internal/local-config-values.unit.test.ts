@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -85,7 +85,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.storageS3Url).toBe("http://127.0.0.1:54321/storage/v1/s3");
       expect(values.studioUrl).toBe("http://127.0.0.1:54323");
       expect(values.mailpitUrl).toBe("http://127.0.0.1:54324");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("uses https and the configured port when api.tls.enabled", () =>
@@ -93,7 +93,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("https://127.0.0.1:54321");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("uses api.external_url verbatim when configured", () =>
@@ -102,7 +102,7 @@ describe("resolveLocalConfigValues", () => {
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("https://example.test");
       expect(values.restUrl).toBe("https://example.test/rest/v1");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("accepts a malformed auth max_frequency, which only start checks", () =>
@@ -110,7 +110,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig({ auth: { email: { max_frequency: "5x" } } });
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("http://127.0.0.1:54321");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("brackets an IPv6 hostname when building host:port", () =>
@@ -118,7 +118,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig();
       const values = yield* resolveLocalConfigValues(config, "::1", WORKDIR);
       expect(values.apiUrl).toBe("http://[::1]:54321");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("builds the db URL with the hardcoded postgres password", () =>
@@ -126,7 +126,7 @@ describe("resolveLocalConfigValues", () => {
       const config = baseConfig({ db: { port: 54322 } });
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("falls back to the default JWT secret and opaque keys when unset", () =>
@@ -136,7 +136,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.jwtSecret).toBe("super-secret-jwt-token-with-at-least-32-characters-long");
       expect(values.publishableKey).toBe("sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH");
       expect(values.secretKey).toBe("sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("uses configured opaque keys verbatim when set", () =>
@@ -147,7 +147,7 @@ describe("resolveLocalConfigValues", () => {
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.publishableKey).toBe("sb_publishable_custom");
       expect(values.secretKey).toBe("sb_secret_custom");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("signs the default anon/service_role JWTs from the resolved secret", () =>
@@ -164,7 +164,7 @@ describe("resolveLocalConfigValues", () => {
       expect(
         yield* decodeJson(Buffer.from(serviceRolePayload ?? "", "base64url").toString()),
       ).toMatchObject({ role: "service_role" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("uses configured anon/service_role keys verbatim when set", () =>
@@ -175,7 +175,7 @@ describe("resolveLocalConfigValues", () => {
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.anonKey).toBe("configured-anon");
       expect(values.serviceRoleKey).toBe("configured-service-role");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("signs anon/service_role JWTs from a configured jwt_secret", () =>
@@ -184,7 +184,7 @@ describe("resolveLocalConfigValues", () => {
       const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.jwtSecret).toBe("a".repeat(32));
       expect(values.anonKey).not.toBe("");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("rejects a configured jwt_secret shorter than 16 characters", () =>
@@ -193,7 +193,7 @@ describe("resolveLocalConfigValues", () => {
       expect(
         yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)),
       ).toBeInstanceOf(InvalidJwtSecretError);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("rejects an explicit empty project_id", () =>
@@ -204,7 +204,7 @@ describe("resolveLocalConfigValues", () => {
       expect(
         (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR))).message,
       ).toContain("Missing required field in config: project_id");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("hardcodes the local S3 credentials", () =>
@@ -216,7 +216,7 @@ describe("resolveLocalConfigValues", () => {
         "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
       );
       expect(values.storageS3Region).toBe("local");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   describe("non-auth port validation", () => {
@@ -230,14 +230,14 @@ describe("resolveLocalConfigValues", () => {
         expect(
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR))).message,
         ).toContain("Missing required field in config: api.port");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not reject a zero api.port when api is disabled", () =>
       Effect.gen(function* () {
         const config = baseConfig({ api: { enabled: false, port: 0 } });
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     // studio.enabled defaults to true, so this rejection applies without an explicit
@@ -248,14 +248,14 @@ describe("resolveLocalConfigValues", () => {
         expect(
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR))).message,
         ).toContain("Missing required field in config: studio.port");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not reject a zero studio.port when studio is disabled", () =>
       Effect.gen(function* () {
         const config = baseConfig({ studio: { enabled: false, port: 0 } });
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -268,21 +268,21 @@ describe("resolveLocalConfigValues", () => {
           ).toContain(
             `Invalid config for studio.api_url: parse "http://[::1": missing ']' in host`,
           );
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not reject a malformed studio.api_url when studio is disabled", () =>
       Effect.gen(function* () {
         const config = baseConfig({ studio: { enabled: false, api_url: "http://[::1" } });
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not throw for the default studio.api_url", () =>
       Effect.gen(function* () {
         const config = baseConfig();
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     // local_smtp.enabled defaults to true, so this rejection applies without an explicit
@@ -293,14 +293,14 @@ describe("resolveLocalConfigValues", () => {
         expect(
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR))).message,
         ).toContain("Missing required field in config: local_smtp.port");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not reject a zero local_smtp.port when local_smtp is disabled", () =>
       Effect.gen(function* () {
         const config = baseConfig({ local_smtp: { enabled: false, port: 0 } });
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -310,7 +310,7 @@ describe("resolveLocalConfigValues", () => {
         const config = baseConfig();
         const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
         expect(values.rootKey).toBe(POSTGRES_DEFAULT_ROOT_KEY);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("uses a configured string root_key verbatim", () =>
@@ -319,7 +319,7 @@ describe("resolveLocalConfigValues", () => {
         const document = { db: { root_key: "custom-root-key" } };
         const values = yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document);
         expect(values.rootKey).toBe("custom-root-key");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects a non-string root_key (e.g. a bare TOML integer)", () =>
@@ -330,7 +330,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)))
             .message,
         ).toContain("failed to parse config:\ndb.root_key: expected a table");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -346,7 +346,7 @@ describe("resolveLocalConfigValues", () => {
         Effect.gen(function* () {
           const config = baseConfig({ experimental: { webhooks: {} } });
           expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -520,7 +520,7 @@ describe("resolveLocalConfigValues", () => {
           jwtVerify(values.serviceRoleKey, publicKey),
         );
         expect(serviceRole.payload).toMatchObject({ role: "service_role" });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("resolves a relative signing_keys_path against <workdir>/supabase", () =>
@@ -530,7 +530,7 @@ describe("resolveLocalConfigValues", () => {
         const config = baseConfig({ auth: { signing_keys_path: "./signing_keys.json" } });
         const values = yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
         expect(values.anonKey.split(".")).toHaveLength(3);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("uses an absolute signing_keys_path as-is, without joining the workdir", () =>
@@ -545,7 +545,7 @@ describe("resolveLocalConfigValues", () => {
           "/some/unrelated/workdir",
         );
         expect(values.anonKey.split(".")).toHaveLength(3);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("still prefers an explicit anon_key/service_role_key over signing keys", () =>
@@ -561,7 +561,7 @@ describe("resolveLocalConfigValues", () => {
         const values = yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
         expect(values.anonKey).toBe("configured-anon");
         expect(values.serviceRoleKey).toBe("configured-service-role");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("falls back to HMAC signing when signing_keys_path resolves to an empty array", () =>
@@ -575,7 +575,7 @@ describe("resolveLocalConfigValues", () => {
             iss: "supabase-demo",
           },
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("throws an error when the signing keys file does not exist", () =>
@@ -585,7 +585,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("failed to read signing keys: ");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("throws an error when the signing keys file is malformed JSON", () =>
@@ -598,7 +598,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain('failed to decode signing keys: JSON Parse error: Unexpected identifier "not"');
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("throws when the first key uses an unsupported algorithm", () =>
@@ -609,7 +609,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("unsupported algorithm: RS512");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("skips reading a missing signing_keys_path when auth is disabled", () =>
@@ -620,7 +620,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -644,7 +644,7 @@ describe("resolveLocalConfigValues", () => {
           );
           expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
           expect(protectedHeader).toMatchObject({ alg: "ES256", kid: DEFAULT_SIGNING_KEY.kid });
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -665,7 +665,7 @@ describe("resolveLocalConfigValues", () => {
             (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)))
               .message,
           ).toContain('"not-a-bool" is not a valid boolean');
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -685,7 +685,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("Invalid config for auth.email.template.invite.content_path: ");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects an absolute template content_path outside the project root", () =>
@@ -703,7 +703,7 @@ describe("resolveLocalConfigValues", () => {
         ).toContain(
           'Invalid config for auth.email.template.invite.content_path: "/etc/hosts" resolves outside the project root',
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -721,7 +721,7 @@ describe("resolveLocalConfigValues", () => {
           expect(
             yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
           ).toBeDefined();
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not throw a template with no content_path configured", () =>
@@ -736,7 +736,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects an enabled notification content_path pointing at a missing file", () =>
@@ -754,7 +754,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("Invalid config for auth.email.notification.password_changed.content_path: ");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("resolves a relative notification content_path against the workdir", () =>
@@ -779,7 +779,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not throw a disabled notification's missing content_path", () =>
@@ -798,7 +798,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not throw a missing template content_path when auth is disabled", () =>
@@ -812,7 +812,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects a template content key present without content_path", () =>
@@ -833,7 +833,7 @@ describe("resolveLocalConfigValues", () => {
         ).toContain(
           "Invalid config for auth.email.template.invite.content: please use content_path instead",
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -851,7 +851,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)))
             .message,
         ).toContain("Missing required field in config: auth.external.custom.client_id");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects an enabled unmodeled external provider missing secret", () =>
@@ -864,7 +864,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)))
             .message,
         ).toContain("Missing required field in config: auth.external.custom.secret");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not require a secret for apple/google providers", () =>
@@ -876,7 +876,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not validate a disabled unmodeled external provider", () =>
@@ -886,14 +886,14 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("skips the check entirely when no document is threaded through", () =>
       Effect.gen(function* () {
         const config = baseConfig();
         expect(yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -950,7 +950,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     // The "exactly one of cert/key set" checks live in config-validate.unit.test.ts; the file-read
@@ -966,7 +966,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("failed to read TLS cert: ");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("throws an error when the configured key file does not exist", () =>
@@ -979,7 +979,7 @@ describe("resolveLocalConfigValues", () => {
           (yield* Effect.flip(resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)))
             .message,
         ).toContain("failed to read TLS key: ");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("succeeds when both cert_path and key_path are readable", () =>
@@ -992,7 +992,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -1013,7 +1013,7 @@ describe("resolveLocalConfigValues", () => {
           expect(
             yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
           ).toBeDefined();
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("skips TLS validation entirely when api is disabled", () =>
@@ -1024,7 +1024,7 @@ describe("resolveLocalConfigValues", () => {
         expect(
           yield* resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
         ).toBeDefined();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });
@@ -1071,7 +1071,7 @@ describe("resolveLocalJwks", () => {
             { kty: "oct", k: Buffer.from("a".repeat(32)).toString("base64url") },
           ],
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("publishes the public form of every signing key and omits the oct fallback", () =>
@@ -1092,7 +1092,7 @@ describe("resolveLocalJwks", () => {
       expect(parsed.keys[0]).not.toHaveProperty("d");
       expect(parsed.keys[0]).not.toHaveProperty("p");
       expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("preserves a configured signing key's use/ext and filters key_ops to verify-only", () =>
@@ -1104,7 +1104,7 @@ describe("resolveLocalJwks", () => {
       const parsed = (yield* decodeJson(jwks)) as { keys: ReadonlyArray<Record<string, unknown>> };
 
       expect(parsed.keys[0]).toMatchObject({ use: "sig", ext: true, key_ops: ["verify"] });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -1131,7 +1131,7 @@ describe("resolveLocalJwks", () => {
             },
           ],
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("throws an error when the signing keys file does not exist", () =>
@@ -1140,7 +1140,7 @@ describe("resolveLocalJwks", () => {
       expect(
         (yield* Effect.flip(runLocalJwks(config, tempRoot.current, "a".repeat(32)))).message,
       ).toContain("failed to read signing keys: ");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("throws an error when the signing keys file is malformed JSON", () =>
@@ -1152,7 +1152,7 @@ describe("resolveLocalJwks", () => {
       expect(
         (yield* Effect.flip(runLocalJwks(config, tempRoot.current, "a".repeat(32)))).message,
       ).toContain("failed to decode signing keys: ");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   describe("auth.third_party", () => {
@@ -1168,7 +1168,7 @@ describe("resolveLocalJwks", () => {
         ).toContain(
           "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("rejects more than one enabled third-party provider", () =>
@@ -1186,7 +1186,7 @@ describe("resolveLocalJwks", () => {
         ).toContain(
           "Invalid config: Only one third_party provider allowed to be enabled at a time.",
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("does not validate third-party providers when auth is disabled", () =>
@@ -1227,7 +1227,7 @@ describe("resolveLocalJwks", () => {
         const jwks = (yield* decodeJson(jwksJson)) as { keys: ReadonlyArray<{ kid?: string }> };
         expect(jwks.keys.some((key) => key.kid === "firebase-key")).toBe(true);
         fetchMock.mockRestore();
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -1248,7 +1248,7 @@ describe("resolveLocalJwks", () => {
           expect(fetchMock).not.toHaveBeenCalled();
           expect(jwks.keys.length).toBeGreaterThan(0);
           fetchMock.mockRestore();
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("fetches and includes the remote JWKS for an enabled third-party provider", () =>
@@ -1290,7 +1290,7 @@ describe("resolveLocalJwks", () => {
           expect.arrayContaining([expect.objectContaining({ kid: "remote-key" })]),
         );
         expect(fetchMock).toHaveBeenCalledTimes(2);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live(
@@ -1309,7 +1309,7 @@ describe("resolveLocalJwks", () => {
           expect(
             (yield* Effect.flip(runLocalJwks(config, WORKDIR, "a".repeat(32)))).message,
           ).toContain("Failed to fetch https://issuer.example/.well-known/openid-configuration");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 });

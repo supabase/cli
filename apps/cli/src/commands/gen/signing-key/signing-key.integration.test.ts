@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Console,
@@ -119,7 +119,7 @@ function setup(options: SetupOptions = {}) {
       debug: () => Effect.void,
       http: () => Effect.void,
     }),
-    // Listed after buildTestRuntime so it overrides the real spawner from BunServices.
+    // Listed after buildTestRuntime so it overrides the real spawner from NodeServices.
     mockGitCheckIgnore(options.gitCheckIgnoreExitCode ?? 1),
   );
   return { layer, out, telemetry, api };
@@ -294,8 +294,8 @@ describe("gen signing-key integration", () => {
       const out = mockOutput({ format: "text", interactive: false });
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
-        BunServices.layer,
-        BunCrypto.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
         out.layer,
@@ -335,7 +335,7 @@ describe("gen signing-key integration", () => {
         expect(parsed.alg).toBe("ES256");
         expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(

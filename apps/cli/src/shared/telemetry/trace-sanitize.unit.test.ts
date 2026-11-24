@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "vitest";
 import { Effect, Exit } from "effect";
 import type { TraceData } from "effect/observability/OtlpTracer";
@@ -10,7 +10,7 @@ const JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJlLXZhbHVl";
 
 const newSanitizer = () =>
-  Effect.runSync(makeTraceSanitizer.pipe(Effect.provide([BunServices.layer, BunCrypto.layer])));
+  Effect.runSync(makeTraceSanitizer.pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])));
 const sanitizer = newSanitizer();
 const sanitizeAttributeEntries = sanitizer.attributeEntries;
 const sanitizeTraceData = sanitizer.traceData;

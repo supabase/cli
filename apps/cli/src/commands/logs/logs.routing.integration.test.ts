@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Sink, Stdio } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -49,9 +49,9 @@ it.effect.each([
             CliOutput.layer(textCliOutputFormatter()),
             Layer.succeed(CliArgs, { args }),
             mockOutput({ format: "text" }).layer,
-            BunServices.layer,
-            BunCrypto.layer,
-            legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+            NodeServices.layer,
+            NodeCrypto.layer,
+            legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
             mockRuntimeInfo({ homeDir: home, cwd: home }),
             mockAnalytics().layer,
             mockTelemetryRuntime({ configDir: home }),
@@ -71,5 +71,5 @@ it.effect.each([
         ),
       );
       expect(chunks.join("").includes('"compute"')).toBe(expected);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

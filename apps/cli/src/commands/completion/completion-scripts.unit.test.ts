@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem } from "effect";
 
 import { type CompletionShell, generateCompletionScript } from "./completion-scripts.ts";
@@ -11,7 +11,7 @@ const readFixture = (shell: CompletionShell, variant: "desc" | "nodesc") =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.readFileString(`${fixturesDir}/${shell}.${variant}.txt`);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("generateCompletionScript", () => {
   describe("bash", () => {

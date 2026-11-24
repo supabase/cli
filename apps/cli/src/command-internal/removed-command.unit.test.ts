@@ -1,4 +1,4 @@
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
@@ -67,7 +67,7 @@ describe("TelemetryState flush", () => {
       ),
       Effect.provide(
         Layer.mergeAll(
-          commandRuntimeLayer(["db", "branch", "create"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "branch", "create"]).pipe(Layer.provide(NodeCrypto.layer)),
           telemetry.layer,
         ),
       ),

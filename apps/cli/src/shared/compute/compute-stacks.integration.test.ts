@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { expect } from "vitest";
@@ -51,7 +51,7 @@ it.effect("reports offered runtimes without starter directories", () =>
 
       expectValidationFailure(exit, "no starter files for dockerfile");
     }),
-  ).pipe(Effect.provide(BunServices.layer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reports directories without offered runtimes", () =>
@@ -67,7 +67,7 @@ it.effect("reports directories without offered runtimes", () =>
 
       expectValidationFailure(exit, "stacks/unknown has no matching entry");
     }),
-  ).pipe(Effect.provide(BunServices.layer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reports an offered runtime with no starter files", () =>
@@ -82,5 +82,5 @@ it.effect("reports an offered runtime with no starter files", () =>
 
       expectValidationFailure(exit, "stacks/node is empty");
     }),
-  ).pipe(Effect.provide(BunServices.layer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

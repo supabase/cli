@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -82,12 +82,12 @@ ${database}
 
 ${auth === undefined ? "" : `[local.services.auth.container]\n${auth}\n`}`;
 
-const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+const liveStackApi = stackApiLayer.pipe(Layer.provide(NodeServices.layer));
 
 const makeLayer = (root: string, output: Layer.Layer<Output> = mockOutput().layer) => {
   const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
   const resolver = stackTargetResolverLayer.pipe(
-    Layer.provide(Layer.mergeAll(BunServices.layer, settings, liveStackApi)),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, settings, liveStackApi)),
   );
   const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });
   return Layer.mergeAll(
@@ -108,7 +108,7 @@ const makeLayer = (root: string, output: Layer.Layer<Output> = mockOutput().laye
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
     stdinLayer.pipe(Layer.provide(tty)),
     tty,
-  ).pipe(Layer.provideMerge(BunServices.layer));
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 };
 
 const mib = 1024 * 1024;
@@ -221,7 +221,7 @@ describe("experimental stack start container limits", () => {
             yield* destroyTestStacks(api, stateRoot, cacheRoot);
           }),
         ).pipe(Effect.provide(makeLayer(root)));
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     { timeout: 300_000 },
   );
 });

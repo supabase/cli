@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path, type PlatformError } from "effect";
 
@@ -32,7 +32,7 @@ describe("loadCliConfigEnvLookup", () => {
       CliConfigLoadError | PlatformError.PlatformError,
       FileSystem.FileSystem | Path.Path
     >,
-  ) => body.pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell(shell))));
+  ) => body.pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell(shell))));
 
   it.effect("prefers the shell, then the env-specific local file, then .env", () =>
     run(

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -69,7 +69,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CommandTelemetryAttributes, {
       record: (values) => Effect.sync(() => void recorded.push(values)),
     }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, recorded };
 }
@@ -104,7 +104,7 @@ const materializedConfig = Effect.fnUntraced(
     const resolved = yield* values.load({ workdir: tempRoot.current, projectRef: Option.none() });
     return resolved.materialized.config;
   },
-  Effect.provide(Layer.mergeAll(configValuesLayer(), BunServices.layer)),
+  Effect.provide(Layer.mergeAll(configValuesLayer(), NodeServices.layer)),
 );
 
 const run = (opts: { readonly dryRun?: boolean; readonly reason?: ConvertReason } = {}) =>
@@ -139,7 +139,7 @@ describe("config convert --to toml integration", () => {
       expect(recorded).toContainEqual({ convert_target: "toml" });
       expect(recorded).toContainEqual({ convert_moved_comment_count: 0 });
       expect(recorded).toContainEqual({ config_format: "jsonc" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("exits 0 when the project is already TOML", () => {
@@ -152,7 +152,7 @@ describe("config convert --to toml integration", () => {
       expect(out.stdoutText).toBe("supabase/config.toml is already TOML. Nothing to convert.\n");
       expect(yield* readFile("supabase", "config.toml")).toBe('project_id = "demo"\n');
       expect(recorded).toContainEqual({ convert_target: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses when config.toml exists next to config.jsonc", () => {
@@ -167,7 +167,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* readFile("supabase", "config.toml")).toBe('project_id = "other"\n');
       expect(yield* readFile("supabase", "config.jsonc")).toBe(SIMPLE_JSONC);
       expect(yield* exists("supabase", "config.jsonc.bak")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("rejects --reason without --to toml", () => {
@@ -183,7 +183,7 @@ describe("config convert --to toml integration", () => {
 
       expect(error._tag).toBe("ConfigConvertReasonWithoutTomlTargetError");
       expect(yield* exists("supabase", "config.toml.bak")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("writes nothing and does not prompt on --dry-run", () => {
@@ -199,7 +199,7 @@ describe("config convert --to toml integration", () => {
       expect(out.stdoutText).toContain('project_id = "demo"');
       expect(out.promptSelectCalls).toEqual([]);
       expect(reasonsRecorded(recorded)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records the --reason flag without prompting", () => {
@@ -211,7 +211,7 @@ describe("config convert --to toml integration", () => {
 
       expect(out.promptSelectCalls).toEqual([]);
       expect(reasonsRecorded(recorded)).toEqual(["older-cli"]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records the prompted reason on an interactive terminal", () => {
@@ -226,7 +226,7 @@ describe("config convert --to toml integration", () => {
 
       expect(out.promptSelectCalls).toHaveLength(1);
       expect(reasonsRecorded(recorded)).toEqual(["editor"]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("does not ask for a reason when telemetry is opted out", () => {
@@ -239,7 +239,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* exists("supabase", "config.toml")).toBe(true);
       expect(out.promptSelectCalls).toEqual([]);
       expect(reasonsRecorded(recorded)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("offers Skip as the first reason and requests a silent cancel", () => {
@@ -252,7 +252,7 @@ describe("config convert --to toml integration", () => {
       const [call] = out.promptSelectCalls;
       expect(call?.options[0]).toEqual({ value: "skip", label: "Skip" });
       expect(call?.behavior).toEqual({ silentCancel: true });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records the target when the config cannot be read", () => {
@@ -264,7 +264,7 @@ describe("config convert --to toml integration", () => {
 
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(recorded).toContainEqual({ convert_target: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records the target when no config exists", () => {
@@ -274,7 +274,7 @@ describe("config convert --to toml integration", () => {
 
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(recorded).toContainEqual({ convert_target: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records the target when the workdir does not exist or is a file", () => {
@@ -295,7 +295,7 @@ describe("config convert --to toml integration", () => {
       expect(recorded).toContainEqual({ convert_target: "toml" });
       yield* fs.remove(tempRoot.current);
       yield* fs.makeDirectory(tempRoot.current);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("converts and records no reason when the picker is interrupted", () => {
@@ -308,7 +308,7 @@ describe("config convert --to toml integration", () => {
       expect(out.promptSelectCalls).toHaveLength(1);
       expect(yield* exists("supabase", "config.toml")).toBe(true);
       expect(reasonsRecorded(recorded)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("reports a comment moved from the top level as such", () => {
@@ -323,7 +323,7 @@ describe("config convert --to toml integration", () => {
 
       expect(out.stdoutText).toContain("line 3 → top level");
       expect(out.stdoutText).not.toMatch(/line 3 → {2}/);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("records no reason when the prompt is skipped", () => {
@@ -335,7 +335,7 @@ describe("config convert --to toml integration", () => {
 
       expect(yield* exists("supabase", "config.toml")).toBe(true);
       expect(reasonsRecorded(recorded)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("does not prompt in a non-interactive run", () => {
@@ -347,7 +347,7 @@ describe("config convert --to toml integration", () => {
 
       expect(out.promptSelectCalls).toEqual([]);
       expect(reasonsRecorded(recorded)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("converts a config.json source and backs it up as config.json.bak", () => {
@@ -362,7 +362,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* exists("supabase", "config.jsonc.bak")).toBe(false);
       expect(yield* readFile("supabase", "config.toml")).toContain('project_id = "demo"');
       expect(out.stdoutText).toContain("supabase/config.json.bak");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("picks the next free numbered backup when config.jsonc.bak exists", () => {
@@ -376,7 +376,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* readFile("supabase", "config.jsonc.bak")).toBe("older backup\n");
       expect(yield* readFile("supabase", "config.jsonc.2.bak")).toBe(SIMPLE_JSONC);
       expect(yield* exists("supabase", "config.toml")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses a null value, names the file and leaves every file untouched", () => {
@@ -395,7 +395,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(yield* exists("supabase", "config.jsonc.bak")).toBe(false);
       expect(recorded).toContainEqual({ convert_target: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses a symlinked config.jsonc and leaves the link in place", () => {
@@ -416,7 +416,7 @@ describe("config convert --to toml integration", () => {
       expect(yield* readFile("shared", "real.jsonc")).toBe(SIMPLE_JSONC);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(yield* exists("supabase", "config.jsonc.bak")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("gives config.toml the permissions of the config.jsonc it replaces", () => {
@@ -430,7 +430,7 @@ describe("config convert --to toml integration", () => {
 
       const info = yield* fs.stat(yield* projectPath("supabase", "config.toml"));
       expect(info.mode & 0o777).toBe(0o600);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("reports nothing converted in json mode when the project is already TOML", () => {
@@ -448,7 +448,7 @@ describe("config convert --to toml integration", () => {
         },
       ]);
       expect(recorded).toContainEqual({ convert_target: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("leaves .vscode/settings.json untouched", () => {
@@ -462,7 +462,7 @@ describe("config convert --to toml integration", () => {
 
       expect(yield* readFile(".vscode", "settings.json")).toBe(settings);
       expect(out.stdoutText).not.toContain(".vscode");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("round-trips TOML to JSONC and back to TOML through the command", () => {
@@ -487,7 +487,7 @@ describe("config convert --to toml integration", () => {
       expect(toml).toContain("# my project");
       expect(toml).toContain("# default port");
       expect(toml).toContain("# db_pool = 10");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("emits the machine payload with target toml and never prompts", () => {
@@ -508,6 +508,6 @@ describe("config convert --to toml integration", () => {
           }),
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });

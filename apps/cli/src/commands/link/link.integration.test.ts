@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import {
@@ -329,7 +329,7 @@ const failRemoveFsLayer = (name: string): Layer.Layer<FileSystem.FileSystem> =>
             : real.remove(path, options),
       }),
     ),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
 // Seeds the 3rd-priority parent candidate for a branch-name lookup, and the file
 // `resolver.resolveForLink` falls back to for a plain ref link.

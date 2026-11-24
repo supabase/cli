@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -28,7 +28,7 @@ describe("appendExtensionDeclarations", () => {
 
       const repeated = yield* appendExtensionDeclarations(tmp.current, ["uuid-ossp"]);
       expect(repeated.addedDeclarations).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("preserves existing contents and CRLF newlines", () => {
@@ -43,6 +43,6 @@ describe("appendExtensionDeclarations", () => {
         'CREATE EXTENSION "pgcrypto";\r\n-- keep me\r\n' +
           'CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";\r\n',
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });

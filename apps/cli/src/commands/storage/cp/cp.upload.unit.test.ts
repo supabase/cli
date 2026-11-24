@@ -1,10 +1,10 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { resolveUploadDstPath } from "./cp.upload.ts";
 
-const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, NodePath.layerPosix));
 
 describe("resolveUploadDstPath", () => {
   describe("single file (relPath === '.')", () => {

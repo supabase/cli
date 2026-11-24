@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { Digest } from "effect/crypto";
@@ -45,8 +45,8 @@ const noConfig = resolvedConfigWith();
 
 function configLayer(env: Readonly<Record<string, string | undefined>>) {
   return Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     runtimeLayer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
   );
@@ -85,7 +85,7 @@ function withDockerConfig<A>(
   run: () => Effect.Effect<A, Config.ConfigError | CliConfigLoadError, HostnameServices>,
 ) {
   return writeDockerConfigDir(options).pipe(
-    Effect.provide([BunServices.layer, BunCrypto.layer]),
+    Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     Effect.flatMap((configDir) =>
       run().pipe(Effect.provide(configLayer({ ...env, DOCKER_CONFIG: configDir }))),
     ),
@@ -232,8 +232,8 @@ describe("getHostname", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
-          BunCrypto.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
           runtimeLayer,
           ConfigProvider.layer(
             ConfigProvider.fromEnvRecord({ DOCKER_HOST: "unix:///docker.sock" }),

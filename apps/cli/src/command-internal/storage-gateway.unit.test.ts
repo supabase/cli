@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -97,7 +97,7 @@ function setup(
       );
     }),
   );
-  return { requests, layer: Layer.mergeAll(httpLayer, BunServices.layer) };
+  return { requests, layer: Layer.mergeAll(httpLayer, NodeServices.layer) };
 }
 
 describe("makeStorageGateway", () => {
@@ -273,7 +273,7 @@ describe("withStorageGatewayFetch", () => {
             FetchHttpClient.layer.pipe(
               Layer.provide(Layer.succeed(FetchHttpClient.Fetch, dohFetch)),
             ),
-            BunServices.layer,
+            NodeServices.layer,
           ),
         ),
       ),

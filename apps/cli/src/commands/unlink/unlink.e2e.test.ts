@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -32,7 +32,7 @@ describe("supabase unlink", () => {
         expect(stderr).toContain(`Unlinking project: ${TEST_PROJECT_REF}`);
         const tempDirExists = yield* fs.exists(tempDir);
         expect(tempDirExists).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -50,7 +50,7 @@ describe("supabase unlink", () => {
         });
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

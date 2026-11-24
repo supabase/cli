@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
@@ -33,7 +33,7 @@ import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-laye
 import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
-const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const databaseCreation = {
   service: "database" as const,
@@ -255,7 +255,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
           yield* assertPgtapDropped.pipe(Effect.provide(services));
         }),
       ).pipe(
-        Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer, liveStackApi)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, liveStackApi)),
       ),
     );
   }

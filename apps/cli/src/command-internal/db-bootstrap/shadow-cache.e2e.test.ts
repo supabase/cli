@@ -15,7 +15,7 @@
  * `shadow-cache.unit.test.ts`. Nothing branch-shaped belongs here.
  */
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -122,7 +122,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
         if (home !== undefined) yield* home.dispose;
         projectDir = undefined;
         home = undefined;
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
@@ -289,7 +289,7 @@ as $$ select 1; $$;`,
             /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
           );
           expect(warm.stdout).toBe(cold.stdout);
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       ),
   );
 });

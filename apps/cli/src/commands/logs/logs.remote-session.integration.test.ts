@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Schema } from "effect";
 import { TestClock } from "effect/testing";
@@ -146,7 +146,7 @@ it.effect.each([
           request.url.endsWith(`/v1/projects/${COMPUTE_PROJECT_REF}`),
         ),
       ).toHaveLength(interactive ? 1 : 0);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -199,7 +199,7 @@ it.effect(
         }),
       );
       expect(repeated).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("includes late older overlap rows when the initial history was not truncated", () =>
@@ -222,7 +222,7 @@ it.effect("includes late older overlap rows when the initial history was not tru
       }),
     );
     expect(loaded.map((item) => item["id"])).toEqual(["late"]);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("keeps a failed refresh checkpoint unchanged so retry rereads all pages", () =>
@@ -255,7 +255,7 @@ it.effect("keeps a failed refresh checkpoint unchanged so retry rereads all page
     expect(retried).toHaveLength(1001);
     expect(retried.at(-1)?.["id"]).toBe("last");
     expect(setup.http.requests[3]?.urlParams).toEqual(setup.http.requests[1]?.urlParams);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -285,7 +285,7 @@ it.effect(
       });
       expect(setup.http.requests.map((request) => request.urlParams.sql)).toEqual([sql, sql]);
       expect(setup.http.requests[0]?.urlParams.iso_timestamp_end).toBe("2026-11-04T11:55:00.000Z");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("caps refresh pages and resumes a fixed window at an exact tied-timestamp cursor", () =>
@@ -330,7 +330,7 @@ it.effect("caps refresh pages and resumes a fixed window at an exact tied-timest
     rows.length = 0;
     yield* setup.session.load(now + 100000, emit);
     expect(rows).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("retries only the throttled page after its retry-after delay", () =>
@@ -380,7 +380,7 @@ it.effect("retries only the throttled page after its retry-after delay", () =>
     expect(rows.map(({ id }) => id)).toEqual([...full.map(({ id }) => id), "last"]);
     expect(setup.http.requests).toHaveLength(4);
     expect(setup.http.requests[3]?.urlParams).toEqual(setup.http.requests[2]?.urlParams);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("selects only severity-supported sources when level is the only filter", () =>
@@ -401,7 +401,7 @@ it.effect("selects only severity-supported sources when level is the only filter
     expect(sql).toContain("source = 'function_edge_logs'");
     expect(sql).not.toContain("source = 'storage_logs'");
     expect(rows[0]).toMatchObject({ service: "postgres", source: "postgres_logs" });
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("uses the retry time after an initial request failure", () =>
@@ -418,7 +418,7 @@ it.effect("uses the retry time after an initial request failure", () =>
       end: "2026-11-04T12:00:10.000Z",
     });
     expect(setup.http.requests[1]?.urlParams.iso_timestamp_end).toBe("2026-11-04T12:00:10.000Z");
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("exhausts one retry per throttled page and leaves its checkpoint unchanged", () =>
@@ -450,7 +450,7 @@ it.effect("exhausts one retry per throttled page and leaves its checkpoint uncha
     );
     expect(rows.map(({ id }) => id)).toEqual(["after retry"]);
     expect(setup.http.requests[3]?.urlParams).toEqual(setup.http.requests[1]?.urlParams);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("interrupts a throttled page without waiting for its scheduled retry", () =>
@@ -466,5 +466,5 @@ it.effect("interrupts a throttled page without waiting for its scheduled retry",
     yield* Fiber.interrupt(fiber);
     yield* TestClock.adjust("120 seconds");
     expect(setup.http.requests).toHaveLength(2);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

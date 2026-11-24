@@ -1,7 +1,7 @@
 import { scratchDir } from "../../command-internal/scratch-paths.ts";
 import { type ConfigFileRef, configFileRefFromPath } from "../../command-internal/config-advice.ts";
 import { usesStackState } from "../../command-internal/stack-backend.ts";
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -941,7 +941,7 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const scratch = yield* scratchDir(dependencies.projectRoot);
   yield* fs.makeDirectory(scratch, { recursive: true }).pipe(
     Effect.mapError(
@@ -1091,7 +1091,7 @@ const downloadSingle = Effect.fn("functions.download.single")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const output = yield* Output;
 
   if (output.format === "text") {

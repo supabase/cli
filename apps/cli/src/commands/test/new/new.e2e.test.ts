@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -30,7 +30,7 @@ describe("supabase test new", () => {
         const target = path.join(projectDir, "supabase", "tests", "pet_test.sql");
         expect(yield* fs.exists(target)).toBe(true);
         expect(yield* fs.readFileString(target)).toContain("SELECT plan(1);");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -59,7 +59,7 @@ describe("supabase test new", () => {
         expect(stderr).not.toContain("\u001b");
         expect(yield* fs.exists(path.join(projectDir, "nested"))).toBe(false);
         expect(yield* fs.exists(path.join(projectDir, "supabase", "tests"))).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -339,7 +339,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, opts.yes ?? true),
     Layer.succeed(OutputFlag, Option.none()),
     mockTty({ stdinIsTty: opts.interactive ?? false }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, telemetry, connection, docker, bundled, resolver };
 }
@@ -790,7 +790,7 @@ describe("test db integration", () => {
           name: "supabase_network_My_Project",
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("mints a login role through the real resolver for --remote=<ref>", () => {

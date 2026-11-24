@@ -1,4 +1,4 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, Path, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { it } from "@effect/vitest";
@@ -61,40 +61,40 @@ describe("buildKongEmailTemplateBind", () => {
   it.effect("builds the bind string from an already-resolved resolvedPath", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       expect(
         buildKongEmailTemplateBind(
           { id: "invite", resolvedPath: "/work/invite.html" },
           { path, posixPath },
         ),
       ).toBe("/work/invite.html:/home/kong/templates/email/invite.html:rw,z");
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("drops the extension when resolvedPath has none", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       expect(
         buildKongEmailTemplateBind(
           { id: "invite_notification", resolvedPath: "/work/invite" },
           { path, posixPath },
         ),
       ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw,z");
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("keeps the container path POSIX-form when the host path service is win32", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       expect(
         buildKongEmailTemplateBind(
           { id: "invite", resolvedPath: "C:\\work\\invite.html" },
           { path, posixPath },
         ),
       ).toBe("C:\\work\\invite.html:/home/kong/templates/email/invite.html:rw,z");
-    }).pipe(Effect.provide(BunPath.layerWin32));
+    }).pipe(Effect.provide(NodePath.layerWin32));
   });
 });
 
@@ -133,7 +133,7 @@ describe("buildKongEntrypointScript", () => {
           );
           expect(exitCode).toBe(0);
           expect(output).toBe(`${expected} ${expected}\n`);
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
     }
   });
@@ -172,7 +172,7 @@ describe("buildKongContainerSpec", () => {
   it.effect("builds identity, entrypoint, restart policy, and network aliases", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec(base, { path, posixPath });
       expect(spec.image).toBe("supabase/kong:3.0.0");
       expect(spec.containerName).toBe("supabase_kong_proj");
@@ -188,13 +188,13 @@ describe("buildKongContainerSpec", () => {
         timeoutSeconds: 10,
         retries: 10,
       });
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("emits the fixed KONG_* env vars, including the resolved worker-process count", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec(base, { path, posixPath });
       expect(spec.env).toEqual({
         KONG_DATABASE: "off",
@@ -211,13 +211,13 @@ describe("buildKongContainerSpec", () => {
         KONG_SSL_CERT: "/home/kong/localhost.crt",
         KONG_SSL_CERT_KEY: "/home/kong/localhost.key",
       });
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("lets Kong inject its nginx main and events directives", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const script = String(buildKongContainerSpec(base, { path, posixPath }).cmd?.[1]);
       expect(script).toContain(
         "> for _, el in ipairs(nginx_main_directives) do\n$(el.name) $(el.value);\n> end",
@@ -228,13 +228,13 @@ describe("buildKongContainerSpec", () => {
       expect(script).not.toMatch(
         /^\s*(?:daemon|worker_processes|worker_rlimit_nofile|worker_connections|multi_accept)\b/m,
       );
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("publishes 8000 to the host and exposes 8000/8443/8088 when TLS is disabled", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec({ ...base, apiTlsEnabled: false }, { path, posixPath });
       expect(spec.ports).toEqual([{ hostPort: "54321", containerPort: "8000" }]);
       expect(spec.exposedPorts).toEqual([
@@ -242,13 +242,13 @@ describe("buildKongContainerSpec", () => {
         { containerPort: "8443" },
         { containerPort: "8088" },
       ]);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("publishes 8443 to the host when TLS is enabled, exposed ports unchanged", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec({ ...base, apiTlsEnabled: true }, { path, posixPath });
       expect(spec.ports).toEqual([{ hostPort: "54321", containerPort: "8443" }]);
       expect(spec.exposedPorts).toEqual([
@@ -256,7 +256,7 @@ describe("buildKongContainerSpec", () => {
         { containerPort: "8443" },
         { containerPort: "8088" },
       ]);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -264,43 +264,43 @@ describe("buildKongContainerSpec", () => {
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+        const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
         const spec = buildKongContainerSpec(base, { path, posixPath });
         const kongYml = spec.secretFiles?.find(
           (f) => f.containerPath === "/home/kong/kong.yml",
         )?.content;
         expect(kongYml).toContain("http://realtime-dev:4000/socket");
         expect(kongYml).not.toContain("supabase_realtime_proj");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
   it.effect("embeds the bearer/query token lua expressions into the rendered kong.yml", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec(base, { path, posixPath });
       const kongYml = spec.secretFiles?.find(
         (f) => f.containerPath === "/home/kong/kong.yml",
       )?.content;
       expect(kongYml).toContain(buildKongBearerToken(apiKeys));
       expect(kongYml).toContain(buildKongQueryToken(apiKeys));
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("has no email template binds by default", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec(base, { path, posixPath });
       expect(spec.binds).toEqual([]);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect("mounts every resolved email template bind", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+      const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
       const spec = buildKongContainerSpec(
         {
           ...base,
@@ -315,7 +315,7 @@ describe("buildKongContainerSpec", () => {
         "/work/invite.html:/home/kong/templates/email/invite.html:rw,z",
         "/abs/recovery.html:/home/kong/templates/email/recovery_notification.html:rw,z",
       ]);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -323,7 +323,7 @@ describe("buildKongContainerSpec", () => {
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+        const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
         const spec = buildKongContainerSpec(
           {
             ...base,
@@ -351,7 +351,7 @@ describe("buildKongContainerSpec", () => {
         expect(script).not.toContain("-----BEGIN CERTIFICATE-----");
         expect(script).not.toContain("-----BEGIN PRIVATE KEY-----");
         expect(script).not.toContain("kong.yml");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -360,13 +360,13 @@ describe("buildKongContainerSpec", () => {
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+        const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
         const spec = buildKongContainerSpec(base, { path, posixPath });
         const cert = spec.secretFiles?.find((f) => f.containerPath === "/home/kong/localhost.crt");
         const key = spec.secretFiles?.find((f) => f.containerPath === "/home/kong/localhost.key");
         expect(cert?.content).toBe("");
         expect(key?.content).toBe("");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 });

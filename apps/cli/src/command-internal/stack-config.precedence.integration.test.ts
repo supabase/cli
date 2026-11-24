@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
@@ -152,8 +152,8 @@ describe("stack config precedence goldens", () => {
         pinShellEnv(fixture.shellEnv ?? {});
 
         const layer = Layer.mergeAll(
-          BunServices.layer,
-          BunCrypto.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
           runtimeInfoLayer,
           mockCommandSettings({ workdir, supabaseHome: workdir }),
           cliConfigValuesTestLayer,
@@ -189,7 +189,7 @@ describe("stack config precedence goldens", () => {
         yield* Effect.promise(() =>
           ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });

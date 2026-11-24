@@ -1,4 +1,4 @@
-import { BunTerminal } from "@effect/platform-bun";
+import { NodeTerminal } from "@effect/platform-node";
 import type { LogsFlags, LogsProgress, LogsSession } from "./logs.session.ts";
 import { LogsClipboard } from "./logs.clipboard.ts";
 import process from "node:process";
@@ -22,7 +22,7 @@ import {
 
 export const logsTerminalLayer = Layer.effect(
   Terminal.Terminal,
-  BunTerminal.make(() => false),
+  NodeTerminal.make(() => false),
 );
 
 export const useLogsBrowser = Effect.fnUntraced(function* () {

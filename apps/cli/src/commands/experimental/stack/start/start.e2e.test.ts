@@ -1,6 +1,6 @@
 // Starts a native stack through the compiled CLI binary, checks its status and connection-variable
 // export, then stops and destroys that stack through the CLI.
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Data,
   Effect,
@@ -29,7 +29,7 @@ const nativeSupported =
   (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) ||
   (process.platform === "darwin" && process.arch === "arm64");
 
-const hostRuntime = ManagedRuntime.make(Layer.mergeAll(BunServices.layer));
+const hostRuntime = ManagedRuntime.make(Layer.mergeAll(NodeServices.layer));
 afterAll(() => hostRuntime.dispose());
 
 const { join, dirname, basename } = hostRuntime.runSync(Path.Path);

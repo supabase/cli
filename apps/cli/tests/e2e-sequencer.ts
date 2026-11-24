@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
 
@@ -139,7 +139,7 @@ export const readTimings = Effect.fn("E2eSequencer.readTimings")(function* (root
   );
 });
 
-const sequencerLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+const sequencerLayer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
 class HashSplitFailed extends Data.TaggedError("HashSplitFailed")<{ readonly cause: unknown }> {}
 

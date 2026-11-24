@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { CliError, CliOutput, Command, Flag } from "effect/cli";
@@ -32,7 +32,7 @@ const runParse = <Config extends CliCommand.Command.Config>(
     Command.withHandler((flags) => Effect.sync(() => parsed.push(flags))),
   );
   return Command.runWith(command, { version: "0.0.0-test" })(args).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(silentFormatter))),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, CliOutput.layer(silentFormatter))),
   );
 };
 

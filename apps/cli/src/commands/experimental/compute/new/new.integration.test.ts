@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
 import { parseJsonc } from "@supabase/config/internal";
@@ -107,7 +107,7 @@ describe("compute new", () => {
         // The deploy hint is a success trailer, which lands on stderr.
         expect(out.stderrText).toContain("supabase compute push api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect("asks for the name when the command line carries none", () =>
     Effect.gen(function* () {
@@ -131,7 +131,7 @@ describe("compute new", () => {
         ).toBe(true);
         expect(yield* repo.config).toContain("[compute.orders]");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The prompt is the last place a mistyped or taken name can be corrected
@@ -161,7 +161,7 @@ describe("compute new", () => {
           yield* fs.exists(path.join(repo.dir, "supabase", "compute", "orders", "index.mjs")),
         ).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -199,7 +199,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
         expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prompts for runtime, size, exposure and secrets scope when none is given", () =>
@@ -228,7 +228,7 @@ describe("compute new", () => {
           yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api", "index.mjs")),
         ).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The whole reason `new` records it: `push` sends a complete spec every time,
@@ -244,7 +244,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain('exposure = "private"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The count a scaffold cannot guess: `--instances` has no prompt, so it is
@@ -262,7 +262,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain("instances = 3");
         expect(yield* repo.config).not.toContain('instances = "3"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The end-to-end proof that the count is written as a number: the config
@@ -281,7 +281,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain("instances = 3");
         expect(yield* repo.config).toContain("[compute.web]");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Zero is an explicit count — it scales the compute to nothing — not an absent
@@ -296,7 +296,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain("instances = 0");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // An absent `instances` and `instances = 1` mean the same thing to `push`, so
@@ -311,7 +311,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).not.toContain("instances");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("writes no instance count when the default is named explicitly", () =>
@@ -324,7 +324,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).not.toContain("instances");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Written even when it is the default, the same way `runtime` and `size` are:
@@ -340,7 +340,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain('exposure = "public"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Written even when it is the default, the same way `runtime` and `size
@@ -354,7 +354,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain('secrets_scope = "all"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records a secrets scope that differs from the default", () =>
@@ -367,7 +367,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain('secrets_scope = "supabase"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records custom secrets scope as array", () =>
@@ -382,7 +382,7 @@ describe("compute new", () => {
 
         expect(yield* repo.config).toContain('secrets_scope = ["STRIPE_KEY", "ANTHROPIC_KEY"]');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Written into config.toml rather than applied invisibly at push time, so the list is
@@ -400,7 +400,7 @@ describe("compute new", () => {
 
             expect(yield* repo.config).toContain(excludeLine(runtime).trimEnd());
           }).pipe(Effect.provide(layer));
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // The written entry has to be loadable, or the scaffold leaves behind a project whose
@@ -418,7 +418,7 @@ describe("compute new", () => {
             compute: { api: { exclude: [...COMPUTE_RUNTIME_EXCLUSIONS.node] } },
           });
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports them alongside the compute's other dials", () =>
@@ -432,7 +432,7 @@ describe("compute new", () => {
           expect(out.stdoutText).toContain("Excluded");
           expect(out.stdoutText).toContain(".env");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -456,7 +456,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain('exposure = "public"');
         expect(yield* repo.config).toContain('secrets_scope = "all"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to the defaults without prompting when not interactive", () =>
@@ -471,7 +471,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain('runtime = "deno"');
         expect(yield* repo.config).toContain('size = "2gb"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A second `new` for the same name is refused rather than re-recorded. Changing
@@ -502,7 +502,7 @@ describe("compute new", () => {
         expect(out.promptSelectCalls).toHaveLength(0);
         expect(yield* repo.config).toBe(recorded);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Refused whichever way the entry happens to be written — the decoded config
@@ -527,7 +527,7 @@ describe("compute new", () => {
           // Nothing scaffolded either.
           expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(false);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads a JSON-only ancestor config and refuses a name it already records", () =>
@@ -557,7 +557,7 @@ describe("compute new", () => {
         // Nothing was scaffolded at the subdirectory either.
         expect(yield* fs.exists(path.join(sub, "supabase"))).toBe(false);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -585,7 +585,7 @@ describe("compute new", () => {
           yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("deno") }));
           expect(yield* fs.exists(path.join(sub, "supabase", "config.toml"))).toBe(true);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records a --source compute relative to the project root", () =>
@@ -608,7 +608,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(false);
         expect(yield* repo.config).toContain('source = "packages/api"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses a --source outside the directories a compute may own", () =>
@@ -636,7 +636,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "src", "app.ts"))).toBe(true);
         expect(yield* repo.config).toContain("project_id");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect("scaffolds in a directory that has no Supabase project yet", () =>
     Effect.gen(function* () {
@@ -657,7 +657,7 @@ describe("compute new", () => {
         // message names the absolute path rather than a project-root-relative one.
         expect(out.stdoutText).toContain(`Created new Compute at ${computeDir}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses a destination that already has something in it", () =>
@@ -677,7 +677,7 @@ describe("compute new", () => {
           yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api", "leftover.txt")),
         ).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Scaffolding into an empty directory is fine — it is only a destination with
@@ -699,7 +699,7 @@ describe("compute new", () => {
           yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api", "index.mjs")),
         ).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("tells the user how to proceed when the destination is occupied", () =>
@@ -719,7 +719,7 @@ describe("compute new", () => {
         expect(suggestion).not.toContain("--force");
         expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects a name that could not become a hostname", () =>
@@ -737,7 +737,7 @@ describe("compute new", () => {
         expect(error).toBeInstanceOf(InvalidComputeNameError);
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect("keeps stdout parseable under -o json", () =>
     Effect.gen(function* () {
@@ -764,7 +764,7 @@ describe("compute new", () => {
           instances: 1,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The count and the exposure are recorded sparsely — `instances` is left out
@@ -793,7 +793,7 @@ describe("compute new", () => {
           instances: 3,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("shows the exposure, secrets scope and declared count in the details block", () =>
@@ -823,7 +823,7 @@ describe("compute new", () => {
         // a live tally.
         expect(out.stdoutText).toContain("3 declared");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Why the config edit is planned before the starter files are written: this
@@ -848,7 +848,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(false);
         expect(yield* repo.config).toBe('project_id = "demo"\n\ncompute.api.runtime = "node"\n');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([false, true])(
@@ -884,7 +884,7 @@ describe("compute new", () => {
           yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
           expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("takes back the starters it wrote when a later one cannot be written", () =>
@@ -917,7 +917,7 @@ describe("compute new", () => {
         yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }));
         expect((yield* fs.readDirectory(computeDir)).toSorted()).toEqual(starters.toSorted());
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a file that lands in the destination before the config write fails", () =>
@@ -945,7 +945,7 @@ describe("compute new", () => {
         expect(yield* fs.readDirectory(computeDir)).toEqual(["notes.txt"]);
         expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("leaves a dangling symlink at the destination in place", () =>
@@ -968,7 +968,7 @@ describe("compute new", () => {
         expect(yield* fs.readLink(computeDir)).toBe(target);
         expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -989,7 +989,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "config.toml"))).toBe(false);
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the entry in JSON terms when the compute is already in config.json", () =>
@@ -1005,7 +1005,7 @@ describe("compute new", () => {
         expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("Edit compute.api in") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `settings.workdir` is already an authoritative project root, so the config
@@ -1037,7 +1037,7 @@ describe("compute new", () => {
           yield* fs.exists(path.join(workdir, "supabase", "compute", "api", "index.mjs")),
         ).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A sealed inline `[compute]` cannot be extended by appending a table, and
@@ -1061,7 +1061,7 @@ describe("compute new", () => {
         expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api"))).toBe(false);
         expect(yield* repo.config).toBe(before);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A plain file must not read as an empty directory: that fails with a bare
@@ -1083,7 +1083,7 @@ describe("compute new", () => {
           "not a directory",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A relative `--source` is something typed at a shell prompt, so it means
@@ -1114,7 +1114,7 @@ describe("compute new", () => {
         // Persisted project-root-relative, with forward slashes on every platform.
         expect(yield* repo.config).toContain('source = "apps/web/generated"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Clack writes its prompt UI to stdout with no stream override, and `-o json`
@@ -1141,7 +1141,7 @@ describe("compute new", () => {
         expect(payload).toMatchObject({ runtime: "deno", size: "2gb" });
         expect(out.promptSelectCalls).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The prompts only ever offer values this CLI knows, so an unrecognized answer
@@ -1173,7 +1173,7 @@ describe("compute new", () => {
         expect(yield* repo.config).toContain(`exposure = "public"`);
         expect(yield* repo.config).toContain(`secrets_scope = "all"`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses --source pointed at the project config file", () =>
@@ -1195,7 +1195,7 @@ describe("compute new", () => {
         // The config survived, which is the whole point.
         expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // CLI-2285 regression: before this fix, a typo'd/nonexistent --workdir
@@ -1227,6 +1227,6 @@ describe("compute new", () => {
           expect(yield* fs.exists(path.join(badWorkdir, "supabase"))).toBe(false);
           expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

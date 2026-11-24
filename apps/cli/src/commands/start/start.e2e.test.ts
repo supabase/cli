@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -74,7 +74,7 @@ describe("supabase start", () => {
           "WARNING: The following container names are not valid to exclude: bogus",
         );
         expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).not.toBe(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -140,7 +140,7 @@ describe("supabase start", () => {
           requireCliSuccess(yield* cli(["stop"]), "stop");
           expect(yield* startedSiteUrl("after@example.com")).toBe("http://127.0.0.1:4321");
         }).pipe(Effect.scoped),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
     2 * COMMAND_TIMEOUT_MS + 2 * CLEANUP_TIMEOUT_MS,
   );
 });

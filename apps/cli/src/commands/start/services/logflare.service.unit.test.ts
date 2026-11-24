@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, Path } from "effect";
 import { it } from "@effect/vitest";
 
@@ -67,7 +67,7 @@ describe("buildLogflareContainerSpec", () => {
         expect(spec.restartPolicy).toBe("unless-stopped");
         expect(spec.networkAliases).toEqual(["analytics"]);
         expect(spec.networkId).toBe("supabase_network_proj");
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -92,7 +92,7 @@ describe("buildLogflareContainerSpec", () => {
         RELEASE_COOKIE: "cookie",
         ERL_MAX_PORTS: "65536",
       });
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -109,7 +109,7 @@ describe("buildLogflareContainerSpec", () => {
         expect(spec.env.GOOGLE_PROJECT_NUMBER).toBeUndefined();
         expect(spec.env.GOOGLE_DATASET_ID_APPEND).toBeUndefined();
         expect(spec.binds).toEqual([]);
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -137,7 +137,7 @@ describe("buildLogflareContainerSpec", () => {
         expect(spec.binds).toEqual([
           `${path.join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
         ]);
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -156,7 +156,7 @@ describe("buildLogflareContainerSpec", () => {
       expect(spec.binds).toEqual([
         `${path.join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`,
       ]);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 
   it.effect(
@@ -180,7 +180,7 @@ describe("buildLogflareContainerSpec", () => {
           `${path.join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
         ]);
         expect(spec.env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined();
-      }).pipe(Effect.provide(BunPath.layer));
+      }).pipe(Effect.provide(NodePath.layer));
     },
   );
 
@@ -206,6 +206,6 @@ describe("buildLogflareContainerSpec", () => {
         "http://127.0.0.1:4000/health",
       ]);
       expect(slim.healthcheck?.startPeriodSeconds).toBe(60);
-    }).pipe(Effect.provide(BunPath.layer));
+    }).pipe(Effect.provide(NodePath.layer));
   });
 });

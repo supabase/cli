@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -33,7 +33,7 @@ const workdir = Effect.fnUntraced(function* (
 const withWorkdir = <A, E, R>(
   opts: { readonly linkedRef?: string; readonly dotenv?: string },
   use: (dir: string) => Effect.Effect<A, E, R>,
-) => Effect.flatMap(workdir(opts), use).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+) => Effect.flatMap(workdir(opts), use).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const run = <A, E>(
   effect: Effect.Effect<A, E, CliConfigValues | DebugLogger | Output>,
@@ -49,7 +49,7 @@ const run = <A, E>(
     cliConfigValuesLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           out.layer,
           ConfigProvider.layer(
             ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),

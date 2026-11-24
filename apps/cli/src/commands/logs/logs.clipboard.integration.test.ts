@@ -1,6 +1,6 @@
 import process from "node:process";
 import { connect } from "node:net";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Deferred,
@@ -224,7 +224,7 @@ it.live.skipIf(process.platform === "win32")(
       );
       const response = yield* Deferred.await(received).pipe(Effect.timeout("2 seconds"));
       expect(response).toBe("clipboard owner alive");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("bounds a stalled native clipboard helper and releases its scope", () =>

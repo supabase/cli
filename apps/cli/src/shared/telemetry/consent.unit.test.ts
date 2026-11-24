@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Clock, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -22,7 +22,7 @@ function withEnv(env: Record<string, string>) {
     Layer.provide(
       ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
     ),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -101,7 +101,7 @@ describe("readTelemetryConfig", () => {
 
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.some(expected));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("decodes a legacy disabled telemetry state as denied consent", () =>
@@ -127,7 +127,7 @@ describe("readTelemetryConfig", () => {
           session_last_active: Date.parse("2026-04-01T12:00:00Z"),
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("decodes a legacy enabled telemetry state as granted consent", () =>
@@ -155,7 +155,7 @@ describe("readTelemetryConfig", () => {
           distinct_id: "user-123",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps an overflowed session_last_active and the persisted consent", () =>
@@ -175,7 +175,7 @@ describe("readTelemetryConfig", () => {
           session_last_active: Infinity,
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("decodes a legacy state whose schema_version overflowed", () =>
@@ -195,7 +195,7 @@ describe("readTelemetryConfig", () => {
           session_last_active: Date.parse("2026-04-01T12:00:00Z"),
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns none for malformed JSON instead of throwing", () =>
@@ -205,7 +205,7 @@ describe("readTelemetryConfig", () => {
 
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.none());
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns none for structurally invalid telemetry config", () =>
@@ -215,6 +215,6 @@ describe("readTelemetryConfig", () => {
 
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.none());
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

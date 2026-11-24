@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { Effect, FileSystem, Option } from "effect";
 
@@ -25,7 +25,7 @@ const readDbPort = Effect.gen(function* () {
     values.load({ workdir, projectRef: Option.none() }),
   );
   return yield* resolvedConfig.get(CliConfigKeys.db.port);
-}).pipe(Effect.provide(BunServices.layer), Effect.scoped);
+}).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("hermetic config test layers", () => {
   it.live("cliConfigValuesTestLayer never reads a stray ambient SUPABASE_ variable", () =>

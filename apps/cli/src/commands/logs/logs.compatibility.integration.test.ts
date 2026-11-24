@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Stdio } from "effect";
 import { Command } from "effect/cli";
@@ -40,5 +40,5 @@ it.live("preserves bounded legacy compute defaults through the parser", () =>
       ),
     );
     expect(reached).toBe(true);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { BunCrypto, BunPath, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodePath, NodeServices } from "@effect/platform-node";
 import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import {
   Console,
@@ -72,7 +72,7 @@ const { defaultTestHomeDir, defaultTestConfigDir } = Effect.runSync(
       `supabase-cli-test-home-${process.pid.toString(36)}-${suffix}`,
     );
     return { defaultTestHomeDir: homeDir, defaultTestConfigDir: path.join(homeDir, ".supabase") };
-  }).pipe(Effect.provide(BunPath.layer)),
+  }).pipe(Effect.provide(NodePath.layer)),
 );
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -744,13 +744,13 @@ export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {})
   const projectLinkStateLayer = mockProjectLinkState();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     runtimeInfoLayer,
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
-    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+    legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
     analytics.layer,
     mockTelemetryRuntime(),
     mockTty(),
@@ -759,7 +759,7 @@ export function emptyEnv(env: Readonly<Record<string, string | undefined>> = {})
       Layer.provide(runtimeInfoLayer),
       Layer.provide(cliProjectContextLayer),
       Layer.provide(envLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     ),
   );
 }

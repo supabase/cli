@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Effect,
@@ -42,28 +42,28 @@ function buildLayer(
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
   const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
-    Layer.provide(opts.fs ?? BunServices.layer),
+    Layer.provide(opts.fs ?? NodeServices.layer),
     Layer.provide(discoveredCliProjectHomeLayer),
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     runtimeInfoLayer,
     envLayer,
     discoveredCliProjectContextLayer,
@@ -129,7 +129,7 @@ describe("projectLinkStateLayer", () => {
         expect(Option.isSome(error)).toBe(true);
         if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("saves and loads repo-local project link state", () =>
@@ -163,7 +163,7 @@ describe("projectLinkStateLayer", () => {
       expect(rawFile).toContain('"active_branch":');
       const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(rawFile);
       expect(raw).toEqual(SAMPLE_STATE);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("clears repo-local link state", () =>
@@ -191,7 +191,7 @@ describe("projectLinkStateLayer", () => {
       const loaded = yield* linkState.load;
       expect(Option.isNone(loaded)).toBe(true);
       yield* fs.readFileString(cliProjectHome.projectLinkPath).pipe(Effect.flip, Effect.asVoid);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with a tagged error when repo-local link state is malformed", () =>
@@ -227,7 +227,7 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("getActiveBranch returns none when not linked", () =>
@@ -245,7 +245,7 @@ describe("projectLinkStateLayer", () => {
 
       const activeBranch = yield* linkState.getActiveBranch;
       expect(Option.isNone(activeBranch)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("getActiveBranch returns the persisted active_branch", () =>
@@ -272,7 +272,7 @@ describe("projectLinkStateLayer", () => {
           is_default: true,
         });
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -303,7 +303,7 @@ describe("projectLinkStateLayer", () => {
           expect(loaded.value.versions).toEqual(SAMPLE_STATE.versions);
           expect(loaded.value.fetchedAt).toBe(SAMPLE_STATE.fetchedAt);
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () =>
@@ -335,6 +335,6 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

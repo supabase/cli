@@ -1,4 +1,4 @@
-import { BunFileSystem } from "@effect/platform-bun";
+import { NodeFileSystem } from "@effect/platform-node";
 import { Data, DateTime, Effect, FileSystem, Layer, Predicate, Random, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import pg from "pg";
@@ -165,7 +165,7 @@ const base = vitestTest.extend<LiveFixtures>({
             .remove(directory, { recursive: true, force: true })
             .pipe(Effect.mapError(foreignFailure)),
         );
-      }).pipe(Effect.provide(BunFileSystem.layer)),
+      }).pipe(Effect.provide(NodeFileSystem.layer)),
     ),
 
   cli: ({ workspace, home }, use) =>

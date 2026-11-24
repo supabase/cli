@@ -1,4 +1,4 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -31,7 +31,7 @@ import {
   type CommandTelemetryAttributeValues,
 } from "../telemetry/command-telemetry-attributes.ts";
 
-const servicesLive = Layer.mergeAll(BunServices.layer, cliConfigValuesTestLayer);
+const servicesLive = Layer.mergeAll(NodeServices.layer, cliConfigValuesTestLayer);
 
 function withConfig(content: string | undefined) {
   return Effect.gen(function* () {
@@ -43,7 +43,7 @@ function withConfig(content: string | undefined) {
       yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     }
     return dir;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 }
 
 const writeFile = (dir: string, segments: ReadonlyArray<string>, content: string) =>
@@ -51,14 +51,14 @@ const writeFile = (dir: string, segments: ReadonlyArray<string>, content: string
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.writeFileString(path.join(dir, ...segments), content);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const makeDir = (dir: string, segments: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.join(dir, ...segments), { recursive: true });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const withEnv =
   (values: Readonly<Record<string, string>>) =>
@@ -84,7 +84,7 @@ const loadEnv = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* loadProjectEnvValues(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("read (lenient) vs check (throws) split", () => {
   const withServices = <A, E>(
@@ -200,7 +200,7 @@ describe("readDbConfig", () => {
       expect(v.password).toBe("postgres");
       expect(v.projectId).toBe(sanitizeProjectId(path.basename(dir)));
       expect(v.denoVersion).toBe(2);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   // A known-good test vector: decrypts to "value" under the keypair below.
@@ -348,7 +348,7 @@ describe("readDbConfig", () => {
       // A bare leading `/` has no Windows volume name, so it resolves as relative and joins to
       // `supabase/`, unlike Node's `path.win32.isAbsolute`, which treats a leading separator as
       // rooted at the current drive. Tests `resolveSeedSqlPath` directly with
-      // `BunPath.layerWin32` instead of the full `readDbConfig` pipeline, since that pipeline
+      // `NodePath.layerWin32` instead of the full `readDbConfig` pipeline, since that pipeline
       // needs the real (POSIX-pathed) `Path.Path` service to open the temp config file on disk.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
@@ -357,7 +357,7 @@ describe("readDbConfig", () => {
         const resolved = resolveSeedSqlPath(path, "/schemas/*.sql");
         expect(resolved).toBe("supabase/schemas/*.sql");
       }).pipe(
-        Effect.provide(BunPath.layerWin32),
+        Effect.provide(NodePath.layerWin32),
         Effect.ensuring(
           Effect.sync(() => {
             Object.defineProperty(process, "platform", { value: originalPlatform });
@@ -2250,7 +2250,7 @@ describe("readDbConfig [experimental.pgdelta]", () => {
           );
         }),
       ),
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     );
   });
 
@@ -2283,7 +2283,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(path.join("supabase", "schemas"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the configured declarative_schema_path when set", () =>
@@ -2296,7 +2296,7 @@ describe("resolveDeclarativeDir", () => {
           formatOptions: Option.none(),
         }),
       ).toBe(path.join("supabase", "db", "decl"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

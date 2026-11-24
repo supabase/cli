@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Redacted } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -134,7 +134,10 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
           expect(registered.map(({ definition }) => definition.id)).toEqual([stack.id]);
         }).pipe(
           Effect.scoped,
-          Effect.provide([Layer.merge(BunServices.layer, BunCrypto.layer), FetchHttpClient.layer]),
+          Effect.provide([
+            Layer.merge(NodeServices.layer, NodeCrypto.layer),
+            FetchHttpClient.layer,
+          ]),
         ),
       { timeout: TEST_TIMEOUT_MS },
     );

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -292,7 +292,7 @@ const guardStart = <A, E, R>(start: Effect.Effect<A, E, R>) =>
       ),
   });
 
-const hostServices = Layer.mergeAll(BunServices.layer, BunCrypto.layer, runtimeInfoLayer);
+const hostServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, runtimeInfoLayer);
 
 const sharedLayers = (output: ReturnType<typeof mockOutput>, args: string[]) => {
   const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });

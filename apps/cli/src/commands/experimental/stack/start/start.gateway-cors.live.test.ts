@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import {
   Cause,
   Data,
@@ -341,7 +341,7 @@ describe("stack gateway CORS (live)", () => {
         ).pipe(
           Effect.provide(
             Layer.mergeAll(
-              BunServices.layer,
+              NodeServices.layer,
               FetchHttpClient.layer,
               Layer.succeed(HttpClient.TracerPropagationEnabled, false),
             ),

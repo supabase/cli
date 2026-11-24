@@ -1,5 +1,5 @@
 import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
 
@@ -203,7 +203,7 @@ describe("bootstrap linked-project cache location", () => {
           Layer.provide(flagsLayer),
           Layer.provide(debugLogger),
           Layer.provide(runtime),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         );
         const cacheLayer = linkedProjectCacheLayer.pipe(
           Layer.provide(configLayer),
@@ -215,17 +215,17 @@ describe("bootstrap linked-project cache location", () => {
             identityStitchLayer.pipe(
               Layer.provide(mockAnalytics().layer),
               Layer.provide(mockTelemetryRuntime({ consent: "denied" })),
-              Layer.provide(BunServices.layer),
+              Layer.provide(NodeServices.layer),
             ),
           ),
           // The cache also fires org/project groupIdentify, reading Analytics directly.
           Layer.provide(mockAnalytics().layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         );
 
         const layer = Layer.mergeAll(
-          BunServices.layer,
-          legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+          NodeServices.layer,
+          legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
           out.layer,
           api.layer,
           api.factoryLayer,
@@ -249,7 +249,7 @@ describe("bootstrap linked-project cache location", () => {
           cliConfigValuesLayer.pipe(
             Layer.provide(
               Layer.mergeAll(
-                BunServices.layer,
+                NodeServices.layer,
                 out.layer,
                 Layer.succeed(
                   CliConfigFlagInputs,
@@ -348,6 +348,6 @@ describe("bootstrap linked-project cache location", () => {
           `GET /v1/projects/${VALID_REF}`,
         ]);
         assertPermissionDrift({ command: "bootstrap", requests: api.requests, exact: true });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

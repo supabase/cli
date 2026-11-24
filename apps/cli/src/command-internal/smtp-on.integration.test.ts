@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 
@@ -17,7 +17,7 @@ const smtpEnabled = (config: string, shell: Record<string, string> = {}) =>
     ).pipe(Effect.provide(configValuesLayer()));
     return smtpOn(resolvedConfig.materialized.config, resolvedConfig.loaded.document ?? {});
   }).pipe(
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
     (effect) => withConfigEnv(definedEnv(shell), effect),
     Effect.scoped,
   );

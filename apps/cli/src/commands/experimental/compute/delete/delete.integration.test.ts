@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, FileSystem, Path, Schema } from "effect";
 import {
@@ -93,7 +93,7 @@ describe("compute delete", () => {
         // The redeploy hint is a success trailer, which lands on stderr.
         expect(out.stderrText).toContain("supabase compute push api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("picks the project, deletes the compute and records the linked project", () =>
@@ -134,7 +134,7 @@ describe("compute delete", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The refusal has to precede the DELETE. At emit time `--yes -o env` would
@@ -167,7 +167,7 @@ describe("compute delete", () => {
 
         expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/compute/api`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The API grants `workers_read` for the GET and `workers_write`
@@ -195,7 +195,7 @@ describe("compute delete", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still confirms interactively when the compute cannot be read", () =>
@@ -218,7 +218,7 @@ describe("compute delete", () => {
         expect(out.stderrText).not.toContain("will be terminated");
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A refusal is not an absence: only a real 404 means there was nothing there.
@@ -246,7 +246,7 @@ describe("compute delete", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses -o env before deleting anything", () =>
@@ -269,7 +269,7 @@ describe("compute delete", () => {
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("skips the confirmation with --yes", () =>
@@ -284,7 +284,7 @@ describe("compute delete", () => {
         expect(out.promptTextCalls).toEqual([]);
         expect(out.stderrText).toContain('Confirmed by --yes: Permanently delete compute "api"');
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   const notDeployed = {
@@ -314,7 +314,7 @@ describe("compute delete", () => {
         expect(suggestion).not.toContain("compute push");
         expect(warningsOf(out)).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   const routerNotFound = (method: string) => ({
@@ -346,7 +346,7 @@ describe("compute delete", () => {
         expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   const notEnrolled = {
@@ -379,7 +379,7 @@ describe("compute delete", () => {
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
         expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not report a delete it never reached as done", () =>
@@ -401,7 +401,7 @@ describe("compute delete", () => {
         expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
         expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   const projectNotFound = {
@@ -430,7 +430,7 @@ describe("compute delete", () => {
         expect(http.routeKeys).toEqual([getRoute]);
         expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not report a delete against a missing project as done", () =>
@@ -452,7 +452,7 @@ describe("compute delete", () => {
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
         expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `deleteCompute` already treats a DELETE 404 as done; the pre-flight GET used
@@ -475,7 +475,7 @@ describe("compute delete", () => {
         expect(out.stdoutText).toContain("nothing to delete");
         expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits the same payload shape for a no-op delete", () =>
@@ -501,7 +501,7 @@ describe("compute delete", () => {
         });
         expect(http.routeKeys).toEqual([getRoute]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats a delete that races another one as done", () =>
@@ -518,7 +518,7 @@ describe("compute delete", () => {
 
         expect(out.stdoutText).toContain("Kept");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces an unexpected delete status", () =>
@@ -539,7 +539,7 @@ describe("compute delete", () => {
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a structured result in json mode", () =>
@@ -566,7 +566,7 @@ describe("compute delete", () => {
           kept_config_entry: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The live tally is what is actually running; `spec.instances` is the target.
@@ -599,7 +599,7 @@ describe("compute delete", () => {
         expect(out.stderrText).toContain("1 running instance will be terminated");
         expect(out.stderrText).not.toContain("3 running");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("pluralizes the live instance count in the confirmation", () =>
@@ -628,7 +628,7 @@ describe("compute delete", () => {
 
         expect(out.stderrText).toContain("2 running instances will be terminated");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Scaled to zero: there is a tally, and it says nothing is running. Warning
@@ -660,7 +660,7 @@ describe("compute delete", () => {
         expect(out.stderrText).toContain('Permanently delete compute "api"');
         expect(out.stderrText).not.toContain("will be terminated");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // An orphan — deployed from another checkout — has no local entry and no local
@@ -689,7 +689,7 @@ describe("compute delete", () => {
         expect(out.stdoutText).not.toContain("compute push stray");
         expect(out.stderrText).toContain("nothing was kept");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("deletes a deployed compute named root", () =>
@@ -712,7 +712,7 @@ describe("compute delete", () => {
 
         expect(out.stdoutText).toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A `config.toml` entry on its own is not something `push` can deploy from, so
@@ -734,7 +734,7 @@ describe("compute delete", () => {
         expect(out.stdoutText).toContain("supabase/config.toml entry");
         expect(out.stdoutText).not.toContain("compute push api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Deletion never reads the local source, so a `source` that does not resolve
@@ -752,7 +752,7 @@ describe("compute delete", () => {
         expect(http.routeKeys).toContain(deleteRoute);
         expect(out.stdoutText).toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

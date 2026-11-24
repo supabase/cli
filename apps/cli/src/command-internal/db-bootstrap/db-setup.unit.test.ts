@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
 import {
@@ -221,7 +221,7 @@ const run = (
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
+        NodeServices.layer,
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
@@ -249,7 +249,7 @@ describe("startSetupLocalDatabase", () => {
         expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(true);
         expect(docker.runs.length).toBe(0);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("PG15+: runs one-shot docker jobs, execs no schema SQL at all", () => {
@@ -266,7 +266,7 @@ describe("startSetupLocalDatabase", () => {
         // Default config: realtime, storage, and auth are all enabled.
         expect(docker.runs.length).toBe(3);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 
@@ -290,7 +290,7 @@ describe("startSetupLocalDatabase", () => {
         expect(images).toContain("public.ecr.aws/supabase/gotrue:v2.170.0");
         expect(images).not.toContain("public.ecr.aws/supabase/storage-api:v1.0.0");
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("runs nothing when all three services are disabled", () => {
@@ -308,7 +308,7 @@ describe("startSetupLocalDatabase", () => {
         yield* run(baseInput(workdir, session, { majorVersion: 15, config }), out, docker);
         expect(docker.runs.length).toBe(0);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect(
@@ -342,7 +342,7 @@ describe("startSetupLocalDatabase", () => {
           expect(docker.runs[1]?.cmd).toEqual(["node", "dist/scripts/migrate-call.js"]);
           expect(docker.runs[2]?.cmd).toEqual(["gotrue", "migrate"]);
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
 
@@ -367,7 +367,7 @@ describe("startSetupLocalDatabase", () => {
           });
         }
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect(
@@ -399,7 +399,7 @@ describe("startSetupLocalDatabase", () => {
           expect(job.env["API_JWT_JWKS"]).toBe('{"keys":["stub"]}');
           expect(job.network).toEqual({ _tag: "named", name: "supabase_network_proj" });
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
 
@@ -434,7 +434,7 @@ describe("startSetupLocalDatabase", () => {
             "super-secret-jwt-token-with-at-least-32-characters-long",
           );
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
 
@@ -465,7 +465,7 @@ describe("startSetupLocalDatabase", () => {
           const job = docker.runs[0]!;
           expect(job.env["GOTRUE_SITE_URL"]).toBe("http://env-overridden-value.example");
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
 
@@ -489,7 +489,7 @@ describe("startSetupLocalDatabase", () => {
         expect(docker.runs.length).toBe(2);
         expect(docker.captureOptsCalls).toEqual([{ teeStderr: true }, { teeStderr: true }]);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("without --debug, one-shot jobs run with teeStderr off", () => {
@@ -508,7 +508,7 @@ describe("startSetupLocalDatabase", () => {
         expect(docker.runs.length).toBe(1);
         expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("a non-zero exit from a one-shot job fails the whole pipeline", () => {
@@ -527,7 +527,7 @@ describe("startSetupLocalDatabase", () => {
         expect(error).toBeInstanceOf(DbSetupError);
         expect(error.message).toBe("error running container: exit 1");
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 
@@ -544,7 +544,7 @@ describe("startSetupLocalDatabase", () => {
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("auto_expose_new_tables = false execs the revoke SQL", () => {
@@ -559,7 +559,7 @@ describe("startSetupLocalDatabase", () => {
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect(
@@ -575,7 +575,7 @@ describe("startSetupLocalDatabase", () => {
           const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
           expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
   });
@@ -606,7 +606,7 @@ describe("startSetupLocalDatabase", () => {
         expect(vaultCallIndex).toBeLessThan(rolesCallIndex);
         expect(out.rawChunks.map((c) => c.text)).toContain("Seeding globals from roles.sql...\n");
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect(
@@ -625,7 +625,7 @@ describe("startSetupLocalDatabase", () => {
           );
           expect(rolesCallIndex).toBe(-1);
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       },
     );
   });
@@ -759,7 +759,7 @@ describe("runDatabaseWebhooksSetup", () => {
           dbUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
           enabled,
         });
-      }).pipe(Effect.provide(Layer.mergeAll(dbConnection, BunServices.layer))),
+      }).pipe(Effect.provide(Layer.mergeAll(dbConnection, NodeServices.layer))),
     };
   };
 
@@ -884,7 +884,7 @@ describe("ensureStackWebhookSchema", () => {
         });
       yield* Effect.all([ensure("first"), ensure("second")], { concurrency: "unbounded" });
       expect(database.creators).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("releases the lock and reports no creation when the template fails", () =>
@@ -925,7 +925,7 @@ describe("ensureStackWebhookSchema", () => {
       const span = spans.find(({ name }) => name === "DbSetup.ensureStackWebhookSchema");
       expect(span).toBeDefined();
       expect(span?.attributes.has("db.webhook_schema.created")).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -944,7 +944,7 @@ describe("startInitCurrentBranch", () => {
         expect(content).toBe("main");
       });
       yield* fixtureFs.remove(workdir, { recursive: true, force: true });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("leaves an existing _current_branch file untouched", () => {
@@ -966,6 +966,6 @@ describe("startInitCurrentBranch", () => {
         expect(content).toBe("feature-x");
       });
       yield* fixtureFs.remove(workdir, { recursive: true, force: true });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 import { describe, expect, test } from "vitest";
@@ -117,7 +117,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
         const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-compute-config-" });
         return yield* run(path.join(dir, "config.toml"), fs, path);
       }),
-    ).pipe(Effect.provide(BunServices.layer));
+    ).pipe(Effect.provide(NodeServices.layer));
 
   /** plan + commit — the pairing `new` performs once it has decided to write. */
   const writeComputeEntry = (options: Parameters<typeof planComputeEntry>[0]) =>
@@ -140,7 +140,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
             name: "api",
             existingCompute: {},
             patch: { runtime: "node", instances },
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
@@ -158,7 +158,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
           name: "api",
           existingCompute: {},
           patch: { runtime: "node", instances: 0 },
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
 
         expect(yield* fs.readFileString(configPath)).toContain("instances = 0");
       }),
@@ -173,7 +173,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
           name: "api",
           existingCompute: {},
           patch: { runtime: "node" },
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
 
         expect(yield* fs.readFileString(configPath)).toBe('[compute.api]\nruntime = "node"\n');
       }),
@@ -190,7 +190,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
           name: "api",
           existingCompute: {},
           patch: { runtime: "node", size: "4gb" },
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
 
         expect(yield* fs.readFileString(configPath)).toBe(
           '# keep me\nproject_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "4gb"\n',
@@ -213,7 +213,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
             name: "api",
             existingCompute: { api: { runtime: "node" } },
             patch: { runtime: "deno" },
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         );
 
         expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
@@ -245,7 +245,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
             name: "api",
             existingCompute: { api: { runtime: "node" } },
             patch: { runtime: "node" },
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         );
 
         expect(error).toBeInstanceOf(ComputeAlreadyConfiguredError);
@@ -275,7 +275,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
             name: "api",
             existingCompute: {},
             patch: { runtime: "node" },
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         );
 
         expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
@@ -300,7 +300,7 @@ describe("planComputeEntry + commitComputeEntry", () => {
             name: "api",
             existingCompute: {},
             patch: { runtime: "node" },
-          }).pipe(Effect.provide(BunServices.layer)),
+          }).pipe(Effect.provide(NodeServices.layer)),
         );
 
         expect(error).toBeInstanceOf(ComputeConfigWriteUnsafeError);
@@ -322,12 +322,12 @@ describe("planComputeEntry + commitComputeEntry", () => {
           name: "api",
           existingCompute: {},
           patch: { runtime: "node" },
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
 
         expect(write.text).toContain("[compute.api]");
         expect(yield* fs.readFileString(configPath)).toBe('project_id = "demo"\n');
 
-        yield* commitComputeEntry(write).pipe(Effect.provide(BunServices.layer));
+        yield* commitComputeEntry(write).pipe(Effect.provide(NodeServices.layer));
         expect(yield* fs.readFileString(configPath)).toContain("[compute.api]");
       }),
     ),

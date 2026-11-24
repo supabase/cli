@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
 import { Config, Effect, FileSystem, Path } from "effect";
 import { FlagDocumentation } from "../command-internal/flag-documentation.ts";
@@ -33,7 +33,7 @@ const loadDocsContent = Effect.gen(function* () {
     docsContentCache = yield* readDocsContent(path.resolve(import.meta.dirname, "../../docs"));
   }
   return docsContentCache;
-}).pipe(Effect.provide(BunServices.layer));
+}).pipe(Effect.provide(NodeServices.layer));
 
 /** Lazily built once, so runs filtered to the pure helpers skip the tree walk and disk reads. */
 function builtSpec(): BuiltSpecFixture {
@@ -588,6 +588,6 @@ describe("readDocsContent walk", () => {
       yield* fs.symlink("..", path.join(dir, "supabase", "up"));
       const content = yield* readDocsContent(dir);
       expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

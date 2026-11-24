@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Path, Result } from "effect";
 
@@ -235,7 +235,7 @@ describe("db toml reader precedence goldens", () => {
         yield* Effect.promise(() =>
           ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });

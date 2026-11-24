@@ -1,5 +1,5 @@
 import { FetchHttpClient, HttpClient } from "effect/http";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { createServer } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
@@ -222,7 +222,7 @@ describe("supabase start (e2e)", () => {
           exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
         });
         requireCliSuccess(status, "status setup");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
@@ -294,7 +294,7 @@ describe("supabase start (e2e)", () => {
         expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
         expect(start.stdout).toContain("https://127.0.0.1:");
         expect(proxyConnections).toBe(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 
@@ -378,7 +378,7 @@ describe("supabase start (e2e)", () => {
           "{{range .Mounts}}{{println .Destination}}{{end}}",
         ]);
         expect(splitNonEmptyLines(mounts)).not.toContain("/root/.supabase/multiline-env");
-      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
     START_TIMEOUT_MS * 2 + INVOKE_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS * 2,
   );
 });

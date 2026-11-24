@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -393,7 +393,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     mockCredentials(opts.accessTokenInvalid === true, opts.accessToken),
     platformApi.factoryLayer,
-    BunServices.layer,
+    NodeServices.layer,
   );
   return {
     layer,
@@ -531,7 +531,7 @@ describe("db query integration", () => {
       const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
       yield* dbQuery(flags({ file: Option.some("q.sql") })).pipe(Effect.provide(layer));
       expect(out.stdoutText).toContain("alice");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(

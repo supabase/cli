@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -52,7 +52,7 @@ const readRules = (options: {
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
+        NodeServices.layer,
         configValuesLayer(options.env === undefined ? {} : { env: options.env }),
       ),
     ),

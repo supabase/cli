@@ -1,5 +1,5 @@
-import * as BunCrypto from "@effect/platform-bun/BunCrypto";
-import * as BunServices from "@effect/platform-bun/BunServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
@@ -95,8 +95,8 @@ function setup() {
     http: () => Effect.void,
   });
   const dependencies = Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     shadow,
     unusedAdapter,
     debug,

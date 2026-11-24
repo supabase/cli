@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { $ } from "bun";
 import {
   Cause,
@@ -48,8 +48,8 @@ class VerdaccioStartTimeout extends Data.TaggedError("VerdaccioStartTimeout")<{
 type RegistryServices = FileSystem.FileSystem | Path.Path | HttpClient.HttpClient;
 
 const registryLayer: Layer.Layer<RegistryServices> = Layer.mergeAll(
-  BunFileSystem.layer,
-  BunPath.layer,
+  NodeFileSystem.layer,
+  NodePath.layer,
   FetchHttpClient.layer,
   Layer.succeed(HttpClient.TracerPropagationEnabled, false),
 );

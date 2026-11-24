@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
@@ -20,7 +20,7 @@ import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const live = Layer.provideMerge(
   stackApiLayer,
-  Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer),
+  Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer),
 );
 const MailpitInfo = Schema.Struct({ RuntimeStats: Schema.Struct({ SMTPAccepted: Schema.Finite }) });
 

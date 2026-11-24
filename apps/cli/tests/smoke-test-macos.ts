@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { $ } from "bun";
 import { Cause, Console, Data, Effect, Exit, FileSystem, Layer, Path, Predicate } from "effect";
 import process from "node:process";
@@ -244,5 +244,5 @@ const main = Effect.gen(function* () {
 });
 
 await Effect.runPromise(
-  main.pipe(Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer))),
+  main.pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
 );

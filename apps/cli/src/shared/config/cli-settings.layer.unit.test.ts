@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import {
   mockCliProjectContext,
@@ -31,12 +31,12 @@ function buildLayer(
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(
@@ -49,7 +49,7 @@ function buildLayer(
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     runtimeInfoLayer,
     envLayer,
     discoveredCliProjectContextLayer,
@@ -79,7 +79,7 @@ describe("cliSettingsLayer", () => {
             buildLayer(path, { cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
 
@@ -103,7 +103,7 @@ describe("cliSettingsLayer", () => {
           }),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -154,7 +154,7 @@ describe("cliSettingsLayer", () => {
         if (Option.isSome(cliProjectContext.paths)) {
           expect(cliProjectContext.paths.value.projectRoot).toBe(packageRoot);
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lets ambient env override discovered project env", () =>
@@ -195,7 +195,7 @@ describe("cliSettingsLayer", () => {
       if (Option.isSome(cliSettings.accessToken)) {
         expect(Redacted.value(cliSettings.accessToken.value)).toBe("sbp_ambient");
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("has no PostHog key when nothing is injected or overridden", () =>
@@ -207,12 +207,12 @@ describe("cliSettingsLayer", () => {
       );
 
       expect(Option.isNone(cliSettings.telemetryPosthogKey)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves empty runtime settings as present options", () => {
     const settingsLayer = cliSettingsLayer.pipe(
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(mockRuntimeInfo({ cwd: "/test/cwd", homeDir: "/test/home" })),
       Layer.provide(mockCliProjectContext()),
       Layer.provide(
@@ -253,7 +253,7 @@ describe("cliSettingsLayer", () => {
       );
 
       expect(cliSettings.telemetryPosthogKey).toEqual(Option.some("phc_env_override"));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses SUPABASE_HOME (trimmed) when configured", () =>
@@ -268,7 +268,7 @@ describe("cliSettingsLayer", () => {
       );
 
       expect(cliSettings.supabaseHome).toBe(supabaseHome);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   for (const value of ["", "   "]) {
@@ -286,7 +286,7 @@ describe("cliSettingsLayer", () => {
           );
 
           expect(cliSettings.supabaseHome).toBe(path.join(homeDir, ".supabase"));
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
 
@@ -308,6 +308,6 @@ describe("cliSettingsLayer", () => {
 
       expect(cliSettings.telemetryPosthogHost).toBe("https://build-posthog.example");
       expect(cliSettings.telemetryPosthogKey).toEqual(Option.some("phc_build_key"));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

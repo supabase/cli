@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import {
@@ -41,7 +41,7 @@ import { stackDestroy } from "./destroy.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 import { stackUploadsDir } from "../../../../command-internal/stack-config.ts";
 
-const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(NodeServices.layer, NodeCrypto.layer));
 const refuseDestroy = (
   api: StackApi["Service"],
   ids: ReadonlyArray<string>,
@@ -85,7 +85,7 @@ const refuseUploadsRemoval = Layer.effect(
           )
         : fs.remove(target, options),
   })),
-).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
+).pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer]));
 const runDestroy = <A, E, R>(layer: Layer.Layer<A, E, R>, argv: ReadonlyArray<string>) =>
   Command.runWith(stackDestroyCommand.pipe(Command.provide(layer)), { version: "0.0.0-test" })(
     argv,

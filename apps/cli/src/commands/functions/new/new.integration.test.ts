@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path, Stdio } from "effect";
 
@@ -58,7 +58,7 @@ function setup(options: SetupOptions = {}) {
     explicitWorkdir: options.explicitWorkdir ?? false,
   });
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     out.layer,
     telemetry.layer,
     cliSettings,
@@ -232,7 +232,7 @@ describe("functions new integration", () => {
           analytics.layer,
           mockProcessControl().layer,
           Stdio.layerTest({ args: Effect.succeed(["functions", "new", "hello"]) }),
-          commandRuntimeLayer(["functions", "new"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["functions", "new"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
     );
@@ -465,6 +465,6 @@ describe("functions new integration", () => {
         expect(error.message).toContain("failed to change workdir: chdir");
         expect(yield* fs.exists(path.join(badWorkdir, "supabase"))).toBe(false);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

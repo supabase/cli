@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -276,7 +276,7 @@ describe("stop integration", () => {
         expect(out.stderrText).toContain(
           "docker volume ls --filter label=com.supabase.cli.project=demo",
         );
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("stops despite a bucket's invalid file_size_limit", () =>
@@ -289,7 +289,7 @@ describe("stop integration", () => {
       );
       yield* stop(flags()).pipe(Effect.provide(layer));
       expect(child.spawned.some((s) => s.args[0] === "stop")).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -312,7 +312,7 @@ describe("stop integration", () => {
         yield* stop(flags()).pipe(Effect.provide(layer));
         expect(yield* fs.exists(matchedDir)).toBe(false);
         expect(yield* fs.exists(unmatchedDir)).toBe(true);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -356,7 +356,7 @@ describe("stop integration", () => {
         yield* stop(flags({ all: Option.some(true) })).pipe(Effect.provide(layer));
         expect(yield* fs.exists(correctDir)).toBe(false);
         expect(yield* fs.exists(wrongDir)).toBe(true);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -377,7 +377,7 @@ describe("stop integration", () => {
           "--format",
           '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("keeps an explicit --project-id raw, unsanitized", () =>
@@ -393,7 +393,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("stops every project's containers with --all without reading config.toml", () =>
@@ -419,7 +419,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("suggests the bare-label volume command with --all when volumes remain", () =>
@@ -434,7 +434,7 @@ describe("stop integration", () => {
       );
       expect(out.stderrText).toContain("docker volume ls --filter label=com.supabase.cli.project");
       expect(out.stderrText).not.toContain("com.supabase.cli.project=");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("stops a named project with --project-id without reading config.toml", () =>
@@ -450,7 +450,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("falls back to config.toml when --project-id is an empty string", () =>
@@ -469,7 +469,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () =>
@@ -489,7 +489,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () =>
@@ -513,7 +513,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -541,7 +541,7 @@ describe("stop integration", () => {
           "--format",
           '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () =>
@@ -558,7 +558,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("resolves SUPABASE_PROJECT_ID from a project-root .env file", () =>
@@ -578,7 +578,7 @@ describe("stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
@@ -597,7 +597,7 @@ describe("stop integration", () => {
         );
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
@@ -614,7 +614,7 @@ describe("stop integration", () => {
         expect(causeText).toContain(`failed to change workdir: chdir ${filePath}: not a directory`);
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("rejects --project-id together with --all", () =>
@@ -630,7 +630,7 @@ describe("stop integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("StopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   // Presence-based, not value-based: `--all=false` still counts as "set" alongside
@@ -648,7 +648,7 @@ describe("stop integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("StopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   const PRUNE_RUNNING = "Error response from daemon: a prune operation is already running";
@@ -684,7 +684,7 @@ describe("stop integration", () => {
       const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.forkChild);
       yield* joinAdvancingClock(fiber);
       expect(networkPrunes(child.spawned)).toHaveLength(3);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("keeps waiting while another stack's prune holds the daemon for tens of seconds", () =>
@@ -714,7 +714,7 @@ describe("stop integration", () => {
       const exit = yield* joinAdvancingClock(fiber);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(networkPrunes(child.spawned)).toHaveLength(1);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails naming the wait once another stack's prune outlasts it", () =>
@@ -732,7 +732,7 @@ describe("stop integration", () => {
           "a prune operation is already running (still running after retrying for up to 60 seconds",
         );
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails on the first unrelated prune error", () =>
@@ -749,7 +749,7 @@ describe("stop integration", () => {
         );
       }
       expect(networkPrunes(child.spawned)).toHaveLength(1);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("deletes data volumes with --no-backup", () =>
@@ -770,7 +770,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("omits --all from docker's volume prune on a pre-1.42 API host", () =>
@@ -792,7 +792,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("omits --all from docker's volume prune when an old client talks to a new daemon", () =>
@@ -812,7 +812,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("includes --all in docker's volume prune when the API is exactly 1.42", () =>
@@ -833,7 +833,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("--backup=false alone does not delete data volumes", () =>
@@ -847,7 +847,7 @@ describe("stop integration", () => {
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
       expect(volumePrune).toBeUndefined();
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("--no-backup still deletes data volumes even when --backup stays true", () =>
@@ -868,7 +868,7 @@ describe("stop integration", () => {
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("keeps data volumes by default (no volume prune call)", () =>
@@ -882,7 +882,7 @@ describe("stop integration", () => {
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
       );
       expect(volumePrune).toBeUndefined();
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when config.toml is malformed", () =>
@@ -895,7 +895,7 @@ describe("stop integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails naming the source when a config value is invalid", () =>
@@ -911,7 +911,7 @@ describe("stop integration", () => {
         expect(causeText).not.toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () =>
@@ -935,7 +935,7 @@ project_id = "aaaaaaaaaaaaaaaaaaaa"
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when a [remotes.*] project_id is not a valid 20-letter ref", () =>
@@ -956,7 +956,7 @@ project_id = "short"
         expect(Cause.pretty(exit.cause)).toContain("StopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -983,7 +983,7 @@ additional_redirect_urls = "http://a,http://b"
           "--format",
           '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
         ]);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -1004,7 +1004,7 @@ additional_redirect_urls = "http://a,http://b"
           expect(causeText).toContain("Postgres version 12.x is unsupported");
         }
         expect(child.spawned).toEqual([]);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("does not run config Validate for --all (bypasses config entirely)", () =>
@@ -1021,7 +1021,7 @@ additional_redirect_urls = "http://a,http://b"
       expect(Exit.isSuccess(exit)).toBe(true);
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toContain("label=com.supabase.cli.project");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("does not run config Validate for --project-id (bypasses config entirely)", () =>
@@ -1038,7 +1038,7 @@ additional_redirect_urls = "http://a,http://b"
       expect(Exit.isSuccess(exit)).toBe(true);
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toContain("label=com.supabase.cli.project=explicit");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when stopping a container errors", () =>
@@ -1056,7 +1056,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -1089,7 +1089,7 @@ additional_redirect_urls = "http://a,http://b"
           expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
         }
         expect(yield* fs.exists(stagedDir)).toBe(true);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when a container cannot be spawned to stop it at all", () =>
@@ -1106,7 +1106,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -1127,7 +1127,7 @@ additional_redirect_urls = "http://a,http://b"
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
         }
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when container prune errors", () =>
@@ -1144,7 +1144,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopContainerPruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when volume prune errors", () =>
@@ -1161,7 +1161,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopVolumePruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when network prune errors", () =>
@@ -1178,7 +1178,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopNetworkPruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   // By the time a later prune stage fails, container-prune has already removed the containers;
@@ -1206,7 +1206,7 @@ additional_redirect_urls = "http://a,http://b"
       const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(yield* fs.exists(matchedDir)).toBe(false);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when the container list errors", () =>
@@ -1223,7 +1223,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopListError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("stops many containers in order, at most CONTAINER_CLI_CONCURRENCY at a time", () =>
@@ -1258,7 +1258,7 @@ additional_redirect_urls = "http://a,http://b"
       expect(stopCalls.map((s) => s.args)).toEqual(containerIds.map((id) => ["stop", id]));
       expect(yield* Ref.get(peak)).toBe(CONTAINER_CLI_CONCURRENCY);
       expect(out.stdoutText).toContain("Stopped");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("falls back to podman when docker is absent", () =>
@@ -1274,7 +1274,7 @@ additional_redirect_urls = "http://a,http://b"
       const psCalls = child.spawned.filter((s) => s.args[0] === "ps");
       expect(psCalls.at(-1)?.command).toBe("podman");
       expect(psCalls.some((s) => s.command === "docker")).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("omits --all from podman's volume prune (not a real Podman flag)", () =>
@@ -1299,7 +1299,7 @@ additional_redirect_urls = "http://a,http://b"
         "--filter",
         "label=com.supabase.cli.project=demo",
       ]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("emits a machine result in json mode without spinner text", () =>
@@ -1315,7 +1315,7 @@ additional_redirect_urls = "http://a,http://b"
       expect(out.stdoutText).not.toContain("\x1b[?25l");
       // json mode has no volume-suggestion equivalent — only text mode emits it.
       expect(out.stderrText).not.toContain("Local data are backed up");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("shows no volume suggestion when no volumes remain", () =>
@@ -1326,7 +1326,7 @@ additional_redirect_urls = "http://a,http://b"
       });
       yield* stop(flags()).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Local data are backed up");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("flushes telemetry via ensuring even on failure", () =>
@@ -1337,7 +1337,7 @@ additional_redirect_urls = "http://a,http://b"
       });
       yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
       expect(telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when container prune cannot spawn any container runtime", () =>
@@ -1352,7 +1352,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopContainerPruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when volume prune cannot spawn any container runtime", () =>
@@ -1367,7 +1367,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopVolumePruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when network prune cannot spawn any container runtime", () =>
@@ -1382,7 +1382,7 @@ additional_redirect_urls = "http://a,http://b"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StopNetworkPruneError");
       }
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("still reports success when the post-run volume listing fails", () =>
@@ -1397,7 +1397,7 @@ additional_redirect_urls = "http://a,http://b"
       yield* stop(flags()).pipe(Effect.provide(layer));
       expect(out.stdoutText).toContain("Stopped");
       expect(out.stderrText).not.toContain("Local data are backed up");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   // `dockerRemoveAll`'s `--debug` prune reports write straight to `process.stderr`, bypassing
@@ -1448,7 +1448,7 @@ additional_redirect_urls = "http://a,http://b"
             writeSpy.mockRestore();
           }),
       );
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("never writes the Pruned lines to stderr without --debug", () =>
@@ -1472,6 +1472,6 @@ additional_redirect_urls = "http://a,http://b"
             writeSpy.mockRestore();
           }),
       );
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { describe, expect, test } from "vitest";
@@ -126,7 +126,7 @@ describe("fallbackDuration", () => {
 });
 
 describe("readTimings", () => {
-  const fsLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+  const fsLayer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
   const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
   const timingsRoot = Effect.gen(function* () {

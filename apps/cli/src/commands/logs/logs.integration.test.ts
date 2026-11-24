@@ -1,5 +1,5 @@
 import { LogsClipboard } from "./logs.clipboard.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -187,7 +187,7 @@ describe("unified logs", () => {
           .map((screen) => screen.split("\r\n").find((line) => line.startsWith("Window:")));
         expect(headers.length).toBeGreaterThan(0);
         expect(headers.every((header) => header === test.header)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("routes terminal query rows into details and leaves piped stdin on normal output", () =>
@@ -273,7 +273,7 @@ describe("unified logs", () => {
           expect(setup.out.stdoutText).toContain("first full detail");
         }
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("queries arbitrary hosted SQL from a file with exact bounds and raw attributes", () =>
@@ -315,7 +315,7 @@ describe("unified logs", () => {
         iso_timestamp_end: "2026-11-02T12:00:00.000Z",
       });
       expect(setup.telemetry.flushed).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -333,7 +333,7 @@ describe("unified logs", () => {
           expect(Schema.is(LogsInputError)(error)).toBe(true);
           expect(setup.http.requests).toEqual([]);
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -381,7 +381,7 @@ describe("unified logs", () => {
           message: expect.stringContaining(message),
         });
         expect(setup.http.requests).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a long multiline piped event on one unwrapped line", () =>
@@ -403,7 +403,7 @@ describe("unified logs", () => {
       expect(setup.out.stdoutText).toBe(
         `2026-11-02T11:59:59.000Z postgres ${"long-message-".repeat(20)}\\r\\nsecond line\n`,
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces HTTP-200 query errors and accepts null empty results", () =>
@@ -424,7 +424,7 @@ describe("unified logs", () => {
       });
       yield* runQuery(queryFlags()).pipe(Effect.provide(empty.layer));
       expect(empty.out.stdoutText).toBe("[]\n");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -456,7 +456,7 @@ describe("unified logs", () => {
         expect(sql).toContain("source = 'postgres_logs'");
         expect(sql).toContain("positionCaseInsensitiveUTF8(event_message, 'can''t_%\\\\') > 0");
         expect(sql).toContain("parsed.error_severity");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -495,7 +495,7 @@ describe("unified logs", () => {
           Effect.flip,
         );
         expect(error.message).toBe(message);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps the hidden --stack-id as a deprecated alias of --stack", () =>
@@ -540,7 +540,7 @@ describe("unified logs", () => {
       );
       expect(both.message).toBe("--stack-id is a deprecated alias of --stack; pass only --stack.");
       expect(resolved).toEqual(["feature"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("discovers truthful hosted capabilities without querying logs", () =>
@@ -555,7 +555,7 @@ describe("unified logs", () => {
       expect(sources[0]).toMatchObject({ service: "storage", severity: null });
       expect(sources[0]?.filters).not.toContain("level");
       expect(setup.http.requests).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect("renders source summaries and full selected-service details in text", () =>
     Effect.gen(function* () {
@@ -576,7 +576,7 @@ describe("unified logs", () => {
       expect(detail.out.stdoutText).toContain("Kinds:\n  app, requests, builds");
       expect(detail.out.stdoutText).toContain("worker_api_logs");
       expect(detail.out.stdoutText.split("\n").every((line) => line.length <= 80)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads stdin only for --file - and preserves unrelated piped input", () =>
@@ -608,7 +608,7 @@ describe("unified logs", () => {
       expect(setup.http.requests[1]?.urlParams.sql).toContain("select event_message");
       yield* logs(tailFlags()).pipe(Effect.provide(Layer.merge(setup.layer, failOnRead)));
       expect(setup.http.requests[2]?.urlParams.sql).toContain("postgres_logs");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect("does not read an open stdin pipe for ordinary logs", () =>
     Effect.gen(function* () {
@@ -632,7 +632,7 @@ describe("unified logs", () => {
         setup.http.requests.find((request) => request.url.endsWith("/analytics/endpoints/logs"))
           ?.urlParams.sql,
       ).toContain("postgres_logs");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -651,7 +651,7 @@ describe("unified logs", () => {
         message: expect.stringContaining(message),
       });
       expect(setup.http.requests).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.effect.each([401, 402, 403, 404, 429, 500])(
     "surfaces hosted query HTTP %s as a typed API failure",
@@ -665,7 +665,7 @@ describe("unified logs", () => {
           expect(error.message).toMatch(/login|usage|permission/i);
         expect(setup.http.requests).toHaveLength(1);
         expect(setup.telemetry.flushed).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves transport failure classification without an invented HTTP status", () =>
@@ -683,7 +683,7 @@ describe("unified logs", () => {
         error_category: "network",
       });
       expect(setup.http.requests).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("classifies an unreadable successful response without inventing an HTTP failure", () =>
@@ -700,7 +700,7 @@ describe("unified logs", () => {
         error_category: "api_status",
         fingerprint_suffix: "api_response",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails typed for an out-of-range log timestamp", () =>
@@ -717,7 +717,7 @@ describe("unified logs", () => {
         reason: "response",
         message: "The logs API returned an unreadable log row.",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("finishes a structured read without automatic polling", () =>
@@ -740,6 +740,6 @@ describe("unified logs", () => {
           data: expect.objectContaining({ id: "seed" }),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

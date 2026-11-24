@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { parseJsonc } from "@supabase/config/internal";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
@@ -43,7 +43,7 @@ const readTextFile = (...segments: Array<string>) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* fs.readFileString(path.join(...segments));
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 function setup(
   cwd: string,
@@ -64,7 +64,7 @@ function setup(
   return {
     out,
     layer: Layer.mergeAll(
-      BunServices.layer,
+      NodeServices.layer,
       out.layer,
       mockRuntimeInfo({ cwd, platform: opts.platform }),
       mockTty({
@@ -157,7 +157,7 @@ describe("init", () => {
       const path = yield* Path.Path;
       expect(yield* fs.exists(path.join(tempDir, "supabase", "config.toml"))).toBe(false);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect.each([
@@ -250,7 +250,7 @@ describe("init", () => {
       for (const file of existing) {
         expect(yield* fs.readFileString(path.join(tempDir, "supabase", file))).toBe("{}\n");
       }
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("--force writes config.jsonc and removes config.json and config.toml", () => {
@@ -277,7 +277,7 @@ describe("init", () => {
       expect(yield* fs.exists(path.join(tempDir, "supabase", "config.json"))).toBe(false);
       expect(yield* fs.exists(path.join(tempDir, "supabase", "config.toml"))).toBe(false);
       expect(yield* readTextFile(tempDir, "supabase", "config.jsonc")).toContain("major_version");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect(
@@ -307,7 +307,7 @@ describe("init", () => {
           db: { major_version: 17 },
         });
         expect(yield* fs.readFileString(targetPath)).toBe("// shared\n{}\n");
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -337,7 +337,7 @@ describe("init", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       expect(yield* fs.readFileString(path.join(supabaseDir, "config.json"))).toBe("{}\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("renders the Windows form of the already-exists error on win32", () => {
@@ -518,7 +518,7 @@ describe("init", () => {
           "editor.defaultFormatter": "denoland.vscode-deno",
         },
       });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect.each([
@@ -549,7 +549,7 @@ describe("init", () => {
         expect(detail.startsWith(`Could not parse JSON in ${settingsPath}: `)).toBe(true);
         expect(detail.length).toBeGreaterThan(`Could not parse JSON in ${settingsPath}: `.length);
         expect(yield* readTextFile(settingsPath)).toBe(contents);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -569,7 +569,7 @@ describe("init", () => {
         yield* fs.makeDirectory(path.dirname(settingsPath), { recursive: true });
         yield* fs.writeFileString(settingsPath, contents);
         return settingsPath;
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
 
     it.effect("trusts the schema domain in an existing settings.json and keeps its content", () => {
       const tempDir = tempRoot.current;
@@ -604,7 +604,7 @@ describe("init", () => {
 
         expect(yield* fs.exists(path.join(tempDir, ".vscode"))).toBe(false);
         expect(out.stdoutText).not.toContain(".vscode/settings.json");
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
 
     it.effect("warns and leaves an unparseable settings.json untouched while init succeeds", () => {

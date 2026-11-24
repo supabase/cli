@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -253,7 +253,7 @@ describe("project env loader", () => {
 
         expect(loaded.values).toEqual(fixture.expected);
         expect(Object.keys(loaded.files).sort()).toEqual(Object.keys(fixture.expected).sort());
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell(fixture.shell)))),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell(fixture.shell)))),
     );
   }
 
@@ -269,7 +269,7 @@ describe("project env loader", () => {
         A: path.join(workdir.current, "supabase", ".env.local"),
         B: path.join(workdir.current, ".env"),
       });
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   it.effect("lets a lookup-only shell variable shadow a file key", () =>
@@ -282,7 +282,7 @@ describe("project env loader", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           ConfigProvider.layer(
             ConfigProvider.make((path) =>
               Effect.succeed(
@@ -302,7 +302,7 @@ describe("project env loader", () => {
       yield* fs.makeDirectory(path.join(workdir.current, "supabase", ".env"), { recursive: true });
       const unreadable = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
       expect(unreadable.message).toBe("failed to read environment file: supabase/.env");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   it.effect("skips a symlink loop like a missing file", () =>
@@ -317,7 +317,7 @@ describe("project env loader", () => {
       const loaded = yield* loadCliProjectEnvFiles(workdir.current);
 
       expect(loaded.values).toEqual({ C: "local" });
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   it.effect("skips a supabase path that is a regular file", () =>
@@ -328,7 +328,7 @@ describe("project env loader", () => {
       const loaded = yield* loadCliProjectEnvFiles(workdir.current);
 
       expect(loaded.values).toEqual({ A: "root" });
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   it.effect("still fails when a dotenv path is a directory", () =>
@@ -338,7 +338,7 @@ describe("project env loader", () => {
       const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
 
       expect(failure.message).toBe("failed to read environment file: .env");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   it.effect("parses a file that starts with a byte-order mark", () =>
@@ -348,7 +348,7 @@ describe("project env loader", () => {
       const loaded = yield* loadCliProjectEnvFiles(workdir.current);
 
       expect(loaded.values).toEqual({ A: "1", B: "2" });
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
   );
 
   for (const file of ["supabase/.env.local", ".env.local"]) {
@@ -359,7 +359,7 @@ describe("project env loader", () => {
         const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
 
         expect(failure.message).toBe(`failed to parse environment file: ${file}`);
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, withShell({})))),
     );
   }
 });

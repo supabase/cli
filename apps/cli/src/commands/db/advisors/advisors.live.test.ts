@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { randomUUID } from "node:crypto";
 
 import { Cause, Effect, Exit, FileSystem, Option, Predicate, Schema } from "effect";
@@ -175,6 +175,6 @@ test("reports tables in a configured non-public exposed schema", ({
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],
       };
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
     { signal },
   ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/cli";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
@@ -44,8 +44,8 @@ const setup = () =>
       analytics,
       output,
       layer: Layer.mergeAll(
-        BunServices.layer,
-        legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+        NodeServices.layer,
+        legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
         CliOutput.layer(textCliOutputFormatter()),
         output.layer,
         analytics.layer,
@@ -89,7 +89,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommandRunId]).toEqual(expect.any(String));
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     );
   });
 
@@ -118,7 +118,7 @@ describe("stack command telemetry", () => {
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     );
   });
 
@@ -138,7 +138,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack destroy");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     );
   });
 
@@ -157,7 +157,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("logs");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     );
   });
 
@@ -177,7 +177,7 @@ describe("stack command telemetry", () => {
           expect(event?.properties[PropCommand]).toBe("stack restart");
         }).pipe(Effect.provide(fixture.layer));
       }),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     );
   });
 });

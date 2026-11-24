@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Data, Effect, Exit, FileSystem, Option, Path, PlatformError } from "effect";
 
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -50,7 +50,7 @@ describe("readMetadataFile", () => {
       yield* fs.writeFileString(path, '<?xml version="1.0"?><md/>');
       const out = yield* readMetadata(path);
       expect(out).toBe('<?xml version="1.0"?><md/>');
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with TestOpenError on missing file", () =>
@@ -62,7 +62,7 @@ describe("readMetadataFile", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("TestOpenError");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves a metadata file permission failure", () => {
@@ -101,7 +101,7 @@ describe("readMetadataFile", () => {
         expect(dump).toContain("TestNonUtf8Error");
         expect(dump).toContain("is not UTF-8 encoded");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -114,7 +114,7 @@ describe("readAttributeMappingFile", () => {
       yield* fs.writeFileString(path, '{ "keys": { "a": { "name": "xyz", "default": 3 } } }');
       const parsed = yield* readAttrMapping(path);
       expect(parsed).toMatchObject({ keys: { a: { default: 3 } } });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with TestOpenError on malformed JSON", () =>
@@ -125,7 +125,7 @@ describe("readAttributeMappingFile", () => {
       yield* fs.writeFileString(path, "{not json}");
       const exit = yield* Effect.exit(readAttrMapping(path));
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with TestOpenError on missing file", () =>
@@ -139,7 +139,7 @@ describe("readAttributeMappingFile", () => {
         expect(dump).toContain("TestOpenError");
         expect(dump).toContain("failed to open attribute mapping");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves an attribute mapping permission failure", () => {

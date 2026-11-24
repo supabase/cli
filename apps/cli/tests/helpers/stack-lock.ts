@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import { readLock, writeLock, type Lock } from "@supabase/stack/effect";
 import { seedSavedStack, type SeedSavedStackOptions } from "@supabase/stack/testing";
@@ -67,4 +67,4 @@ export const seedProjectStack = (
       stateRoot: path.join(supabaseHome, "stacks"),
     });
     return stackId;
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer)), Effect.orDie);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.orDie);

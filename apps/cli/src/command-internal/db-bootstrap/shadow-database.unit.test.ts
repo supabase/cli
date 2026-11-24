@@ -1,6 +1,6 @@
 import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
@@ -381,7 +381,7 @@ describe("setupShadowConn", () => {
       expect(calls.some((c) => c.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(BunServices.layer, mockOutput().layer, mockDockerRun(), mockRuntimeInfo()),
+        Layer.mergeAll(NodeServices.layer, mockOutput().layer, mockDockerRun(), mockRuntimeInfo()),
       ),
     );
   });
@@ -442,7 +442,7 @@ function migrateNextShadow(webhooksEnabled: boolean) {
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
+        NodeServices.layer,
         mockOutput().layer,
         mockDockerRun(),
         mockRuntimeInfo(),
@@ -497,7 +497,7 @@ describe("buildShadowSetupDatabaseInput", () => {
         expect(built.images.realtime).toBe("public.ecr.aws/supabase/realtime:v2.34.7");
         expect(built.apiAutoExposeNewTables).toEqual(Option.some(true));
         expect(built.vault).toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 });
@@ -533,7 +533,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             mockOutput().layer,
             mockDockerRun(),
             mockRuntimeInfo(),
@@ -580,7 +580,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             mockOutput().layer,
             mockDockerRun(),
             mockRuntimeInfo(),
@@ -660,7 +660,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             mockOutput().layer,
             mockDockerRun(),
             mockRuntimeInfo(),
@@ -706,7 +706,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           mockOutput().layer,
           mockDockerRun(),
           mockRuntimeInfo(),
@@ -761,7 +761,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           mockOutput().layer,
           mockDockerRun(),
           mockRuntimeInfo(),
@@ -817,7 +817,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             mockOutput().layer,
             mockDockerRun(),
             mockRuntimeInfo(),

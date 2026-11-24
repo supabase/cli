@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Console, Effect, Path } from "effect";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -57,6 +57,6 @@ const main = Effect.gen(function* () {
 await Effect.runPromise(
   main.pipe(
     Effect.catch((error) => Effect.die(error.cause)),
-    Effect.provide(BunPath.layer),
+    Effect.provide(NodePath.layer),
   ),
 );

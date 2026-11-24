@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -24,7 +24,7 @@ describe("supabase sso", () => {
           `https://${TEST_PROJECT_REF}.supabase.co/auth/v1/sso/saml/metadata`,
         );
         expect(stdout).toContain(`https://${TEST_PROJECT_REF}.supabase.co`);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -43,7 +43,7 @@ describe("supabase sso", () => {
         expect(stdout).toContain(
           `https://${TEST_PROJECT_REF}.supabase.co/auth/v1/sso/saml/metadata`,
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -59,7 +59,7 @@ describe("supabase sso", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -75,7 +75,7 @@ describe("supabase sso", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -91,7 +91,7 @@ describe("supabase sso", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(`identity provider ID "not-a-uuid" is not a UUID`);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -114,7 +114,7 @@ describe("supabase sso", () => {
         expect(stderr).toContain(`required flag(s) "type" not set`);
         expect(stderr).not.toContain("USAGE");
         expect(stderr.trim().split("\n")).toHaveLength(2);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 
@@ -138,7 +138,7 @@ describe("supabase sso", () => {
             .trim()
             .endsWith("Try rerunning the command with --debug to troubleshoot the error."),
         ).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: E2E_TIMEOUT_MS },
   );
 });

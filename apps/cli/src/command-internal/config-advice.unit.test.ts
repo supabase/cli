@@ -1,5 +1,5 @@
 import { Path } from "effect";
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import {
@@ -31,7 +31,7 @@ describe("config advice", () => {
       });
       expect(configFileRefFromPath(path, "/work", undefined)).toEqual(DEFAULT_CONFIG_FILE);
       expect(configFileName("supabase/config.json")).toBe("config.json");
-    }).pipe(Effect.provide(BunPath.layer), Effect.runSync));
+    }).pipe(Effect.provide(NodePath.layer), Effect.runSync));
 
   it("names the config path with forward slashes on Windows", () =>
     Effect.gen(function* () {
@@ -40,7 +40,7 @@ describe("config advice", () => {
         format: "toml",
         path: "supabase/config.toml",
       });
-    }).pipe(Effect.provide(BunPath.layerWin32), Effect.runSync));
+    }).pipe(Effect.provide(NodePath.layerWin32), Effect.runSync));
 
   it("keeps TOML guidance text and gives JSON projects a JSON snippet", () => {
     expect(enableLocalWebhooksSuggestion()).toBe(

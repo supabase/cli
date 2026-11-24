@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem, Path, Predicate } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
@@ -745,7 +745,7 @@ describe("storage rm", () => {
         }
         expect(requests.some((r) => r.method === "DELETE")).toBe(false);
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -791,7 +791,7 @@ describe("storage rm", () => {
           expect(causeText).toContain("failed to change workdir: chdir");
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a { deleted, buckets_deleted } result in stream-json mode", () => {

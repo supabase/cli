@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
@@ -82,7 +82,7 @@ function setup(
         }),
         Layer.succeed(DebugFlag, false),
         Layer.succeed(NetworkIdFlag, Option.none<string>()),
-        BunServices.layer,
+        NodeServices.layer,
         cliConfigValuesTestLayer,
       ),
     ),
@@ -179,7 +179,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         }).pipe(Effect.provide(layer));
         expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
         expect(docker.lastOpts?.image).not.toContain("v-from-config");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -225,7 +225,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         yield* runScript().pipe(Effect.provide(Layer.merge(layer, projectStateModeLayer("stack"))));
 
         expect(docker.lastOpts?.image).toContain("edge-runtime:v1.99.0");
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -272,7 +272,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
         expect(docker.lastOpts?.image).toBe(lockedImage);
       }).pipe(
         Effect.scoped,
-        Effect.provide([BunServices.layer, BunCrypto.layer]),
+        Effect.provide([NodeServices.layer, NodeCrypto.layer]),
         Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
       ),
   );
