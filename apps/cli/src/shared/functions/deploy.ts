@@ -16,6 +16,7 @@ import { cliConfigFormatForPath, parseJsonc } from "@supabase/config/internal";
 import {
   Cause,
   Config,
+  Context,
   Duration,
   Effect,
   Fiber,
@@ -86,6 +87,24 @@ const importPathPattern =
 export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
   return platform !== "win32";
 }
+
+/** How a command tree's mode deploys functions when it uploads them only through the API. */
+export interface FunctionsApiDeployMode {
+  /** Why `--use-docker` and `--legacy-bundle` are refused. */
+  readonly refusal: string;
+  /** The URL that serves `slug` on `projectRef`, printed after the deploy; none when unknown. */
+  readonly functionUrl: (projectRef: string, slug: string) => Effect.Effect<Option.Option<string>>;
+}
+
+/**
+ * Set by a mode whose projects take functions only through the API upload (the Spark dev
+ * instance): the API path is the default and the Docker bundlers are refused. Unset in the
+ * mainline tree.
+ */
+export const FunctionsApiDeployMode = Context.Reference<Option.Option<FunctionsApiDeployMode>>(
+  "supabase/cli/FunctionsApiDeployMode",
+  { defaultValue: () => Option.none() },
+);
 
 interface FunctionsDeployFlags {
   readonly functionNames: ReadonlyArray<string>;
@@ -2497,14 +2516,22 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     });
   }
 
+  const apiOnly = yield* FunctionsApiDeployMode;
+  if (
+    Option.isSome(apiOnly) &&
+    ((explicitUseDocker && flags.useDocker) || (explicitLegacyBundle && flags.legacyBundle))
+  ) {
+    return yield* new FunctionDeployError({ message: apiOnly.value.refusal });
+  }
+  const useApi = flags.useApi || Option.isSome(apiOnly);
   // `--use-api=false` alone must not force the API path — it should fall through to whatever
   // `--use-docker`/`--legacy-bundle` already resolved to.
-  const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
+  const useLocalBundler = !useApi && (flags.useDocker || flags.legacyBundle);
   const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
   const jobs = configuredJobs === 0 ? 1 : configuredJobs;
   // Keyed on the resolved `--use-api` value alone, not on whether local bundling
   // (Docker/legacy-bundle) is in play.
-  if (!flags.useApi && jobs > 1) {
+  if (!useApi && jobs > 1) {
     return yield* new FunctionDeployError({
       message: "--jobs must be used together with --use-api",
     });
@@ -2650,6 +2677,24 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     );
     yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
   }
+  // Only what this run deployed: disabled functions are skipped, and nothing is deployed when the
+  // run reported nothing to deploy.
+  const deployedSlugs = Option.isNone(nothingToDeployMessage)
+    ? uniqueSlugs.filter((slug) => configs.some((config) => config.slug === slug && config.enabled))
+    : [];
+  const functionUrls = Option.isSome(apiOnly)
+    ? yield* Effect.forEach(deployedSlugs, (slug) =>
+        Effect.map(
+          apiOnly.value.functionUrl(projectRef, slug),
+          Option.map((url) => [slug, url] as const),
+        ),
+      ).pipe(Effect.map((urls) => Object.fromEntries(urls.flatMap(Option.toArray))))
+    : {};
+  if (output.format === "text" && Option.isNone(nothingToDeployMessage)) {
+    for (const [slug, url] of Object.entries(functionUrls)) {
+      yield* output.raw(`Function ${slug}: ${url}\n`);
+    }
+  }
 
   if (flags.prune) {
     yield* pruneFunctions(projectRef, toPrune, dependencies.api);
@@ -2662,6 +2707,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
         project_ref: projectRef,
         functions: uniqueSlugs,
         dashboard_url: dashboardUrl,
+        ...(Object.keys(functionUrls).length === 0 ? {} : { function_urls: functionUrls }),
       },
     );
   }

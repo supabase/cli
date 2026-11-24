@@ -1,4 +1,4 @@
-import { Effect, Option, Redacted, Result } from "effect";
+import { Context, Effect, Option, Redacted, Result } from "effect";
 import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 
 import { parseRemoteValue, type RemoteValue, type RemoteValueRejection } from "./remote-value.ts";
@@ -17,6 +17,16 @@ interface SelectableRemoteFlagVariant {
   readonly subject: TargetSubject;
   readonly dbUrl: boolean;
 }
+
+/**
+ * What leaving `--remote` out does, for the flag's error messages, when the mounted command tree
+ * gives every `--remote` one default; unset, each flag names its own (the local stack, or the
+ * linked project for a hosted command).
+ */
+export const RemoteFlagDefault = Context.Reference<string | undefined>(
+  "supabase/cli/RemoteFlagDefault",
+  { defaultValue: () => undefined },
+);
 
 interface HostedRemoteFlagVariant {
   readonly kind: "hosted";
@@ -51,9 +61,14 @@ const remoteDescription = (variant: RemoteFlagVariant): string => {
     : `Target a remote ${variant.subject}: the linked project, or \`--remote=${hint}\`.`;
 };
 
-const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueRejection): string => {
+const rejectionMessage = (
+  variant: RemoteFlagVariant,
+  rejection: RemoteValueRejection,
+  treeDefault: string | undefined,
+): string => {
   const fallback =
-    variant.kind === "hosted" ? "use the linked project" : `target the local ${variant.subject}`;
+    treeDefault ??
+    (variant.kind === "hosted" ? "use the linked project" : `target the local ${variant.subject}`);
   switch (rejection._tag) {
     case "Empty":
       return `--remote= has an empty value. Pass --remote for the linked project or --remote=${valueHintOf(variant)}; leave it out to ${fallback}.`;
@@ -86,7 +101,12 @@ const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<Remote
     [REMOTE_PRIMITIVE]: true,
     parse: (raw: string) =>
       Result.match(parseRemoteValue(raw), {
-        onFailure: (rejection) => Effect.fail(rejectionMessage(variant, rejection)),
+        onFailure: (rejection) =>
+          Effect.gen(function* () {
+            return yield* Effect.fail(
+              rejectionMessage(variant, rejection, yield* RemoteFlagDefault),
+            );
+          }),
         onSuccess: (value) =>
           value._tag === "DbUrl" && !takesDbUrl(variant)
             ? Effect.fail(`--remote takes ${acceptedValuesOf(variant)}.`)

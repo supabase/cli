@@ -312,6 +312,24 @@ describe("parseTargetSelector", () => {
       });
     });
 
+    it("leaves --local out of the conflict for a command that declares no --local", () => {
+      const result = parseTargetSelector(
+        {
+          remote: Option.some({ _tag: "Linked" }),
+          local: false,
+          linked: true,
+          projectRef: Option.none(),
+        },
+        { localFlag: false },
+      );
+      expect(result).toMatchObject({
+        failure: {
+          _tag: "TargetSelectorConflictError",
+          message: "Only one of --remote and --linked can be set; got --remote and --linked.",
+        },
+      });
+    });
+
     it("suggests the parent-scoped hint when the command passes one", () => {
       expect(
         failure({ ...remote({ _tag: "Linked" }), linked: true }, { valueHint: "<ref>" }),

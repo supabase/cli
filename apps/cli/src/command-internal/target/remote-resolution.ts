@@ -34,7 +34,11 @@ import type { LinkedTarget } from "./resolve-target.ts";
 import { deprecationMessages, remoteFlagText, shellQuote } from "./target-deprecation.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
 import { describeLinkedTarget, renderBranchTarget } from "./target-identity.ts";
-import { parseTargetSelector, type TargetDeprecation } from "./target-selector.ts";
+import {
+  parseTargetSelector,
+  type TargetDeprecation,
+  type TargetSelectorOptions,
+} from "./target-selector.ts";
 import { TargetRemoteAmbiguousError } from "./target.errors.ts";
 
 /** A `--remote` value that names a hosted project, as opposed to a database URL. */
@@ -63,7 +67,7 @@ const warnTargetDeprecations = Effect.fnUntraced(function* (
  */
 export const selectTarget = Effect.fnUntraced(function* (
   flags: TargetFlagValues,
-  options: { readonly valueHint?: string } = {},
+  options: Pick<TargetSelectorOptions, "valueHint" | "localFlag"> = {},
 ) {
   const runtime = yield* Effect.serviceOption(CommandRuntime);
   const commandName = Option.isSome(runtime)

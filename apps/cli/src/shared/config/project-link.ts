@@ -123,14 +123,15 @@ export const readProjectLink = Effect.fn("ProjectLink.read")(function* (workdir:
 });
 
 /**
- * Appends the entries of the local-only files under `supabase/` to `supabase/.gitignore`. A
- * symlinked `.gitignore` is user-managed and stays untouched, so a checkout cannot aim the write
- * at a file outside the project.
+ * Appends the entries of the local-only files under `supabase/` (the link's, unless `lines` names
+ * others) to `supabase/.gitignore`. A symlinked `.gitignore` is user-managed and stays untouched,
+ * so a checkout cannot aim the write at a file outside the project.
  */
 export const ensureGitignore = Effect.fn("ProjectLink.ensureGitignore")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
+  lines: ReadonlyArray<string> = GITIGNORE_LINES,
 ) {
   const gitignorePath = path.join(workdir, "supabase", ".gitignore");
   if (Option.isSome(yield* fs.readLink(gitignorePath).pipe(Effect.option))) return;
@@ -142,7 +143,7 @@ export const ensureGitignore = Effect.fn("ProjectLink.ensureGitignore")(function
       ),
     );
   const present = new Set(existing.split("\n").map((line) => line.trim()));
-  const missing = GITIGNORE_LINES.filter((line) => !present.has(line));
+  const missing = lines.filter((line) => !present.has(line));
   if (missing.length === 0) return;
   const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
   yield* publish(fs, path, {
