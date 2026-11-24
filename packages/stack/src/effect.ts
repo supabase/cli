@@ -45,7 +45,11 @@ import { failureKind, isStackFailureKind, type StackFailureKind } from "./Failur
 import type { ArtifactSelection } from "./Artifacts.ts";
 import { collectDataConflicts } from "./internal/data-conflicts.ts";
 import { initializedDatabaseIds } from "./internal/database-reuse.ts";
-import { failureMessage, rpcClientFailureMessage } from "./internal/failure-message.ts";
+import {
+  failureMessage,
+  lostOwnerDetail,
+  rpcClientFailureMessage,
+} from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
@@ -172,14 +176,19 @@ const knownOutcomeKind = <O extends { readonly kind?: string }>({ kind, ...outco
   isStackFailureKind(kind) ? { ...outcome, kind } : outcome;
 
 /** An explicit `kind` wins; otherwise the cause's typed chain is classified. */
-const failure = (operation: string, cause: unknown, kind?: StackFailureKind): StackError => {
+const failure = (
+  operation: string,
+  cause: unknown,
+  kind?: StackFailureKind,
+  ownerDetail?: string,
+): StackError => {
   if (Schema.is(StackError)(cause)) return cause;
   const conflict = findConflict(cause);
   const classified = kind ?? failureKind(cause);
   return new StackError({
     operation,
     message: Schema.is(RpcClientError)(cause)
-      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}`
+      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}${ownerDetail === undefined ? "" : `; ${ownerDetail}`}`
       : failureMessage(cause),
     ...(ownerAbsent(cause) || stackGone(cause)
       ? { reason: "owner-unavailable" as const }
@@ -514,6 +523,25 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
     ownerGone(cause) ? invalidate(connection) : Effect.void;
   if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
+  /** Reads the lease and owner log after a call lost its connection to the owner at `pid`. */
+  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (pid: number) {
+    const holder = yield* state.readHolder(saved.id).pipe(Effect.orElseSucceed(() => undefined));
+    const holderPid =
+      holder?.role === "owner" &&
+      (yield* state.leased(saved.id).pipe(Effect.orElseSucceed(() => false)))
+        ? holder.pid
+        : undefined;
+    const log = state.ownerLog(saved.id);
+    const logTail = yield* fs.readFileString(log).pipe(
+      Effect.map((text) => text.slice(-4096).trimEnd().split("\n").slice(-20).join("\n")),
+      Effect.orElseSucceed(() => ""),
+    );
+    yield* Effect.annotateCurrentSpan({
+      "stack.owner.pid": pid,
+      "stack.owner.leased": holderPid === pid,
+    });
+    return lostOwnerDetail({ pid, holderPid, log, logTail });
+  });
   const invoke = <A, E, R>(run: (rpc: Client) => Effect.Effect<A, E, R>, reach: Reach) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -521,11 +549,21 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return yield* run(current.rpc).pipe(Effect.tapError(dropIfGone(current)));
       }),
     ).pipe(Effect.retry({ times: 1, while: ownerGone }), Effect.provideContext(services));
+  /** Fails with the stack error, describing the owner when its connection was lost mid-call. */
+  const callFailure = (operation: string, cause: unknown) =>
+    Effect.gen(function* () {
+      const current = yield* Ref.get(cached);
+      const detail =
+        Schema.is(RpcClientError)(cause) && !ownerGone(cause) && current !== undefined
+          ? yield* observeLostOwner(current.access.endpoint.pid)
+          : undefined;
+      return yield* failure(operation, cause, undefined, detail);
+    });
   const call = <A, E, R>(
     operation: string,
     run: (rpc: Client) => Effect.Effect<A, E, R>,
     reach: Reach = "launch",
-  ) => invoke(run, reach).pipe(Effect.mapError((cause) => failure(operation, cause)));
+  ) => invoke(run, reach).pipe(Effect.catch((cause) => callFailure(operation, cause)));
   /** Without a live owner, or with a destroyed stack, nothing runs, so the request is already satisfied. */
   const whileRunning = <A, E, R>(
     operation: string,

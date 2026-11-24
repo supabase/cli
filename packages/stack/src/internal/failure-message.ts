@@ -43,3 +43,24 @@ export const rpcClientFailureMessage = (error: RpcClientError): string => {
   }
   return parts.join(": ");
 };
+
+/** What a client observes about a stack owner after a call to it lost its connection. */
+export interface LostOwnerObservation {
+  /** The pid the call was sent to. */
+  readonly pid: number;
+  /** The pid of the owner that holds the lease now, if any. */
+  readonly holderPid: number | undefined;
+  readonly log: string;
+  readonly logTail: string;
+}
+
+/** Says whether the called owner still runs and adds its log tail, so a crash reads as one. */
+export const lostOwnerDetail = ({ pid, holderPid, log, logTail }: LostOwnerObservation): string => {
+  const liveness =
+    holderPid === pid
+      ? `owner ${pid} still holds the stack lease`
+      : holderPid === undefined
+        ? `owner ${pid} no longer holds the stack lease`
+        : `owner ${pid} no longer holds the stack lease; owner ${holderPid} holds it now`;
+  return `${liveness} (owner log: ${log})${logTail.length === 0 ? "" : `\n${logTail}`}`;
+};

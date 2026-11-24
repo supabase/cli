@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { HttpClientError, HttpClientRequest } from "effect/http";
 import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
-import { rpcClientFailureMessage } from "./failure-message.ts";
+import { lostOwnerDetail, rpcClientFailureMessage } from "./failure-message.ts";
 
 describe("rpcClientFailureMessage", () => {
   it("keeps the transport kind, nested messages and socket code of a closed owner HTTP stream", () => {
@@ -27,5 +27,26 @@ describe("rpcClientFailureMessage", () => {
     });
 
     expect(rpcClientFailureMessage(error)).toBe("RpcClientDefect: closed");
+  });
+});
+
+describe("lostOwnerDetail", () => {
+  it("reports an owner that lost its lease with the tail of its log", () => {
+    const detail = lostOwnerDetail({
+      pid: 4242,
+      holderPid: undefined,
+      log: "/state/stack/owner.log",
+      logTail: "panic(main thread): Segmentation fault",
+    });
+
+    expect(detail).toBe(
+      "owner 4242 no longer holds the stack lease (owner log: /state/stack/owner.log)\npanic(main thread): Segmentation fault",
+    );
+  });
+
+  it("reports an owner that still holds the lease and has an empty log", () => {
+    expect(
+      lostOwnerDetail({ pid: 4242, holderPid: 4242, log: "/state/stack/owner.log", logTail: "" }),
+    ).toBe("owner 4242 still holds the stack lease (owner log: /state/stack/owner.log)");
   });
 });
