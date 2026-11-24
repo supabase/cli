@@ -19,16 +19,20 @@ export const sparkDevStop = Effect.fn("spark.stop")(function* (flags: {
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
   yield* Effect.gen(function* () {
-    const state = yield* requireDevInstanceState();
-    if (!flags.delete)
+    if (!flags.delete) {
+      const state = yield* requireDevInstanceState();
       return yield* output.raw(
         `The dev instance ${state.name} (${state.ref}) keeps running. Delete it with \`supabase stop --delete\`.\n`,
       );
-    yield* withDevInstanceLock(
+    }
+    // Read under the lock, so a `start` that replaced the project meanwhile is seen.
+    const state = yield* withDevInstanceLock(
       Effect.gen(function* () {
-        const existed = yield* withPlatformApi(deleteSparkProject(state.ref));
+        const recorded = yield* requireDevInstanceState();
+        const existed = yield* withPlatformApi(deleteSparkProject(recorded.ref));
         yield* Effect.annotateCurrentSpan({ "spark.dev_instance.existed": existed });
         yield* removeDevInstanceState();
+        return recorded;
       }),
     );
     yield* output.raw(`Deleted the dev instance ${state.name} (${state.ref}).\n`);

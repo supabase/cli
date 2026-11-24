@@ -77,16 +77,17 @@ const runSpark = (executable: string, args: ReadonlyArray<string>) =>
 
 /**
  * The dev instance's reset: Spark empties it, then the migrations and seed files run again. The
- * state file records the seed as not run until it succeeds, so a failed reset seeds on `start`.
+ * state file records the seed as not run once the database is empty, until the seed succeeds, so
+ * a failed reset seeds on `start`; a reset that fails before emptying the database leaves it as it was.
  */
 const resetDevInstance = withDevInstanceLock(
   Effect.gen(function* () {
     const state = yield* requireReadyDevInstanceState();
-    yield* writeDevInstanceState({ ...state, seeded: false });
     yield* withDevInstanceTarget(
       Effect.gen(function* () {
         const spark = yield* SparkTarget;
         yield* spark.resetDatabase.pipe(Effect.withSpan("spark.db.reset.remote"));
+        yield* writeDevInstanceState({ ...state, seeded: false });
         yield* applyPendingMigrations;
         yield* runSeedFiles();
       }),

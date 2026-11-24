@@ -2673,8 +2673,13 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     );
     yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
   }
+  // Only what this run deployed: disabled functions are skipped, and nothing is deployed when the
+  // run reported nothing to deploy.
+  const deployedSlugs = Option.isNone(nothingToDeployMessage)
+    ? uniqueSlugs.filter((slug) => configs.some((config) => config.slug === slug && config.enabled))
+    : [];
   const functionUrls = Option.isSome(apiOnly)
-    ? yield* Effect.forEach(uniqueSlugs, (slug) =>
+    ? yield* Effect.forEach(deployedSlugs, (slug) =>
         Effect.map(
           apiOnly.value.functionUrl(projectRef, slug),
           Option.map((url) => [slug, url] as const),

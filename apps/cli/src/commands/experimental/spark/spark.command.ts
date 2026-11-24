@@ -65,10 +65,15 @@ export const sparkDevInstanceCommands = [
   sparkGenCommand.pipe(Command.provide(devInstanceMode)),
 ] as const;
 
+interface DevInstanceHelp {
+  readonly description: string;
+  readonly examples?: ReadonlyArray<{ readonly command: string; readonly description: string }>;
+}
+
 /**
  * A mainline hosted command (`functions`, `secrets`) mounted in the dev-instance tree: with no
  * `--project-ref` or `--remote` it acts on the dev instance, and `functions deploy` uploads
- * through the API.
+ * through the API. `help` replaces the mainline description, which says "linked project".
  */
 export const withSparkDevInstanceProject = <
   const Name extends string,
@@ -78,4 +83,11 @@ export const withSparkDevInstanceProject = <
   R,
 >(
   command: Command.Command<Name, Input, ContextInput, E, R>,
-) => command.pipe(Command.provide((flags: Input) => devInstanceHostedLayer(flags)));
+  help: DevInstanceHelp,
+) =>
+  command.pipe(
+    Command.withDescription(help.description),
+    (described) =>
+      help.examples === undefined ? described : described.pipe(Command.withExamples(help.examples)),
+    Command.provide((flags: Input) => devInstanceHostedLayer(flags)),
+  );

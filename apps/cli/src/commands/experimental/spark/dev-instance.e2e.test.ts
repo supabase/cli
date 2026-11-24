@@ -105,7 +105,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   let profilePath = "";
   let failedStep: string | undefined;
   const running = new Map<string, RunningInstance>();
-  const faults: ManagementApiFaults = { apiKeysFailures: 0, nullApiUrl: false };
+  const faults: ManagementApiFaults = { apiKeysFailures: 0, nullApiUrl: false, resetFailures: 0 };
   const received: ManagementApiLog = { deploys: [], bulkUpdates: [] };
   let firstRef = "";
   let secondRef = "";
@@ -513,6 +513,24 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   );
 
   step(
+    "a rejected db reset leaves the data and the seeded marker as they were",
+    Effect.gen(function* () {
+      faults.resetFailures = 1;
+      const rejected = yield* runFails(["db", "reset"], projectDir).pipe(
+        Effect.ensuring(Effect.sync(() => (faults.resetFailures = 0))),
+      );
+      expect(rejected.log).toContain("rejected");
+      expect(rejected.log).not.toContain("Seeding data");
+      expect((yield* readState(projectDir)).seeded).toBe(true);
+      expect(
+        (yield* run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
+          .stdout,
+      ).toContain(SEEDED_TITLE);
+      expect((yield* run(["start"], projectDir)).log).not.toContain("Seeding data");
+    }),
+  );
+
+  step(
     "functions new, deploy through the API (one, then two in one bulk update), list and delete on the dev instance",
     Effect.gen(function* () {
       const report = yield* status(projectDir);
@@ -530,8 +548,28 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
       expect(received.bulkUpdates).toEqual([]);
 
       yield* run(["functions", "new", "bye"], projectDir);
-      yield* run(["functions", "deploy", "--yes"], projectDir);
+      yield* run(["functions", "new", "off"], projectDir);
+      const configPath = join(projectDir, "supabase", "config.toml");
+      const declared = yield* readText(configPath);
+      const disabled = declared.replace(
+        "[functions.off]\nenabled = true",
+        "[functions.off]\nenabled = false",
+      );
+      expect(disabled, "functions new declares the function enabled").not.toBe(declared);
+      yield* writeText(configPath, disabled);
+      const all = yield* run(["functions", "deploy", "--yes"], projectDir);
+      expect(all.log).toContain("Skipping disabled Function: off");
+      expect(all.stdout).toContain(`${report.api_url}/functions/v1/hello`);
+      expect(all.stdout).toContain(`${report.api_url}/functions/v1/bye`);
+      expect(all.stdout, "a disabled function was not deployed").not.toContain("/functions/v1/off");
+      const asJson = yield* run(
+        ["functions", "deploy", "--yes", "--output-format", "json"],
+        projectDir,
+      );
+      expect(asJson.stdout).toContain("function_urls");
+      expect(asJson.stdout).not.toContain("/functions/v1/off");
       expect(received.bulkUpdates.map((update) => update.slugs.toSorted())).toEqual([
+        ["bye", "hello"],
         ["bye", "hello"],
       ]);
       const listed = (yield* run(["functions", "list", "-o", "json"], projectDir)).stdout;
@@ -604,9 +642,37 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   );
 
   step(
+    "start creates no project when it cannot write its local state",
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const blockedDir = yield* makeProject("blocked-app", { bare: true });
+      const before = yield* projectRefs(projectDir);
+      // A directory where supabase/.gitignore belongs: the local write fails on every retry.
+      yield* fs.makeDirectory(join(blockedDir, "supabase", ".gitignore"), { recursive: true });
+      const blocked = yield* runFails(["start", "--org", "org-a"], blockedDir);
+      expect(blocked.log).not.toContain("Creating dev instance");
+      expect(yield* projectRefs(projectDir)).toEqual(before);
+      expect(yield* exists(stateFile(blockedDir))).toBe(false);
+    }),
+  );
+
+  step(
     "stop keeps the instance; stop --delete removes it and the state file",
     Effect.gen(function* () {
       expect((yield* run(["stop"], projectDir)).log).toContain("supabase stop --delete");
+      expect(yield* projectRefs(projectDir)).toContain(firstRef);
+      const heldLock = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* holdLock(
+            join(projectDir, "supabase", ".temp", "dev-instance.lock"),
+            "5 seconds",
+            "the e2e test",
+          );
+          return yield* runFails(["stop", "--delete"], projectDir);
+        }),
+      );
+      expect(heldLock.log).toContain("supabase/.temp/dev-instance.lock");
+      expect(yield* exists(stateFile(projectDir)), "the state file stays while locked").toBe(true);
       expect(yield* projectRefs(projectDir)).toContain(firstRef);
       expect((yield* run(["stop", "--delete"], projectDir)).log).toContain(
         "Deleted the dev instance",

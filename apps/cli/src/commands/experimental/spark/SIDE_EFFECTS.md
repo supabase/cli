@@ -40,7 +40,8 @@ stack is started or read.
   multipart, then `PUT /v1/projects/{ref}/functions` when two or more functions changed), on any
   target, so Docker is never used; an explicit `--use-docker` or `--legacy-bundle` fails before any
   call. After a deploy to the dev instance it prints `Function <slug>: <api_url>/functions/v1/<slug>`
-  on stdout for each function (with `--output-format json`, `function_urls: {<slug>: <url>}`).
+  on stdout for each function this run deployed, not the disabled ones (with `--output-format json`,
+  `function_urls: {<slug>: <url>}`).
 
 - The default target of `db diff|pull|push|query`, `migration fetch|list` and `gen types` is the
   dev instance recorded in `supabase/.temp/dev-instance.json`, reached like a linked project
@@ -75,8 +76,11 @@ stack is started or read.
 - `stop`: changes nothing and says how to delete the instance. `stop --delete`:
   `DELETE /v1/projects/{ref}` (a 404 counts as deleted), then removes the state file; it works on
   an instance `start` has not finished.
-- `db reset`: records the seed as not run, `POST /v1/projects/{ref}/database/reset` with `{}`,
-  then the pending migrations and the seed files as `start` runs them, and records the seed as run.
+- `db reset`: `POST /v1/projects/{ref}/database/reset` with `{}`; once that succeeds it records the
+  seed as not run (a rejected reset leaves the state file as it was), then runs the pending
+  migrations and the seed files as `start` runs them, and records the seed as run. A seed file
+  that fails names the file and says to run `supabase db reset`, since the files before it were
+  committed.
 
 ## Files Read
 
@@ -106,7 +110,9 @@ stack is started or read.
 management_api_url, api_url?, anon_key?, service_role_key?, seeded?}`. `api_url` and the keys are
   absent until `start` finishes; `seeded` is whether the seed files ran on the current database.
   Before the first write, `.temp` is appended to `supabase/.gitignore` when that file (created if
-  missing, left alone when it is a symlink) does not list it.
+  missing, left alone when it is a symlink) does not list it. `start` does this, and publishes and
+  removes a `dev-instance.json.probe` file there, before it creates a project, so a local write
+  error creates nothing remote.
 - `supabase/.temp/dev-instance.lock` (`start`, `stop --delete`, `db reset` in dev-instance mode).
 
 ## API Routes

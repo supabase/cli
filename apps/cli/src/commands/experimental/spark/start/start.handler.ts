@@ -15,6 +15,7 @@ import { applyPendingMigrations, runSeedFiles } from "../spark-apply.ts";
 import {
   type DevInstanceState,
   emitDevInstanceStatus,
+  ensureDevInstanceWritable,
   isDevInstanceReady,
   readDevInstanceState,
   type ReadyDevInstanceState,
@@ -143,16 +144,23 @@ const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option
   }
   const organization = yield* pickOrganization(org);
   const name = yield* devInstanceName(path.resolve(settings.workdir));
+  yield* ensureDevInstanceWritable();
   yield* output.raw(`Creating dev instance ${name} in organization ${organization}...\n`, "stderr");
-  const ref = yield* createSparkProject({ name, organizationSlug: organization });
-  const created: DevInstanceState = {
-    ref,
-    name,
-    organization_slug: organization,
-    management_api_url: settings.apiUrl,
-    seeded: false,
-  };
-  yield* writeDevInstanceState(created);
+  // Uninterruptible as a pair: an interrupt between the two would leave a project nothing records.
+  const created = yield* Effect.uninterruptible(
+    Effect.gen(function* () {
+      const ref = yield* createSparkProject({ name, organizationSlug: organization });
+      const state: DevInstanceState = {
+        ref,
+        name,
+        organization_slug: organization,
+        management_api_url: settings.apiUrl,
+        seeded: false,
+      };
+      yield* writeDevInstanceState(state);
+      return state;
+    }),
+  );
   return { state: yield* completeDevInstance(created), created: true };
 });
 

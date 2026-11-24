@@ -186,6 +186,34 @@ export const writeDevInstanceState = Effect.fn("SparkDevInstance.writeState")(fu
   );
 });
 
+/**
+ * Everything a later {@link writeDevInstanceState} needs locally: `supabase/.temp` exists and is
+ * ignored, and a file can be published there. `start` runs it before it creates a remote project,
+ * so a persistent local error cannot leak one project per retry.
+ */
+export const ensureDevInstanceWritable = Effect.fn("SparkDevInstance.ensureWritable")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const settings = yield* CommandSettings;
+  const file = yield* statePath();
+  yield* Effect.gen(function* () {
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    yield* ensureGitignore(fs, path, path.resolve(settings.workdir), [".temp"]);
+    const probe = `${file}.probe`;
+    yield* publish(fs, path, { target: probe, content: "" });
+    yield* fs.remove(probe, { force: true });
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SparkDevInstanceError({
+          reason: "state",
+          message: `cannot write ${file}: ${cause.message}`,
+          cause,
+        }),
+    ),
+  );
+});
+
 export const removeDevInstanceState = Effect.fn("SparkDevInstance.removeState")(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(yield* statePath(), { force: true });

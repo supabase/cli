@@ -11,7 +11,7 @@ import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { SparkBackendError, SparkMigrationRefusedError } from "./spark-project.ts";
+import { SparkApiError, SparkBackendError, SparkMigrationRefusedError } from "./spark-project.ts";
 import { attributeDryRunStatuses } from "./spark-schema-files.ts";
 import { localMigrations, projectPaths, reportRefusals } from "./spark.shared.ts";
 import { SparkTarget } from "./spark-target.ts";
@@ -147,7 +147,18 @@ export const runSeedFiles = Effect.fn("Spark.runSeedFiles")(function* () {
   for (const file of files) {
     yield* output.raw(`Seeding data from ${file}...\n`, "stderr");
     const sql = yield* fs.readFileString(resolveUnderWorkdir(path, workdir, file));
-    yield* spark.runQuery(sql, false);
+    yield* spark.runQuery(sql, false).pipe(
+      Effect.mapError((error) => {
+        const message = `Seeding ${file} failed: ${error.message}. Each seed file is committed on its own, so the files before it already ran, and the next run replays the seed from the first file and fails on their rows. Run \`supabase db reset\` to empty the database and replay the migrations and seed.`;
+        return error._tag === "SparkApiError"
+          ? new SparkApiError({
+              message,
+              ...(error.status === undefined ? {} : { status: error.status }),
+              cause: error,
+            })
+          : new SparkBackendError({ message, cause: error });
+      }),
+    );
   }
   yield* Effect.annotateCurrentSpan({ "spark.seed.files": files.length });
   return files;

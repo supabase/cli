@@ -86,6 +86,8 @@ export interface ManagementApiFaults {
   apiKeysFailures: number;
   /** `GET /v1/projects/{ref}` answers `api_url: null`. */
   nullApiUrl: boolean;
+  /** How many of the next `POST /v1/projects/{ref}/database/reset` calls answer 400, resetting nothing. */
+  resetFailures: number;
 }
 
 /** What the multi-project stand-in received, for a test to assert on. */
@@ -376,6 +378,10 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
       project !== undefined &&
       "instances" in options
     ) {
+      if (faults !== undefined && faults.resetFailures > 0) {
+        faults.resetFailures -= 1;
+        return json({ message: "the reset was rejected (injected)" }, 400);
+      }
       project.connection = yield* options.instances.reset(ref);
       return json({});
     }

@@ -20,7 +20,7 @@ import {
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { projectRefLayer, projectRefPicker } from "./project-ref.layer.ts";
 import { CommandSettings } from "./command-settings.service.ts";
-import { ProjectRefResolver } from "./project-ref.service.ts";
+import { DefaultProjectRef, ProjectRefResolver } from "./project-ref.service.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
 
@@ -235,5 +235,80 @@ describe("projectRefLayer reads the checkout's link", () => {
       });
       expect(stderr).toContain(`project alpha (${VALID_REF}) · branch feature-x (${BRANCH_REF})`);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("projectRefLayer with a mode default project", () => {
+  const workdir = useTempWorkdir("project-ref-default-");
+  const DEFAULT_REF = "defaultdefaultdefaul";
+  const ENV_REF = "envenvenvenvenvenven";
+  const FLAG_REF = "flagflagflagflagflag";
+  const LINK_REF = "linklinklinklinklink";
+
+  const resolveWith = (modeDefault: boolean, flag: Option.Option<string>, withEnv = true) => {
+    const output = mockOutput();
+    const layer = projectRefLayer.pipe(
+      Layer.provide(
+        mockCommandSettings({
+          workdir: workdir.current,
+          projectId: withEnv ? Option.some(ENV_REF) : Option.none(),
+        }),
+      ),
+      Layer.provide(mockTty({ stdinIsTty: false })),
+      Layer.provide(output.layer),
+      Layer.provide(commandTargetLayer.pipe(Layer.provide(output.layer))),
+      Layer.provide(mockCommandPlatformApi({ response: { status: 200, body: [] } }).factoryLayer),
+      Layer.provide(BunServices.layer),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = path.join(workdir.current, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), LINK_REF);
+      const { resolveRef } = yield* ProjectRefResolver;
+      return yield* resolveRef(flag);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(
+        DefaultProjectRef,
+        modeDefault
+          ? Option.some(Effect.succeed({ ref: DEFAULT_REF, name: "dev" }))
+          : Option.none(),
+      ),
+      Effect.provide(BunServices.layer),
+    );
+  };
+
+  it.effect("takes the mode default over SUPABASE_PROJECT_ID and the link", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveWith(true, Option.none());
+      expect(resolved.ref).toBe(DEFAULT_REF);
+      expect(resolved.source).toBe("default");
+    }),
+  );
+
+  it.effect("takes --project-ref over the mode default", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveWith(true, Option.some(FLAG_REF));
+      expect(resolved).toMatchObject({ ref: FLAG_REF, source: "flag" });
+    }),
+  );
+
+  it.effect("keeps the flag, environment, link order without a mode default", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveWith(false, Option.some(FLAG_REF))).toMatchObject({
+        ref: FLAG_REF,
+        source: "flag",
+      });
+      expect(yield* resolveWith(false, Option.none())).toMatchObject({
+        ref: ENV_REF,
+        source: "env",
+      });
+      expect(yield* resolveWith(false, Option.none(), false)).toMatchObject({
+        ref: LINK_REF,
+        source: "file",
+      });
+    }),
   );
 });

@@ -177,9 +177,48 @@ const sparkFunctionsCommand = Command.make("functions").pipe(
   Command.withDescription("Manage Supabase Edge functions."),
   Command.withShortDescription("Manage Supabase Edge functions"),
   Command.withSubcommands([
-    withSparkDevInstanceProject(functionsListCommand),
-    withSparkDevInstanceProject(functionsDeleteCommand),
-    withSparkDevInstanceProject(functionsDeployCommand),
+    withSparkDevInstanceProject(functionsListCommand, {
+      description:
+        "List all Functions in the dev instance. Pass --project-ref to list another project's.",
+      examples: [
+        {
+          command: "supabase functions list",
+          description: "List all deployed functions in the dev instance",
+        },
+        {
+          command: "supabase functions list --project-ref abcdefghijklmnopqrst",
+          description: "List all deployed functions in a specific project",
+        },
+      ],
+    }),
+    withSparkDevInstanceProject(functionsDeleteCommand, {
+      description:
+        "Delete a Function from the dev instance. Pass --project-ref to delete from another project. This does NOT remove the Function locally.",
+      examples: [
+        {
+          command: "supabase functions delete hello-world",
+          description: "Delete a deployed function from the dev instance",
+        },
+        {
+          command: "supabase functions delete hello-world --project-ref abcdefghijklmnopqrst",
+          description: "Delete a deployed function from a specific project",
+        },
+      ],
+    }),
+    withSparkDevInstanceProject(functionsDeployCommand, {
+      description:
+        "Deploy a Function to the dev instance. Pass --project-ref to deploy to another project.",
+      examples: [
+        {
+          command: "supabase functions deploy hello-world",
+          description: "Deploy a single function to the dev instance",
+        },
+        {
+          command: "supabase functions deploy --project-ref abcdefghijklmnopqrst",
+          description: "Deploy all local functions to a specific project",
+        },
+      ],
+    }),
     functionsNewCommand,
   ]),
 );
@@ -189,9 +228,28 @@ const sparkSecretsCommand = Command.make("secrets").pipe(
   Command.withDescription("Manage Supabase secrets."),
   Command.withShortDescription("Manage Supabase secrets"),
   Command.withSubcommands([
-    withSparkDevInstanceProject(secretsListCommand),
-    withSparkDevInstanceProject(secretsSetCommand),
-    withSparkDevInstanceProject(secretsUnsetCommand),
+    withSparkDevInstanceProject(secretsListCommand, {
+      description:
+        "List all secrets in the dev instance. Pass --project-ref to list another project's.",
+      examples: [
+        {
+          command: "supabase secrets list",
+          description: "List all secrets for the dev instance",
+        },
+        {
+          command: "supabase secrets list --project-ref abcdefghijklmnopqrst",
+          description: "List secrets for a specific project",
+        },
+      ],
+    }),
+    withSparkDevInstanceProject(secretsSetCommand, {
+      description:
+        "Set a secret(s) on the dev instance. Pass --project-ref to set them on another project.",
+    }),
+    withSparkDevInstanceProject(secretsUnsetCommand, {
+      description:
+        "Unset a secret(s) from the dev instance. Pass --project-ref to unset them from another project.",
+    }),
   ]),
 );
 
