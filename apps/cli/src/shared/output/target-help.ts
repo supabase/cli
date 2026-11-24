@@ -9,6 +9,8 @@ export interface TargetCopy {
   readonly scope: string;
   /** The TARGET summary, given the value hint of the command's `--remote` flag. */
   readonly summary: (hint: string) => string;
+  /** The `--remote` flag's description, given its value hint, when the flag's own does not fit. */
+  readonly remoteDescription?: (hint: string) => string;
 }
 
 const TARGET_COPY: Readonly<Record<TargetKind, TargetCopy>> = {
@@ -74,8 +76,17 @@ const mapRemoteFlag = (
   doc: HelpDoc.HelpDoc,
   transform: (flag: HelpDoc.FlagDoc) => HelpDoc.FlagDoc,
 ): HelpDoc.HelpDoc => {
+  const describe = Option.getOrUndefined(
+    Context.getOption(doc.annotations, TargetHelpAnnotation),
+  )?.remoteDescription;
   const apply = (flag: HelpDoc.FlagDoc) =>
-    flag.name === REMOTE_FLAG_NAME ? transform(flag) : flag;
+    flag.name !== REMOTE_FLAG_NAME
+      ? flag
+      : transform(
+          describe === undefined
+            ? flag
+            : { ...flag, description: Option.some(describe(flag.type)) },
+        );
   return {
     ...doc,
     flags: doc.flags.map(apply),

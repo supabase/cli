@@ -4,7 +4,7 @@ import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.
 import {
   type ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
-  rejectUnsupportedSparkKeys,
+  rejectUnsupportedSparkConfig,
   resolveExperimentalFeature,
 } from "../../../shared/config/experimental-feature.ts";
 import {
@@ -56,8 +56,8 @@ export class SparkShadowError extends Data.TaggedError("SparkShadowError")<{
 /**
  * Whether the invoked project opted into Spark with `[experimental.spark] enabled` (or
  * `SUPABASE_EXPERIMENTAL_SPARK_ENABLED`), read before parse so the root swaps in the Spark
- * command tree. `--version` never selects it. A key of that table this CLI does not support
- * fails, whatever selects the tree.
+ * command tree. `--version` never selects it. A key of that table this CLI does not support, or
+ * an `enabled` that is not a literal boolean, fails whatever selects the tree.
  */
 export const resolveSparkEnabled = (input: {
   readonly args: ReadonlyArray<string>;
@@ -70,7 +70,7 @@ export const resolveSparkEnabled = (input: {
         : input.args;
     if (hasRootVersionFlag(routingArgs) && extractCommandPath(routingArgs).length === 0)
       return false;
-    yield* rejectUnsupportedSparkKeys({ ...input, args: routingArgs });
+    yield* rejectUnsupportedSparkConfig({ ...input, args: routingArgs });
     return yield* resolveExperimentalFeature({
       feature: "spark",
       configValue: readExperimentalFeatureConfig({

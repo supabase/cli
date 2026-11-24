@@ -162,6 +162,22 @@ describe("targetFlags", () => {
     }),
   );
 
+  it.effect("names the command's own default in its messages when it declares one", () =>
+    Effect.gen(function* () {
+      const flags = targetFlags({
+        subject: "database",
+        dbUrl: false,
+        defaultTarget: "target the dev instance",
+      });
+      expect(yield* rejectedMessage(flags, ["--no-remote"])).toBe(
+        "--remote doesn't take false. Leave it out to target the dev instance.",
+      );
+      expect(yield* rejectedMessage(flags, ["--remote="])).toBe(
+        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the dev instance.",
+      );
+    }),
+  );
+
   it.effect.each([
     {
       value: `https://${REF}.supabase.co`,

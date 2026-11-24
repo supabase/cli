@@ -11,6 +11,7 @@ import { sparkMigrationFetchCommand } from "./migration/fetch/fetch.command.ts";
 import { sparkMigrationListCommand } from "./migration/list/list.command.ts";
 import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import { devInstanceDefaultProjectLayer, devInstanceHostedLayer } from "./spark-dev-instance.ts";
+import { withSparkTargetHelp } from "./spark.flags.ts";
 import { sparkDevStartCommand } from "./start/start.command.ts";
 import { sparkDevStatusCommand } from "./status/status.command.ts";
 import { sparkDevStopCommand } from "./stop/stop.command.ts";
@@ -71,7 +72,8 @@ interface DevInstanceHelp {
 /**
  * A mainline hosted command (`functions`, `secrets`) mounted in the Spark tree: with no
  * `--project-ref` or `--remote` it acts on the dev instance, and `functions deploy` uploads
- * through the API. `help` replaces the mainline description, which says "linked project".
+ * through the API. `help` replaces the mainline description, which says "linked project", and the
+ * TARGET help and `--remote` description name the dev instance.
  */
 export const withSparkDevInstanceProject = <
   const Name extends string,
@@ -88,4 +90,5 @@ export const withSparkDevInstanceProject = <
     (described) =>
       help.examples === undefined ? described : described.pipe(Command.withExamples(help.examples)),
     Command.provide((flags: Input) => devInstanceHostedLayer(flags)),
+    withSparkTargetHelp,
   );

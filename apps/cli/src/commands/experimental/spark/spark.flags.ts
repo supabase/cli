@@ -17,26 +17,28 @@ import { sparkShadowLayer } from "./spark-shadow.ts";
  * none of them a command targets the dev instance.
  */
 export const sparkTargetFlags = () => {
-  const { remote, linked, projectRef } = targetFlags({ subject: "database", dbUrl: false });
-  return {
-    remote: remote.pipe(
-      Flag.withDescription(
-        "Target the linked project, or --remote=<ref|branch>, instead of the dev instance.",
-      ),
-    ),
-    linked,
-    projectRef,
-  };
+  const { remote, linked, projectRef } = targetFlags({
+    subject: "database",
+    dbUrl: false,
+    defaultTarget: "target the dev instance",
+  });
+  return { remote, linked, projectRef };
 };
 
 /** The decoded {@link sparkTargetFlags}. */
 export type SparkTargetFlagValues = Omit<TargetFlagValues, "local">;
 
-/** The TARGET help of a command that takes {@link sparkTargetFlags}. */
+/**
+ * The TARGET help and `--remote` description of a Spark command whose default target is the dev
+ * instance: one that takes {@link sparkTargetFlags}, or a mainline hosted command mounted with
+ * the dev instance as its default project.
+ */
 export const withSparkTargetHelp = Command.annotate(TargetHelpAnnotation, {
   scope: "dev instance or remote",
   summary: (hint) =>
     `The dev instance by default. Pass --remote for the linked project, or --remote=${hint}.`,
+  remoteDescription: (hint) =>
+    `Target the linked project, or --remote=${hint}, instead of the dev instance.`,
 });
 
 /** `link`'s ref; the other commands select a linked project with the target flags. */

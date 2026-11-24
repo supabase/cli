@@ -10,12 +10,15 @@ type TargetSubject = "database" | "Storage API";
 
 interface TargetFlagOptions {
   readonly subject: TargetSubject;
+  /** What leaving `--remote` out does, in its error messages; `target the local <subject>` when unset. */
+  readonly defaultTarget?: string;
 }
 
 interface SelectableRemoteFlagVariant {
   readonly kind: "selectable";
   readonly subject: TargetSubject;
   readonly dbUrl: boolean;
+  readonly defaultTarget?: string | undefined;
 }
 
 interface HostedRemoteFlagVariant {
@@ -53,7 +56,9 @@ const remoteDescription = (variant: RemoteFlagVariant): string => {
 
 const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueRejection): string => {
   const fallback =
-    variant.kind === "hosted" ? "use the linked project" : `target the local ${variant.subject}`;
+    variant.kind === "hosted"
+      ? "use the linked project"
+      : (variant.defaultTarget ?? `target the local ${variant.subject}`);
   switch (rejection._tag) {
     case "Empty":
       return `--remote= has an empty value. Pass --remote for the linked project or --remote=${valueHintOf(variant)}; leave it out to ${fallback}.`;
@@ -182,7 +187,12 @@ export function targetFlags(
 ): TargetFlagDeclarations;
 export function targetFlags(options: TargetFlagOptions & { readonly dbUrl: boolean }) {
   const base = {
-    remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: options.dbUrl }),
+    remote: remoteFlag({
+      kind: "selectable",
+      subject: options.subject,
+      dbUrl: options.dbUrl,
+      defaultTarget: options.defaultTarget,
+    }),
     local: localFlag(),
     linked: linkedFlag(),
     projectRef: projectRefFlag(),

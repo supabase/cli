@@ -101,10 +101,11 @@ export const readExperimentalFeatureConfig = (input: {
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 /**
- * Fails when the project's `[experimental.spark]` sets a key of a local Spark stack; an absent or
- * unreadable config passes.
+ * Fails when the project's `[experimental.spark]` sets a key of a local Spark stack, or an `enabled`
+ * that is not a literal boolean: the tree is chosen before `env(...)` references resolve, so such
+ * a value would otherwise select the mainline tree. An absent or unreadable config passes.
  */
-export const rejectUnsupportedSparkKeys = (input: {
+export const rejectUnsupportedSparkConfig = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
 }): Effect.Effect<void, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
@@ -112,17 +113,23 @@ export const rejectUnsupportedSparkKeys = (input: {
     const path = yield* Path.Path;
     const found = yield* readConfigDocument(input).pipe(Effect.orElseSucceed(() => undefined));
     if (found === undefined) return;
+    const file = `supabase/${path.basename(found.configPath)}`;
+    const envName = CliConfigKeys.experimental.spark.enabled.env[0] ?? "";
     const experimental = Predicate.isObject(found.document)
       ? found.document["experimental"]
       : undefined;
     const spark = Predicate.isObject(experimental) ? experimental["spark"] : undefined;
-    const unsupported = Predicate.isObject(spark)
-      ? UNSUPPORTED_SPARK_KEYS.find((key) => Object.hasOwn(spark, key))
-      : undefined;
+    if (!Predicate.isObject(spark)) return;
+    const unsupported = UNSUPPORTED_SPARK_KEYS.find((key) => Object.hasOwn(spark, key));
     if (unsupported !== undefined)
       return yield* new ExperimentalFeatureFlagError({
-        envName: CliConfigKeys.experimental.spark.enabled.env[0] ?? "",
-        message: `experimental.spark.${unsupported} does not exist: the Spark commands develop against a remote dev instance, and no local Spark process or Studio runs. Remove it from supabase/${path.basename(found.configPath)}.`,
+        envName,
+        message: `experimental.spark.${unsupported} does not exist: the Spark commands develop against a remote dev instance, and no local Spark process or Studio runs. Remove it from ${file}.`,
+      });
+    if (Object.hasOwn(spark, "enabled") && typeof spark["enabled"] !== "boolean")
+      return yield* new ExperimentalFeatureFlagError({
+        envName,
+        message: `experimental.spark.enabled must be the literal true or false in ${file}: the command tree is chosen before env(...) references are read. Write true or false, or remove the key and set ${envName} in the shell.`,
       });
   });
 

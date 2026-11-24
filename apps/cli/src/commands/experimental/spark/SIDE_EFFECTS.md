@@ -13,7 +13,10 @@ process and no Studio run on the developer's machine.
 there makes every command exit 1 before it runs, with
 `experimental.spark.<key> does not exist: the Spark commands develop against a remote dev instance, and no local Spark process or Studio runs. Remove it from supabase/config.toml.`
 (the file's own name when it is `config.json` or `config.jsonc`). Their former environment
-variables are not read.
+variables are not read. An `enabled` that is not a literal `true` or `false`, such as
+`"env(NAME)"`, fails the same way with
+`experimental.spark.enabled must be the literal true or false in supabase/config.toml: the command tree is chosen before env(...) references are read. Write true or false, or remove the key and set SUPABASE_EXPERIMENTAL_SPARK_ENABLED in the shell.`
+Neither falls back to the mainline tree.
 
 `db diff`, `db pull`, `db push`, `db query`, `migration fetch`, `migration list` and `gen types`
 take `--remote[=<ref|branch>]` and its hidden aliases `--linked` and `--project-ref`; there is no

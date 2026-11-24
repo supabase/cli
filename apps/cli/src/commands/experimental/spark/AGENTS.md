@@ -24,8 +24,10 @@ them) through `withSparkDevInstanceProject` (`projects list`, which has no proje
 instance, and `FunctionsApiDeployMode` (`shared/functions/deploy.ts`) so `functions deploy` uploads through the API
 and prints each function's URL; with neither provided, the mainline tree is unchanged.
 
-`[experimental.spark]` has one key, `enabled`. `dev_instance`, `executable` and `studio_executable` fail when the CLI
-starts (`shared/config/experimental-feature.ts`), since this CLI runs no local Spark process or Studio.
+`[experimental.spark]` has one key, `enabled`, which must be a literal boolean (an `env(...)` value is refused, not
+read as unset). `dev_instance`, `executable` and `studio_executable` fail when the CLI starts
+(`rejectUnsupportedSparkConfig` in `shared/config/experimental-feature.ts`), since this CLI runs no local Spark process
+or Studio.
 
 ## Layout
 

@@ -6,7 +6,7 @@ import { useTempWorkdir, withConfigEnv } from "../../../tests/helpers/command-mo
 import {
   ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
-  rejectUnsupportedSparkKeys,
+  rejectUnsupportedSparkConfig,
 } from "./experimental-feature.ts";
 import { projectStateMode } from "./project-state-mode.ts";
 
@@ -50,7 +50,7 @@ describe("[experimental.spark] in the early config read", () => {
           ["studio_executable", 'studio_executable = "/opt/studio/bin/studio"'],
         ] as const) {
           const error = yield* inProject(table, (cwd) =>
-            rejectUnsupportedSparkKeys({ args: [], cwd }),
+            rejectUnsupportedSparkConfig({ args: [], cwd }),
           ).pipe(Effect.flip);
           expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
           expect(error.message).toContain(`experimental.spark.${key} does not exist`);
@@ -63,9 +63,23 @@ describe("[experimental.spark] in the early config read", () => {
       }),
   );
 
-  it.effect("still reads an env(...) enabled as unset (unchanged)", () =>
+  it.effect("refuses an env(...) enabled by name instead of reading it as unset", () =>
     Effect.gen(function* () {
-      expect(yield* read('enabled = "env(MY_SPARK)"')).toBeUndefined();
+      const table = 'enabled = "env(MY_SPARK)"';
+      const error = yield* withConfigEnv(
+        { MY_SPARK: "true" },
+        inProject(table, (cwd) => rejectUnsupportedSparkConfig({ args: [], cwd })),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
+      expect(error.message).toContain(
+        "experimental.spark.enabled must be the literal true or false in supabase/config.toml",
+      );
+      expect(error.message).toContain("SUPABASE_EXPERIMENTAL_SPARK_ENABLED");
+      expect(
+        yield* inProject("enabled = true", (cwd) =>
+          rejectUnsupportedSparkConfig({ args: [], cwd }),
+        ),
+      ).toBeUndefined();
     }),
   );
 });

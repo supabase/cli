@@ -39,6 +39,8 @@ export interface TargetSelectorOptions {
   readonly valueHint?: string;
   /** `--remote` is given more than once with values that differ. */
   readonly remoteConflict?: boolean;
+  /** `false` when the command declares no `--local`, so its errors do not offer it. */
+  readonly localFlag?: boolean;
 }
 
 /** Lists flag names as `a`, `a and b` or `a, b and c`. */
@@ -115,10 +117,12 @@ export const parseTargetSelector = (
     ...(dbUrl === undefined ? [] : ["--db-url"]),
     ...(input.local ? ["--local"] : []),
   ];
-  const available =
-    input.dbUrl === undefined
-      ? ["--remote", "--linked", "--local"]
-      : ["--remote", "--linked", "--db-url", "--local"];
+  const available = [
+    "--remote",
+    "--linked",
+    ...(input.dbUrl === undefined ? [] : ["--db-url"]),
+    ...(options.localFlag === false ? [] : ["--local"]),
+  ];
   if (selected.length > 1) {
     return Result.fail(
       new TargetSelectorConflictError({

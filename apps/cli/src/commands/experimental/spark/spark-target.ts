@@ -112,7 +112,7 @@ export const withSparkTarget = <A, E, R>(
   Effect.gen(function* () {
     const telemetryState = yield* TelemetryState;
     const run = Effect.gen(function* () {
-      const { selection } = yield* selectTarget({ ...flags, local: false });
+      const { selection } = yield* selectTarget({ ...flags, local: false }, { localFlag: false });
       yield* Effect.annotateCurrentSpan({
         "target.kind": selection._tag === "Default" ? "dev-instance" : "linked",
       });
