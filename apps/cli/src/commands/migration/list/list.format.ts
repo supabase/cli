@@ -1,5 +1,5 @@
 import {
-  MIGRATION_VERSION_MAX,
+  compareMigrationVersions,
   formatTimestampVersion,
   parseMigrationVersion,
   sortMigrationVersions,
@@ -31,36 +31,35 @@ export function makeMigrationListRows(
   while (i < remote.length || j < sortedLocal.length) {
     const remoteVersion = remote[i];
     const localVersion = sortedLocal[j];
-    let remoteTs = MIGRATION_VERSION_MAX;
-    if (remoteVersion !== undefined) {
-      const parsed = parseMigrationVersion(remoteVersion);
-      if (parsed === undefined) {
-        i++;
-        continue;
-      }
-      remoteTs = parsed;
+    if (remoteVersion !== undefined && parseMigrationVersion(remoteVersion) === undefined) {
+      i++;
+      continue;
     }
-    let localTs = MIGRATION_VERSION_MAX;
-    if (localVersion !== undefined) {
-      const parsed = parseMigrationVersion(localVersion);
-      if (parsed === undefined) {
-        j++;
-        continue;
-      }
-      localTs = parsed;
+    if (localVersion !== undefined && parseMigrationVersion(localVersion) === undefined) {
+      j++;
+      continue;
     }
-    if (localVersion !== undefined && localTs < remoteTs) {
+    /* Compare as text, the order both sides are sorted in, so mixed widths stay paired (#7775). */
+    if (
+      localVersion !== undefined &&
+      (remoteVersion === undefined || compareMigrationVersions(localVersion, remoteVersion) < 0)
+    ) {
       rows.push({ local: localVersion, remote: "", time: formatTimestampVersion(localVersion) });
       j++;
-    } else if (remoteVersion !== undefined && remoteTs < localTs) {
+    } else if (
+      remoteVersion !== undefined &&
+      (localVersion === undefined || compareMigrationVersions(remoteVersion, localVersion) < 0)
+    ) {
       rows.push({ local: "", remote: remoteVersion, time: formatTimestampVersion(remoteVersion) });
       i++;
     } else {
-      rows.push({
-        local: sortedLocal[j]!,
-        remote: remote[i]!,
-        time: formatTimestampVersion(remote[i]!),
-      });
+      if (localVersion !== undefined && remoteVersion !== undefined) {
+        rows.push({
+          local: localVersion,
+          remote: remoteVersion,
+          time: formatTimestampVersion(remoteVersion),
+        });
+      }
       i++;
       j++;
     }

@@ -6,7 +6,6 @@ import { compareUtf8Bytes } from "./glob.ts";
 import type { DbExecError } from "./db-connection.errors.ts";
 import type { DbSession } from "./db-connection.service.ts";
 import {
-  MIGRATION_VERSION_MAX,
   compareMigrationVersions,
   parseMigrationVersion,
   sortMigrationVersions,
@@ -173,40 +172,34 @@ export function reconcileMigrations(
   local: ReadonlyArray<string>,
   targetFlags: string,
 ): MigrationSync {
-  // `MIGRATION_VERSION_MAX` pins the exhausted side of the walk; `parseMigrationVersion` is
-  // shared with `migration list` so both surfaces skip the same edge-case versions.
-  // `loadLocalVersions` yields versions in file-name order, which reverses `ORDER BY version`
-  // whenever one version is a prefix of another — the same desynchronisation
-  // `findPendingMigrations` sorts away below.
+  /* Compare as text, the order both sides are sorted in, so mixed widths stay paired (#7775). */
   const sortedLocal = sortMigrationVersions(local);
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
   while (i < remote.length || j < sortedLocal.length) {
-    let remoteTs = MIGRATION_VERSION_MAX;
-    if (i < remote.length) {
-      const parsed = parseMigrationVersion(remote[i]!);
-      if (parsed === undefined) {
-        i++;
-        continue;
-      }
-      remoteTs = parsed;
+    const remoteVersion = remote[i];
+    const localVersion = sortedLocal[j];
+    if (remoteVersion !== undefined && parseMigrationVersion(remoteVersion) === undefined) {
+      i++;
+      continue;
     }
-    let localTs = MIGRATION_VERSION_MAX;
-    if (j < sortedLocal.length) {
-      const parsed = parseMigrationVersion(sortedLocal[j]!);
-      if (parsed === undefined) {
-        j++;
-        continue;
-      }
-      localTs = parsed;
-    }
-    if (localTs < remoteTs) {
-      extraLocal.push(sortedLocal[j]!);
+    if (localVersion !== undefined && parseMigrationVersion(localVersion) === undefined) {
       j++;
-    } else if (remoteTs < localTs) {
-      extraRemote.push(remote[i]!);
+      continue;
+    }
+    if (
+      localVersion !== undefined &&
+      (remoteVersion === undefined || compareMigrationVersions(localVersion, remoteVersion) < 0)
+    ) {
+      extraLocal.push(localVersion);
+      j++;
+    } else if (
+      remoteVersion !== undefined &&
+      (localVersion === undefined || compareMigrationVersions(remoteVersion, localVersion) < 0)
+    ) {
+      extraRemote.push(remoteVersion);
       i++;
     } else {
       i++;

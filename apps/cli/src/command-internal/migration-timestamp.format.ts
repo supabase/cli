@@ -35,7 +35,7 @@ export function formatTimestampVersion(version: string): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
 }
 
-/** Int64 max; the sentinel for the exhausted side of a migration-version merge. */
+/** Int64 max: the upper bound accepted for a migration version. */
 export const MIGRATION_VERSION_MAX = 9223372036854775807n;
 
 /** Int64 min: the lower bound accepted for a migration version. */
@@ -44,7 +44,7 @@ const MIGRATION_VERSION_MIN = -9223372036854775808n;
 /**
  * Parses a migration version as a signed base-10 integer within the int64 range; returns
  * `undefined` for anything else. Uses `BigInt`, since `Number` loses precision above
- * `Number.MAX_SAFE_INTEGER` and would mis-order large version numbers.
+ * `Number.MAX_SAFE_INTEGER` and would misjudge the int64 bounds.
  */
 export const parseMigrationVersion = (value: string): bigint | undefined => {
   if (!/^[+-]?\d+$/u.test(value)) return undefined;
