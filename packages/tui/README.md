@@ -1,53 +1,58 @@
-# @supabase/tui
+<h1 align="center">@supabase/tui</h1>
 
-A prototype terminal UI package. It runs on [Foldkit](https://foldkit.dev)'s architecture: a
-program is a `Model`, a `Message` union, an `update` function and a `view`. Views return a `Node`
-tree instead of HTML. Layout is flexbox, computed by Yoga, in terminal cells. The package is private
-and lives in this workspace; import it as `@supabase/tui`.
+<p align="center">
+  Terminal UIs for the Supabase CLI, built on <a href="https://foldkit.dev">Foldkit</a>'s architecture.
+</p>
 
-![The gallery demo: each block in its main states, two live spinners, then a region prompt](docs/gallery.gif)
+<p align="center">
+  <img src="docs/gallery.gif" width="560" alt="The gallery demo: each block in its main states, two live spinners, then a region prompt">
+</p>
+
+<p align="center">
+  <a href="#try-it">Try it</a> ·
+  <a href="#a-first-program">A first program</a> ·
+  <a href="#layout">Layout</a> ·
+  <a href="#blocks">Blocks</a> ·
+  <a href="#theme">Theme</a> ·
+  <a href="docs/building-blocks.md">Building blocks guide</a>
+</p>
+
+> [!NOTE]
+> This package is a private prototype, and its API may change.
+
+A program is a `Model`, a `Message` union, an `update` function and a `view`, as in any Foldkit
+program. Views return a `Node` tree instead of HTML, and layout is flexbox in terminal cells,
+computed by Yoga. Import the package as `@supabase/tui` from this workspace.
 
 ## Try it
 
-Set up the repository once, as [CONTRIBUTING.md](../../CONTRIBUTING.md#installing-mise) describes:
-`mise install` provides the pinned Node, Bun and pnpm, then run `pnpm install` from the root.
-
-Then, from `packages/tui`, in an interactive terminal:
+1. Set up the repository once, as [CONTRIBUTING.md](../../CONTRIBUTING.md#installing-mise)
+   describes: `mise install` provides the pinned Node, Bun and pnpm.
+2. Run `pnpm install` from the repository root.
+3. From `packages/tui`, in an interactive terminal, run a demo:
 
 ```sh
-bun examples/gallery.ts   # every block in its main states, then a live spinner demo and a select prompt
-bun examples/counter.ts   # the smallest interactive program: up/down or +/- change a count, q quits
-bun examples/counters.ts  # several counters composed into one program
+bun examples/gallery.ts   # every block, then live spinners and a prompt
+bun examples/counter.ts   # up/down or +/- change a count, q quits
+bun examples/counters.ts  # several counters in one program
 ```
 
-On a pipe, the gallery prints its static screen and stops. The recording above comes from
-[`docs/gallery.tape`](docs/gallery.tape); rerun it with [VHS](https://github.com/charmbracelet/vhs)
-(`vhs docs/gallery.tape` from `packages/tui`) after a visual change.
+On a pipe, the gallery prints its static screen and stops.
 
-To change how things look, edit one of these files and rerun the gallery:
+### Change how it looks
 
-- [`src/supabase/theme.ts`](src/supabase/theme.ts) maps each tone (`muted`, `accent`, `success`,
-  `warning`, `danger`, `info`) to a color, with 256-color and 16-color fallbacks for terminals
-  without true color.
-- [`src/blocks/glyphs.ts`](src/blocks/glyphs.ts) holds the symbols the blocks draw, such as ticks,
-  pointers and radio buttons, each with an ASCII alternate.
-- [`src/examples/gallery/static.ts`](src/examples/gallery/static.ts) lays out the gallery screen;
-  add a `section(...)` to show a block in another state.
+Edit one of these files and rerun the gallery:
 
-Read [Theme and legibility](docs/building-blocks.md#theme-and-legibility) before changing colors:
-text that carries meaning stays in the terminal's default color, and color never carries meaning on
-its own.
+| File                                                               | What it controls                                                                              |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| [`src/supabase/theme.ts`](src/supabase/theme.ts)                   | The color of each [tone](#theme), with 256-color and 16-color fallbacks                       |
+| [`src/blocks/glyphs.ts`](src/blocks/glyphs.ts)                     | The symbols the blocks draw, such as ticks, pointers and radio buttons, with ASCII alternates |
+| [`src/examples/gallery/static.ts`](src/examples/gallery/static.ts) | The gallery screen; add a `section(...)` to show a block in another state                     |
 
-## Layers
-
-The renderer (`src/terminal`, `src/runtime`, `src/view`, `src/theme`, `src/capabilities.ts`) has no
-Supabase knowledge and is written to be lifted into a standalone terminal package. Each renderer
-module exposes one `public.ts` barrel. The Supabase layer (`src/blocks`, `src/supabase`,
-`src/examples`, the demos in `examples/` and the facade `src/index.ts`) imports the renderer only
-through those barrels, and the root `.oxlintrc.json` fails an import that crosses the line in either
-direction. Tests reach the renderer through the barrels plus the harness in
-[`src/terminal/testing.ts`](src/terminal/testing.ts) (exported as `@supabase/tui/testing`) and
-[`src/runtime/test-support.ts`](src/runtime/test-support.ts).
+Read [Theme and legibility](docs/building-blocks.md#theme-and-legibility) before changing colors.
+The recording above comes from [`docs/gallery.tape`](docs/gallery.tape); after a visual change,
+rerun it with [VHS](https://github.com/charmbracelet/vhs): `vhs docs/gallery.tape` from
+`packages/tui`.
 
 ## A first program
 
@@ -226,15 +231,12 @@ my-project                                                             ✔ healt
 
 Blocks are ready-made pieces of UI. Each is exported as a namespace.
 
-- `KeyValue` is stateless. `KeyValue.view({ entries, tone? })` aligns bold keys beside values. It
-  needs a parent with a definite width, such as the panel above.
-- `Spinner` has a model, so a parent embeds it as a submodel. `Spinner.view(model, opts)` takes a
-  `label`, a `status` and a `tone`. It shows an animated frame while `running` and a glyph once
-  `succeeded`, `failed` or `warning`.
-- `Select` is a submodel for a scrolling radio list: `Select.init(options)`,
-  `Select.view(model, { message, rows })`.
-- `Prompt.select` wraps `Select` in a one-shot program and returns the chosen value as an Effect. It
-  fails with `Prompt.NonInteractive` when the terminal is not interactive.
+| Block      | Kind      | What it does                                                                                                                                                  |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KeyValue` | Stateless | `KeyValue.view({ entries, tone? })` aligns bold keys beside values. It needs a parent with a definite width.                                                  |
+| `Spinner`  | Submodel  | `Spinner.view(model, { label, status, tone })` animates while `running` and shows a glyph once `succeeded`, `failed` or `warning`.                            |
+| `Select`   | Submodel  | A scrolling radio list: `Select.init(options)`, `Select.view(model, { message, rows })`.                                                                      |
+| `Prompt`   | Effect    | `Prompt.select` runs `Select` as a one-shot program and returns the chosen value. It fails with `Prompt.NonInteractive` when the terminal is not interactive. |
 
 ```ts
 const chooseRegion = Effect.gen(function* () {
@@ -251,16 +253,36 @@ const chooseRegion = Effect.gen(function* () {
 
 ## Theme
 
-`Tone` is one of `default`, `muted`, `accent`, `success`, `warning`, `danger` or `info`. The `Theme`
-export holds tones only. The default theme is neutral: it uses the terminal's own 16 colors, so
-output follows the user's terminal theme. Supabase entry points provide the brand tones with
-`Effect.provide(Theme.layer(supabaseTheme))`, with `supabaseTheme` from
-[`src/supabase/theme.ts`](src/supabase/theme.ts); the demos in `examples/` do this. Glyphs are not
-part of the theme: each block owns a glyph table (see
-[`src/blocks/glyphs.ts`](src/blocks/glyphs.ts)) of unicode characters with ASCII alternates, drawn
-with `View.glyph`, and the renderer draws borders and the ellipsis itself. Use tones for glyphs,
-borders and decoration, and keep text that carries meaning in `default`. The
-[guide](docs/building-blocks.md#theme-and-legibility) explains why.
+Blocks color their output by tone, never by raw color. The default theme is neutral: it uses the
+terminal's own 16 colors, so output follows the user's terminal theme. Supabase entry points, and
+the demos in `examples/`, provide the brand colors with `Effect.provide(Theme.layer(supabaseTheme))`.
+
+| Tone      | Supabase color | Use for                                |
+| --------- | -------------- | -------------------------------------- |
+| `default` | Terminal text  | All text that carries meaning          |
+| `muted`   | `#898989`      | Hints a reader can skip                |
+| `accent`  | `#3ECF8E`      | Brand highlights and the active choice |
+| `success` | `#3ECF8E`      | Completed steps                        |
+| `warning` | `#DB8E00`      | Things that need attention             |
+| `danger`  | `#E54D2E`      | Failures                               |
+| `info`    | `#7A66FF`      | Informational notes                    |
+
+Use tones for glyphs, borders and decoration, and pair color with a glyph or a word so it never
+carries meaning on its own. The Supabase colors are tuned for dark backgrounds; the
+[guide](docs/building-blocks.md#theme-and-legibility) explains the rules. Glyphs are not part of the
+theme: each block owns a glyph table in [`src/blocks/glyphs.ts`](src/blocks/glyphs.ts), drawn with
+`View.glyph`.
+
+## Architecture
+
+The renderer (`src/terminal`, `src/runtime`, `src/view`, `src/theme`, `src/capabilities.ts`) has no
+Supabase knowledge and is written to be lifted into a standalone terminal package. Each renderer
+module exposes one `public.ts` barrel. The Supabase layer (`src/blocks`, `src/supabase`,
+`src/examples`, the demos in `examples/` and the facade `src/index.ts`) imports the renderer only
+through those barrels, and the root `.oxlintrc.json` fails an import that crosses the line in either
+direction. Tests reach the renderer through the barrels plus the harness in
+[`src/terminal/testing.ts`](src/terminal/testing.ts) (exported as `@supabase/tui/testing`) and
+[`src/runtime/test-support.ts`](src/runtime/test-support.ts).
 
 ## Where next
 
