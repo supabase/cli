@@ -1,5 +1,16 @@
 import { expect, it } from "@effect/vitest";
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Runtime, Schema } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Runtime,
+  Schema,
+  Scope,
+} from "effect";
 import { Command } from "effect/cli";
 import process from "node:process";
 import { vi } from "vitest";
@@ -23,8 +34,8 @@ import { ProcessControl } from "../runtime/process-control.service.ts";
 import { runCli } from "./run.ts";
 
 const processState = vi.hoisted(() => ({
-  exit: undefined as ((code: number) => void) | undefined,
-  output: undefined as ReturnType<typeof mockOutput> | undefined,
+  control: undefined as ProcessControl["Service"] | undefined,
+  output: undefined as Layer.Layer<Output> | undefined,
 }));
 
 // @effect-diagnostics-next-line asyncFunction:off -- Vitest loads dependencies in the hoisted factory.
@@ -33,127 +44,71 @@ vi.mock("../output/output.layer.ts", async (importOriginal) => {
   return {
     ...original,
     outputLayerFor: (format: Parameters<typeof original.outputLayerFor>[0]) =>
-      processState.output?.layer ?? original.outputLayerFor(format),
+      processState.output ?? original.outputLayerFor(format),
   };
 });
 
 // @effect-diagnostics-next-line asyncFunction:off -- Vitest loads dependencies in the hoisted factory.
 vi.mock("../runtime/process-control.layer.ts", async () => {
-  const { Effect, Layer } = await import("effect");
+  const { Layer } = await import("effect");
   const { ProcessControl } = await import("../runtime/process-control.service.ts");
   return {
     processControlLayer: Layer.sync(ProcessControl, () => {
-      let exitCode: number | undefined;
-      return ProcessControl.of({
-        awaitSignal: () => Effect.never,
-        awaitShutdown: Effect.never,
-        holdSignals: () => Effect.void,
-        setExitCode: (code) =>
-          Effect.sync(() => {
-            exitCode = code;
-          }),
-        getExitCode: Effect.sync(() => exitCode),
-        exit: (code) =>
-          Effect.sync(() => processState.exit?.(code)).pipe(Effect.andThen(Effect.interrupt)),
-      });
+      if (processState.control === undefined) throw new Error("Missing test process control");
+      return processState.control;
     }),
   };
 });
 
 const home = useTempWorkdir("supabase-managed-output-");
-
+const managedError = Object.assign(new Error("managed failure"), { [Runtime.errorExitCode]: 7 });
+const report = [expect.objectContaining({ message: "managed failure" })];
+const writerDiagnostic = "Failed to write command output.\n";
+const result = { value: "done" };
 const RequiredResource = Context.Service<string>("test/RequiredResource");
 
-it.live.each([
-  "warning",
-  "cleanup-defect",
-  "partial-write",
-  "typed-failure",
-  "closed-error-writer",
-  "full-error-writer",
-  "text-failure",
-  "held-layer-release",
-  "layer-release-defect",
-] as const)("requests the right exit without replacing terminal output: %s", (scenario) =>
+const gate = Effect.gen(function* () {
+  const started = yield* Deferred.make<void>();
+  const release = yield* Deferred.make<void>();
+  const open = Deferred.succeed(release, undefined);
+  return {
+    hold: Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    awaitHeld: Deferred.await(started),
+    open,
+  };
+});
+
+type OutputHarness = ReturnType<typeof mockOutput>;
+
+const runManaged = (options: {
+  readonly handler: Effect.Effect<
+    typeof result,
+    Error,
+    ProcessControl | Scope.Scope | Output | string
+  >;
+  readonly required?: Layer.Layer<string>;
+  readonly out: OutputHarness;
+  readonly format?: "text" | "json";
+  readonly writer?: Layer.Layer<Output>;
+  readonly beforeDrain?: Effect.Effect<void>;
+  readonly finishDrain?: Effect.Effect<void>;
+  readonly duringDrain?: (signal: Effect.Effect<void>) => Effect.Effect<void>;
+}) =>
   Effect.gen(function* () {
-    const format = scenario === "text-failure" ? "text" : "json";
-    const out = mockOutput({ format });
-    const writerDefect =
-      scenario === "closed-error-writer"
-        ? new StdoutClosedError()
-        : scenario === "full-error-writer"
-          ? Object.assign(new Error("no space left on device"), { code: "ENOSPC" })
-          : undefined;
-    const drainStarted = yield* Deferred.make<void>();
-    const allowDrain = yield* Deferred.make<void>();
-    const analyticsLayer = Layer.merge(
-      mockAnalytics().layer,
-      Layer.effectDiscard(
-        Effect.addFinalizer(() =>
-          Deferred.succeed(drainStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(allowDrain)),
-          ),
-        ),
-      ),
-    );
+    const { out, format = "json", writer = out.layer } = options;
+    const drain = yield* gate;
+    const sigint = yield* Deferred.make<"SIGINT">();
+    const signalWon = yield* Deferred.make<void>();
     const attempts: number[] = [];
-    const error = Object.assign(new Error("managed failure"), { [Runtime.errorExitCode]: 7 });
-    const releaseStarted = yield* Deferred.make<void>();
-    const allowRelease = yield* Deferred.make<void>();
-    const required = Layer.effect(
-      RequiredResource,
-      Effect.acquireRelease(Effect.succeed("done"), () =>
-        scenario === "held-layer-release"
-          ? Deferred.succeed(releaseStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(allowRelease)),
-            )
-          : scenario === "layer-release-defect"
-            ? Effect.die(error)
-            : Effect.void,
-      ),
-    );
+    let exitCode: number | undefined;
     const root = Command.make("supabase").pipe(
       withManagedHandler({
         output: Schema.Struct({ value: Schema.String }),
-        handler: () =>
-          Effect.gen(function* () {
-            const control = yield* ProcessControl;
-            const writer = yield* Output;
-            if (
-              scenario === "typed-failure" ||
-              scenario === "text-failure" ||
-              writerDefect !== undefined
-            ) {
-              return yield* Effect.fail(error);
-            }
-            yield* Effect.addFinalizer(() =>
-              scenario === "warning"
-                ? Effect.fail("restoration rejected").pipe(
-                    Effect.catch((reason) => writer.raw(`Cleanup warning: ${reason}\n`, "stderr")),
-                    Effect.andThen(control.setExitCode(1)),
-                  )
-                : scenario === "cleanup-defect"
-                  ? Effect.die(error)
-                  : Effect.void,
-            );
-            return { value: yield* RequiredResource };
-          }),
+        handler: () => options.handler,
         runtime: {
-          required,
+          required: options.required ?? Layer.succeed(RequiredResource, "done"),
           completion: Layer.mergeAll(
-            scenario === "partial-write" || writerDefect !== undefined
-              ? Layer.effect(
-                  Output,
-                  Output.use((writer) =>
-                    Effect.succeed({
-                      ...writer,
-                      fail: (report) =>
-                        writer.fail(report).pipe(Effect.andThen(Effect.die(writerDefect))),
-                      result: () => writer.raw('{"value":').pipe(Effect.andThen(Effect.die(error))),
-                    }),
-                  ),
-                ).pipe(Layer.provide(out.layer))
-              : out.layer,
+            writer,
             commandExecutorLayer,
             mockLinkedProjectCacheLayer,
             mockTelemetryStateLayer,
@@ -165,70 +120,263 @@ it.live.each([
     );
     const argv = process.argv;
     process.argv = [argv[0] ?? "bun", "supabase", "--output-format", format];
-    processState.exit = (code) => {
-      attempts.push(code);
-    };
-    processState.output = out;
+    processState.output = writer;
+    processState.control = ProcessControl.of({
+      awaitSignal: () => Deferred.await(sigint),
+      awaitShutdown: Effect.never,
+      // The runner holds SIGHUP only after its signal race chooses the signal branch.
+      holdSignals: (signals) =>
+        signals.includes("SIGHUP")
+          ? Deferred.succeed(signalWon, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      setExitCode: (code) =>
+        Effect.sync(() => {
+          exitCode = code;
+        }),
+      getExitCode: Effect.sync(() => exitCode),
+      exit: (code) => Effect.sync(() => attempts.push(code)).pipe(Effect.andThen(Effect.interrupt)),
+    });
     try {
       const run = withEnvVar(
         "SUPABASE_HOME",
         home.current,
         runCli(root, {
           agentDefaultOutputFormat: "json",
-          analyticsLayer,
+          analyticsLayer: Layer.merge(
+            mockAnalytics().layer,
+            Layer.effectDiscard(
+              Effect.addFinalizer(() =>
+                drain.hold.pipe(Effect.andThen(options.finishDrain ?? Effect.void)),
+              ),
+            ),
+          ),
         }),
       ).pipe(Effect.exit);
-      const exit = yield* Effect.gen(function* () {
-        const fiber = yield* run.pipe(Effect.forkChild);
-        if (scenario === "held-layer-release") {
-          yield* Deferred.await(releaseStarted);
-          expect(out.stdoutText).toBe("");
-          yield* Deferred.succeed(allowRelease, undefined);
-        }
-        yield* Deferred.await(drainStarted);
-        expect(out.failures).toEqual(
-          scenario === "typed-failure" || writerDefect !== undefined
-            ? [expect.objectContaining({ message: "managed failure" })]
-            : [],
-        );
-        expect(attempts).toEqual([]);
-        yield* Deferred.succeed(allowDrain, undefined);
-        return yield* Fiber.join(fiber);
-      }).pipe(
-        Effect.ensuring(Deferred.succeed(allowRelease, undefined)),
-        Effect.ensuring(Deferred.succeed(allowDrain, undefined)),
+      const exit = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.forkScoped);
+          yield* Effect.gen(function* () {
+            yield* options.beforeDrain ?? Effect.void;
+            yield* drain.awaitHeld;
+            expect(attempts).toEqual([]);
+            yield* (
+              options.duringDrain?.(
+                Deferred.succeed(sigint, "SIGINT").pipe(Effect.andThen(Deferred.await(signalWon))),
+              ) ?? Effect.void
+            );
+          }).pipe(Effect.ensuring(drain.open));
+          return yield* Fiber.join(fiber);
+        }),
       );
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-      expect(attempts).toEqual([
-        scenario === "held-layer-release"
-          ? 0
-          : scenario === "warning" || scenario === "full-error-writer"
-            ? 1
-            : 7,
-      ]);
-      if (scenario === "warning") {
-        expect(out.stderrText).toBe("Cleanup warning: restoration rejected\n");
-        expect(out.stdoutText).toBe('{"value":"done"}\n');
-      } else if (scenario === "partial-write") {
-        expect(out.stdoutText).toBe('{"value":');
-      } else if (scenario === "held-layer-release") {
-        expect(out.stdoutText).toBe('{"value":"done"}\n');
-      } else {
-        expect(out.stdoutText).toBe("");
-      }
-      expect(out.failures).toEqual(
-        writerDefect !== undefined ||
-          scenario === "typed-failure" ||
-          scenario === "text-failure" ||
-          scenario === "cleanup-defect" ||
-          scenario === "layer-release-defect"
-          ? [expect.objectContaining({ message: "managed failure" })]
-          : [],
-      );
+      return attempts;
     } finally {
       process.argv = argv;
-      processState.exit = undefined;
+      processState.control = undefined;
       processState.output = undefined;
     }
+  });
+
+it.live("releases required services before writing a machine result", () =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "json" });
+    const release = yield* gate;
+    const attempts = yield* runManaged({
+      out,
+      handler: Effect.map(RequiredResource, (value) => ({ value })),
+      required: Layer.effect(
+        RequiredResource,
+        Effect.acquireRelease(Effect.succeed("done"), () => release.hold),
+      ),
+      beforeDrain: Effect.gen(function* () {
+        yield* release.awaitHeld;
+        expect(out.stdoutText).toBe("");
+      }).pipe(Effect.ensuring(release.open)),
+      duringDrain: () => Effect.sync(() => expect(out.failures).toEqual([])).pipe(Effect.asVoid),
+    });
+    expect(out.stdoutText).toBe('{"value":"done"}\n');
+    expect(out.failures).toEqual([]);
+    expect(attempts).toEqual([0]);
   }),
+);
+
+it.live.each(["json", "text"] as const)(
+  "reports a typed %s failure on the right side of the drain",
+  (format) =>
+    Effect.gen(function* () {
+      const out = mockOutput({ format });
+      const attempts = yield* runManaged({
+        out,
+        format,
+        handler: Effect.fail(managedError),
+        duringDrain: () =>
+          Effect.sync(() => {
+            expect(out.failures).toEqual(format === "json" ? report : []);
+          }),
+      });
+      expect(out.stdoutText).toBe("");
+      expect(out.failures).toEqual(report);
+      expect(attempts).toEqual([7]);
+    }),
+);
+
+it.live("suppresses the pending text failure if SIGINT wins during the analytics drain", () =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "text" });
+    const attempts = yield* runManaged({
+      out,
+      format: "text",
+      handler: Effect.fail(managedError),
+      duringDrain: (signal) => signal,
+    });
+    expect(attempts).toEqual([130]);
+    expect(out.failures).toEqual([]);
+    expect(out.stdoutText).toBe("");
+    expect(out.stderrText).toBe("");
+  }),
+);
+
+it.live.each([
+  { name: "closed stdout", defect: new StdoutClosedError(), stderr: "", code: 7 },
+  {
+    name: "full stdout",
+    defect: Object.assign(new Error("no space left on device"), { code: "ENOSPC" }),
+    stderr: writerDiagnostic,
+    code: 1,
+  },
+])("does not retry the machine error writer on $name", ({ defect, stderr, code }) =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "json" });
+    const writer = Layer.effect(
+      Output,
+      Effect.map(Output, (output) => ({
+        ...output,
+        fail: (error) => output.fail(error).pipe(Effect.andThen(Effect.die(defect))),
+      })),
+    ).pipe(Layer.provide(out.layer));
+    const attempts = yield* runManaged({
+      out,
+      writer,
+      handler: Effect.fail(managedError),
+      duringDrain: () =>
+        Effect.sync(() => {
+          expect(out.failures).toEqual(report);
+          expect(out.stderrText).toBe("");
+        }),
+    });
+    expect(out.stdoutText).toBe("");
+    expect(out.failures).toEqual(report);
+    expect(out.stderrText).toBe(stderr);
+    expect(attempts).toEqual([code]);
+  }),
+);
+
+it.live.each(["working", "failing"] as const)(
+  "keeps a partial machine result and its exit code with %s stderr",
+  (stderr) =>
+    Effect.gen(function* () {
+      const out = mockOutput({ format: "json" });
+      const diagnosticAttempts: string[] = [];
+      const writer = Layer.effect(
+        Output,
+        Effect.map(Output, (output) => ({
+          ...output,
+          result: () => output.raw('{"value":').pipe(Effect.andThen(Effect.die(managedError))),
+          raw: (text, stream) => {
+            if (stream !== "stderr") return output.raw(text, stream);
+            diagnosticAttempts.push(text);
+            return stderr === "working"
+              ? output.raw(text, stream)
+              : Effect.die(new Error("stderr unavailable"));
+          },
+        })),
+      ).pipe(Layer.provide(out.layer));
+      const attempts = yield* runManaged({
+        out,
+        writer,
+        handler: Effect.succeed(result),
+        duringDrain: () =>
+          Effect.sync(() => {
+            expect(out.failures).toEqual([]);
+            expect(out.stderrText).toBe("");
+          }),
+      });
+      expect(out.stdoutText).toBe('{"value":');
+      expect(out.failures).toEqual([]);
+      expect(diagnosticAttempts).toEqual([writerDiagnostic]);
+      expect(out.stderrText).toBe(stderr === "working" ? writerDiagnostic : "");
+      expect(attempts).toEqual([7]);
+    }),
+);
+
+it.live("does not label an analytics release defect as a writer defect after a result", () =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "json" });
+    const attempts = yield* runManaged({
+      out,
+      handler: Effect.succeed(result),
+      finishDrain: Effect.die(managedError),
+    });
+    expect(out.stdoutText).toBe('{"value":"done"}\n');
+    expect(out.failures).toEqual([]);
+    expect(out.stderrText).toBe("");
+    expect(attempts).toEqual([7]);
+  }),
+);
+
+it.live("preserves a cleanup warning exit code and still writes the result", () =>
+  Effect.gen(function* () {
+    const out = mockOutput({ format: "json" });
+    const attempts = yield* runManaged({
+      out,
+      handler: Effect.gen(function* () {
+        const control = yield* ProcessControl;
+        const writer = yield* Output;
+        yield* Effect.addFinalizer(() =>
+          writer
+            .raw("Cleanup warning: restoration rejected\n", "stderr")
+            .pipe(Effect.andThen(control.setExitCode(1))),
+        );
+        return result;
+      }),
+      duringDrain: () =>
+        Effect.sync(() => {
+          expect(out.failures).toEqual([]);
+        }),
+    });
+    expect(out.stderrText).toBe("Cleanup warning: restoration rejected\n");
+    expect(out.stdoutText).toBe('{"value":"done"}\n');
+    expect(out.failures).toEqual([]);
+    expect(attempts).toEqual([1]);
+  }),
+);
+
+it.live.each(["handler finalizer", "required service release"] as const)(
+  "reports a %s defect as a command failure after the drain",
+  (phase) =>
+    Effect.gen(function* () {
+      const out = mockOutput({ format: "json" });
+      const die = Effect.die(managedError);
+      const attempts = yield* runManaged({
+        out,
+        required: Layer.effect(
+          RequiredResource,
+          Effect.acquireRelease(Effect.succeed("done"), () =>
+            phase === "required service release" ? die : Effect.void,
+          ),
+        ),
+        handler: (phase === "handler finalizer"
+          ? Effect.addFinalizer(() => die)
+          : Effect.void
+        ).pipe(Effect.as(result)),
+        duringDrain: () =>
+          Effect.sync(() => {
+            expect(out.failures).toEqual([]);
+          }),
+      });
+      expect(out.failures).toEqual(report);
+      expect(out.stdoutText).toBe("");
+      expect(out.stderrText).toBe("");
+      expect(attempts).toEqual([7]);
+    }),
 );

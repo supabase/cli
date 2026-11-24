@@ -14,7 +14,7 @@ import {
 import { Command } from "effect/cli";
 
 import { TerminalResponse } from "../shared/cli/terminal-response.service.ts";
-import { ignoreStdoutClosed } from "../shared/output/errors.ts";
+import { failureBesideClosedStdout, ignoreStdoutClosed } from "../shared/output/errors.ts";
 import { normalizeCliError } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { ProcessControl } from "../shared/runtime/process-control.service.ts";
@@ -123,7 +123,17 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     const response = yield* TerminalResponse;
     const resolvedProjectRef = yield* Ref.make<string | undefined>(undefined);
     const attempted = yield* Ref.make(false);
-    const beginWrite = Ref.set(attempted, true).pipe(Effect.andThen(response.markAttempt));
+    const writeTerminal = (write: () => Effect.Effect<void>) =>
+      Ref.set(attempted, true).pipe(
+        Effect.andThen(response.markAttempt),
+        Effect.andThen(Effect.suspend(write)),
+        Effect.tapCause((cause) => {
+          const remaining = failureBesideClosedStdout(cause);
+          return remaining !== undefined && Cause.hasDies(remaining) && !Cause.hasInterrupts(cause)
+            ? response.markWriterDefect
+            : Effect.void;
+        }),
+      );
 
     const exit = yield* Effect.gen(function* () {
       // Keep handler finalizers inside the services' lifetime, and own release before delivery.
@@ -138,8 +148,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       );
       if (isMachine(output)) {
         const encoded = yield* Schema.encodeEffect(declaration.output)(result).pipe(Effect.orDie);
-        yield* beginWrite;
-        yield* output.result(encoded);
+        yield* writeTerminal(() => output.result(encoded));
       }
     }).pipe(
       Effect.ensuring(
@@ -167,11 +176,8 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     ) {
       const typed = Cause.findErrorOption(exit.cause);
       if (Option.isSome(typed)) {
-        yield* beginWrite.pipe(
-          Effect.andThen(
-            ignoreStdoutClosed(Effect.suspend(() => output.fail(normalizeCliError(typed.value)))),
-          ),
-        );
+        const report = normalizeCliError(typed.value);
+        yield* ignoreStdoutClosed(writeTerminal(() => output.fail(report)));
       }
     }
     return yield* Effect.failCause(exit.cause);
