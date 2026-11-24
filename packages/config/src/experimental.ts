@@ -89,6 +89,16 @@ export const experimental = Schema.Struct({
       }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
+  spark: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description:
+          "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  ),
   pgdelta: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({

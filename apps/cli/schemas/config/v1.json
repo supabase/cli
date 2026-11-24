@@ -4389,6 +4389,25 @@
           },
           "additionalProperties": false
         },
+        "spark": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+              "default": false,
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
         "pgdelta": {
           "type": "object",
           "properties": {
@@ -9300,6 +9319,25 @@
                         "properties": {
                           "enabled": {
                             "description": "Enable experimental webhooks.",
+                            "default": false,
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "spark": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "description": "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
                             "default": false,
                             "anyOf": [
                               {

@@ -172,6 +172,8 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "an absent section means no exclusions, so an env exclusion list must apply while it is absent",
   "experimental.pgdelta":
     "enabled defaults to true without the section, so the env rollback must apply while it is absent",
+  "experimental.spark":
+    "a shell opt-in like SUPABASE_EXPERIMENTAL_STACK, so its env values must apply while the section is absent",
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */

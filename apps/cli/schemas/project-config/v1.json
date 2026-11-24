@@ -1867,6 +1867,17 @@
             }
           },
           "additionalProperties": true
+        },
+        "spark": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+              "default": false
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
