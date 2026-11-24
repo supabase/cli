@@ -15,7 +15,7 @@ CLI E2E project only reads baselines. Recording is a separate local command and 
    ```
 
    This builds a temporary Git archive using the revision's lockfile and captures actual stdout,
-   stderr and exit code into `<scenario>.baseline.json`. Use `--output <new-file>` to review a
+   stderr, exit code, and ordered requests (including retries) into `<scenario>.baseline.json`. Use `--output <new-file>` to review a
    candidate beside an existing capture. The recorder never replaces a file. Review the revision,
    argv and outputs before adding a new baseline; do not replace one just for timestamps.
 

@@ -59,7 +59,8 @@ for (const scenario of scenarios) {
         if (!expected) return expect.fail(`Missing baseline for ${scenario.name}/${testCase.name}`);
         const actual = yield* runCase(yield* path.fromFileUrl(binaryUrl), scenario, testCase);
         expect(actual.exitCode).toBe(expected.exitCode);
-        expect(normalizeStdout(testCase.format, actual.stdout)).toStrictEqual(
+        expect(actual.requests).toEqual(expected.requests);
+        expect(normalizeStdout(testCase.format, actual.stdout)).toBe(
           normalizeStdout(testCase.format, expected.stdout),
         );
         expect(actual.stderr).toBe(expected.stderr);

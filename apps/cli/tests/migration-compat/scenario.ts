@@ -33,7 +33,7 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
     const { join } = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "migration-compat-home-" });
-    const seen = new Set<string>();
+    const requests: string[] = [];
     const unexpected = new Set<string>();
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
@@ -48,7 +48,7 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
               unexpected.add(key);
               return new Response(null, { status: 404 });
             }
-            seen.add(key);
+            requests.push(key);
             return Response.json(route.body, { status: route.status });
           },
         }),
@@ -97,7 +97,7 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
     const stdout = decoder.decode(Buffer.concat(out));
     const stderr = decoder.decode(Buffer.concat(err));
     const missing = Object.keys(testCase.routes).filter(
-      (key) => testCase.routes[key]?.required && !seen.has(key),
+      (key) => testCase.routes[key]?.required && !requests.includes(key),
     );
     if (exitCode !== testCase.exitCode || missing.length || unexpected.size) {
       return yield* new ScenarioError({
@@ -115,7 +115,7 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
           cause,
         }),
     });
-    return { exitCode, stdout, stderr } satisfies MachineOutput;
+    return { exitCode, stdout, stderr, requests } satisfies MachineOutput;
   },
   Effect.scoped,
   Effect.timeout("30 seconds"),

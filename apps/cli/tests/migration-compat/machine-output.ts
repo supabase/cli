@@ -6,6 +6,7 @@ export const MachineOutput = Schema.Struct({
   exitCode: Schema.Int,
   stdout: Schema.String,
   stderr: Schema.String,
+  requests: Schema.Array(Schema.String),
 });
 export interface MachineOutput extends Schema.Schema.Type<typeof MachineOutput> {}
 
@@ -22,9 +23,10 @@ export function normalizeStdout(format: MachineFormat, stdout: string) {
   const body = stdout.slice(0, -1);
   if (format === "json") {
     if (body !== body.trimEnd()) throw new Error("JSON must be followed immediately by one LF");
-    return parseJson(body);
+    parseJson(body);
+    return stdout;
   }
-  return body.split("\n").map((line, index) => {
+  const lines = body.split("\n").map((line, index) => {
     const location = `stdout line ${index + 1}`;
     if (line.includes("\r")) throw new Error(`${location} must use LF framing`);
     const event = parseJson(line);
@@ -39,6 +41,12 @@ export function normalizeStdout(format: MachineFormat, stdout: string) {
     ) {
       throw new Error(`Expected a UTC ISO timestamp with milliseconds on ${location}`);
     }
-    return { ...event, timestamp: "<timestamp>" };
+    const literal = `"${timestamp}"`;
+    const offset = line.indexOf(literal);
+    if (offset < 0 || offset !== line.lastIndexOf(literal)) {
+      throw new Error(`Cannot isolate the event timestamp on ${location}`);
+    }
+    return line.replace(literal, '"<timestamp>"');
   });
+  return `${lines.join("\n")}\n`;
 }
