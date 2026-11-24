@@ -332,6 +332,35 @@ function orderedRow(cols: ReadonlyArray<string>, values: ReadonlyArray<unknown>)
   return new OrderedJson([...byKey].sort(([a], [b]) => byteLess(a, b)));
 }
 
+/** The payload formats `db query` renders: `json|table|csv`. */
+export type QueryFormat = "json" | "table" | "csv";
+
+const SQL_PREVIEW_LENGTH = 120;
+
+/** The statement on one line, cut for a consent prompt. */
+export const sqlPreview = (sql: string): string => {
+  const oneLine = sql.replaceAll(/\s+/gu, " ").trim();
+  return oneLine.length > SQL_PREVIEW_LENGTH
+    ? `${oneLine.slice(0, SQL_PREVIEW_LENGTH)}...`
+    : oneLine;
+};
+
+/**
+ * An explicit `-o json|table|csv` always wins; otherwise JSON for agents and machine output
+ * formats, table for humans. Any other `-o` value (from the global union, e.g. `yaml`) falls
+ * through to that default rather than erroring.
+ */
+export function resolveQueryFormat(
+  explicit: string | undefined,
+  outputFormat: string,
+  agentMode: boolean,
+): QueryFormat {
+  if (explicit === "json") return "json";
+  if (explicit === "csv") return "csv";
+  if (explicit === "table" || explicit === "pretty") return "table";
+  return explicit === undefined && (outputFormat !== "text" || agentMode) ? "json" : "table";
+}
+
 /** The agent-mode RLS advisory. */
 export interface Advisory {
   readonly id: string;

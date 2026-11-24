@@ -1,5 +1,5 @@
 import { operationDefinitions } from "@supabase/api/effect";
-import { DateTime, Effect, FileSystem, Option, Path, Predicate, Ref, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -25,7 +25,6 @@ import {
 } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import type { DbQueryFlags } from "./query.command.ts";
@@ -43,39 +42,20 @@ import {
 } from "./query.errors.ts";
 import {
   type Advisory,
-  coerceLocalJsonRows,
-  findNonFiniteJsonValue,
-  formatLinkedValue,
   makeLocalCellFormatter,
-  orderedKeys,
-  renderJson,
-  renderTablewriter,
-  toCsv,
+  type QueryFormat,
+  resolveQueryFormat,
+  sqlPreview,
 } from "../../../command-internal/db/query.format.ts";
+import {
+  emitManagementApiRows,
+  emitQueryResult,
+} from "../../../command-internal/db/query-output.ts";
 import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
-
-/** The output formats `db query` selects: `json|table|csv`. */
-type ResolvedFormat = "json" | "table" | "csv";
 
 // Established output contract for a missing access token.
 const MISSING_TOKEN_MESSAGE =
   "Access token not provided. Supply an access token by running `supabase login` or setting the SUPABASE_ACCESS_TOKEN environment variable.";
-
-const BOUNDARY_BYTES = 16;
-
-const SQL_PREVIEW_LENGTH = 120;
-
-const sqlPreview = (sql: string): string => {
-  const oneLine = sql.replaceAll(/\s+/gu, " ").trim();
-  return oneLine.length > SQL_PREVIEW_LENGTH
-    ? `${oneLine.slice(0, SQL_PREVIEW_LENGTH)}...`
-    : oneLine;
-};
-
-const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-
-const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
-  element === null || Predicate.isObject(element);
 
 const toExecError = (cause: { readonly message: string }) =>
   new DbQueryExecError({ message: cause.message });
@@ -110,7 +90,6 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
-  const random = yield* Random;
   const agentFlag = yield* AgentFlag;
   const outputFlag = yield* OutputFlag;
   const aiTool = yield* AiTool;
@@ -118,53 +97,12 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
   const dbConn = yield* DbConnection;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Writes the resolved payload (json/table/csv) to stdout. There's no `--output-format` for
-  // `db query`, so CSV/table ignore agent mode and only JSON carries the agent envelope.
-  const emit = (
-    format: ResolvedFormat,
-    cols: ReadonlyArray<string>,
-    data: ReadonlyArray<ReadonlyArray<unknown>>,
-    agentMode: boolean,
-    advisory: Option.Option<Advisory>,
-    // `formatLinkedValue` for the linked path, an OID-aware formatter for local; only used for
-    // table/CSV cells since JSON output re-marshals the raw values.
-    formatCell?: (value: unknown, columnIndex: number) => string,
-    // Local-path column OIDs, used to coerce int8/bigint JSON cells to bare numbers; omitted on
-    // the linked path (already raw JSON values).
-    fieldTypeIds?: ReadonlyArray<number>,
-  ) =>
-    Effect.gen(function* () {
-      if (format === "table") {
-        return yield* output.raw(renderTablewriter(cols, data, formatCell));
-      }
-      if (format === "csv") {
-        return yield* output.raw(toCsv(cols, data, formatCell));
-      }
-      // The established JSON encoding fails on NaN/±Inf (empty stdout, exit 1); mirror that
-      // instead of letting `JSON.stringify` silently emit `null`.
-      const nonFinite = findNonFiniteJsonValue(data);
-      if (nonFinite !== undefined) {
-        return yield* new DbQueryExecError({
-          message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
-        });
-      }
-      const jsonData = fieldTypeIds === undefined ? data : coerceLocalJsonRows(data, fieldTypeIds);
-      const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
-      const rendered = renderJson(cols, jsonData, agentMode, boundary, advisory);
-      if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
-        const compactRendered = rendered.trimEnd().replaceAll("\n", "");
-        yield* output.raw(
-          `{"type":"result","data":${compactRendered},"timestamp":"${DateTime.formatIso(yield* DateTime.now)}"}\n`,
-        );
-        return;
-      }
-      yield* output.raw(rendered);
-    });
+  const encodeError = (message: string) => new DbQueryExecError({ message });
 
   const runLocal = (
     target: Pick<ResolvedDbConfig, "conn" | "isLocal" | "exposedSchemas">,
     sql: string,
-    format: ResolvedFormat,
+    format: QueryFormat,
     agentMode: boolean,
     readOnly: boolean,
   ) => {
@@ -197,22 +135,23 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
               )
             : Option.none<Advisory>();
 
-        yield* emit(
+        yield* emitQueryResult({
+          encodeError,
           format,
-          result.fields,
-          result.rows,
+          cols: result.fields,
+          data: result.rows,
           agentMode,
           advisory,
-          makeLocalCellFormatter(result.fieldTypeIds ?? []),
-          result.fieldTypeIds ?? [],
-        );
+          formatCell: makeLocalCellFormatter(result.fieldTypeIds ?? []),
+          fieldTypeIds: result.fieldTypeIds ?? [],
+        });
       }),
     );
   };
 
   const runLinked = (
     sql: string,
-    format: ResolvedFormat,
+    format: QueryFormat,
     agentMode: boolean,
     ref: string,
     readOnly: boolean,
@@ -251,24 +190,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         });
       }
 
-      // The API returns a JSON array of row objects for SELECT, or a plain command tag for
-      // DDL/DML; anything else is printed verbatim.
-      const decoded = yield* decodeJsonBody(body).pipe(Effect.option);
-      if (Option.isNone(decoded)) {
-        return yield* output.raw(`${body}\n`);
-      }
-      const rows = decoded.value;
-      if (!Array.isArray(rows) || !rows.every(isRowObject)) {
-        return yield* output.raw(`${body}\n`);
-      }
-      yield* Effect.annotateCurrentSpan("query.row_count", rows.length);
-      if (rows.length === 0) {
-        return yield* emit(format, [], [], agentMode, Option.none());
-      }
-      const orderedCols = orderedKeys(body);
-      const cols = orderedCols.length > 0 ? [...orderedCols] : Object.keys(rows[0] ?? {});
-      const data = rows.map((row) => cols.map((col) => row?.[col] ?? null));
-      yield* emit(format, cols, data, agentMode, Option.none(), formatLinkedValue);
+      yield* emitManagementApiRows(body, format, agentMode, encodeError);
     });
 
   yield* Effect.gen(function* () {
@@ -343,21 +265,9 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       });
     });
 
-    // 2. Resolve the payload format: an explicit `-o json|table|csv` always wins; otherwise
-    //    default to JSON for agents, table for humans. Any other `-o` value (from the global
-    //    union, e.g. `pretty|yaml|toml|env`) falls through to that default rather than erroring.
+    // 2. Resolve the payload format; see `resolveQueryFormat`.
     const agentMode = resolveAgentMode(agentFlag, aiTool.name);
-    const explicit = Option.getOrUndefined(outputFlag);
-    const format: ResolvedFormat =
-      explicit === "json"
-        ? "json"
-        : explicit === "csv"
-          ? "csv"
-          : explicit === "table" || explicit === "pretty"
-            ? "table"
-            : explicit === undefined && (output.format !== "text" || agentMode)
-              ? "json"
-              : "table";
+    const format = resolveQueryFormat(Option.getOrUndefined(outputFlag), output.format, agentMode);
 
     // Mirrors the resolved format onto the global telemetry reads, or instrumentation would
     // report the table/human default as `text`.
