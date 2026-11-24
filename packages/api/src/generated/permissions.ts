@@ -337,6 +337,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-restart-warehouse-replication": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
   "v2-add-warehouse-replication": {
     fga: [["project_admin_write", "database_write"]],
     oauthScope: "database:write",
