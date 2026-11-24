@@ -16,6 +16,7 @@ import {
   withManagedHandler,
 } from "../../command-internal/command-executor.ts";
 import { OutputFormatFlag } from "../../command-internal/global-flags.ts";
+import { StdoutClosedError } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
@@ -68,6 +69,8 @@ it.live.each([
   "cleanup-defect",
   "partial-write",
   "typed-failure",
+  "closed-error-writer",
+  "full-error-writer",
   "text-failure",
   "held-layer-release",
   "layer-release-defect",
@@ -75,6 +78,12 @@ it.live.each([
   Effect.gen(function* () {
     const format = scenario === "text-failure" ? "text" : "json";
     const out = mockOutput({ format });
+    const writerDefect =
+      scenario === "closed-error-writer"
+        ? new StdoutClosedError()
+        : scenario === "full-error-writer"
+          ? Object.assign(new Error("no space left on device"), { code: "ENOSPC" })
+          : undefined;
     const drainStarted = yield* Deferred.make<void>();
     const allowDrain = yield* Deferred.make<void>();
     const analyticsLayer = Layer.merge(
@@ -110,7 +119,11 @@ it.live.each([
           Effect.gen(function* () {
             const control = yield* ProcessControl;
             const writer = yield* Output;
-            if (scenario === "typed-failure" || scenario === "text-failure") {
+            if (
+              scenario === "typed-failure" ||
+              scenario === "text-failure" ||
+              writerDefect !== undefined
+            ) {
               return yield* Effect.fail(error);
             }
             yield* Effect.addFinalizer(() =>
@@ -128,12 +141,14 @@ it.live.each([
         runtime: {
           required,
           completion: Layer.mergeAll(
-            scenario === "partial-write"
+            scenario === "partial-write" || writerDefect !== undefined
               ? Layer.effect(
                   Output,
                   Output.use((writer) =>
                     Effect.succeed({
                       ...writer,
+                      fail: (report) =>
+                        writer.fail(report).pipe(Effect.andThen(Effect.die(writerDefect))),
                       result: () => writer.raw('{"value":').pipe(Effect.andThen(Effect.die(error))),
                     }),
                   ),
@@ -172,7 +187,7 @@ it.live.each([
         }
         yield* Deferred.await(drainStarted);
         expect(out.failures).toEqual(
-          scenario === "typed-failure"
+          scenario === "typed-failure" || writerDefect !== undefined
             ? [expect.objectContaining({ message: "managed failure" })]
             : [],
         );
@@ -185,7 +200,11 @@ it.live.each([
       );
       expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
       expect(attempts).toEqual([
-        scenario === "held-layer-release" ? 0 : scenario === "warning" ? 1 : 7,
+        scenario === "held-layer-release"
+          ? 0
+          : scenario === "warning" || scenario === "full-error-writer"
+            ? 1
+            : 7,
       ]);
       if (scenario === "warning") {
         expect(out.stderrText).toBe("Cleanup warning: restoration rejected\n");
@@ -198,7 +217,8 @@ it.live.each([
         expect(out.stdoutText).toBe("");
       }
       expect(out.failures).toEqual(
-        scenario === "typed-failure" ||
+        writerDefect !== undefined ||
+          scenario === "typed-failure" ||
           scenario === "text-failure" ||
           scenario === "cleanup-defect" ||
           scenario === "layer-release-defect"

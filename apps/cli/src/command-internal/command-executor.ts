@@ -14,6 +14,7 @@ import {
 import { Command } from "effect/cli";
 
 import { TerminalResponse } from "../shared/cli/terminal-response.service.ts";
+import { ignoreStdoutClosed } from "../shared/output/errors.ts";
 import { normalizeCliError } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { ProcessControl } from "../shared/runtime/process-control.service.ts";
@@ -165,7 +166,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       if (Option.isSome(typed)) {
         yield* beginWrite.pipe(
           Effect.andThen(
-            bestEffort(Effect.suspend(() => output.fail(normalizeCliError(typed.value)))),
+            ignoreStdoutClosed(Effect.suspend(() => output.fail(normalizeCliError(typed.value)))),
           ),
         );
       }
