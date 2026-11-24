@@ -484,4 +484,6 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   "v2-organizations-slug-webhooks-endpoints-id-test-post": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-get": { fga: [] },
   "v2-organizations-slug-webhooks-deliveries-id-retry-post": { fga: [] },
+  "v2-get-warehouse-ingestion-stats": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-storage-stats": { fga: [["database_read"]], oauthScope: "database:read" },
 };

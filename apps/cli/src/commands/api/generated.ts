@@ -259,6 +259,95 @@ export const apiCommands = [
     ],
   },
   {
+    command: ["warehouse", "inspect", "ingestion-stats"],
+    operationId: "v2-get-warehouse-ingestion-stats",
+    definition: "v2GetWarehouseIngestionStats",
+    summary: "Inspect Warehouse ingestion throughput and WAL lag",
+    description:
+      "Returns DuckLake ingestion throughput and WAL lag from the authorized pipelines and their independently resolved ETL regions. Select from six measurements: events received/processed per second, bytes received/processed per second, replication WAL lag and receive WAL lag. All six are selected by default. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and worker, replication-path or event-type dimensions are retained. WAL lag is bytes; negative sentinels become null. Processed throughput acknowledges destination acceptance, not guaranteed durability. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Maintenance, inline-flush and sampled storage-health measurements are available from storage-stats.",
+    readOnly: true,
+    flags: [
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+      },
+      {
+        name: "from",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+      },
+      {
+        name: "since",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
+      },
+      {
+        name: "to",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "from",
+        source: "flag",
+        flag: "from",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
+      },
+      {
+        location: "query",
+        name: "since",
+        source: "flag",
+        flag: "since",
+      },
+      {
+        location: "query",
+        name: "to",
+        source: "flag",
+        flag: "to",
+      },
+    ],
+  },
+  {
     command: ["warehouse", "inspect", "query-stats"],
     operationId: "v2-get-warehouse-query-stats",
     definition: "v2GetWarehouseQueryStats",
@@ -344,6 +433,95 @@ export const apiCommands = [
         name: "interval",
         source: "flag",
         flag: "interval",
+      },
+    ],
+  },
+  {
+    command: ["warehouse", "inspect", "storage-stats"],
+    operationId: "v2-get-warehouse-storage-stats",
+    definition: "v2GetWarehouseStorageStats",
+    summary: "Inspect Warehouse storage and maintenance statistics",
+    description:
+      "Returns up to eight DuckLake maintenance, inline-flush or sampled storage-health measurements from the authorized pipelines and their independently resolved ETL regions. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and allowed operation, outcome, table or controller-process dimensions are retained. Table summary means are observations across tables and time, not current inventories. Sampled health has unknown observation freshness: last_sample_at is scrape receipt, not a successful recent health sample. Catalog-wide metrics require the collector exclusive-ownership gate; shared catalogs remain unavailable. Maintenance pause outcomes differ from run outcomes, and result availability is per controller process without global latest-run ordering. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Throughput and WAL lag are available from ingestion-stats.",
+    readOnly: true,
+    flags: [
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+      },
+      {
+        name: "from",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+      },
+      {
+        name: "since",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
+      },
+      {
+        name: "to",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+    ],
+    bindings: [
+      {
+        location: "path",
+        name: "ref",
+        source: "target",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "from",
+        source: "flag",
+        flag: "from",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
+      },
+      {
+        location: "query",
+        name: "since",
+        source: "flag",
+        flag: "since",
+      },
+      {
+        location: "query",
+        name: "to",
+        source: "flag",
+        flag: "to",
       },
     ],
   },
