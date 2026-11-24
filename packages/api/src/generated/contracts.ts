@@ -15396,6 +15396,27 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
           id: Schema.String.check(
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
+          diagnostic: Schema.Union([
+            Schema.Struct({
+              code: Schema.Union([
+                Schema.Literals([
+                  "out_of_memory",
+                  "process_exited",
+                  "crash_loop",
+                  "image_unavailable",
+                  "configuration_error",
+                  "startup_failed",
+                  "runtime_failed",
+                ]),
+                OpenString,
+              ]),
+              message: Schema.String,
+            }).annotate({
+              description:
+                "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are omitted.",
+            }),
+            Schema.Null,
+          ]),
           status: Schema.Union([
             Schema.Literals([
               "stopped",
@@ -15507,7 +15528,7 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
             ]),
           }).annotate({
             description:
-              "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
+              "Slot health can remain visible during runtime recovery. Lag measurements and feedback age are unavailable unless the pipeline is started.",
           }),
           Schema.Null,
         ]),
@@ -15551,6 +15572,95 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
           ]),
           OpenString,
         ]),
+        progress: Schema.Union([
+          Schema.Struct({
+            observation: Schema.Union([
+              Schema.Literals(["current", "last_known", "unavailable"]),
+              OpenString,
+            ]),
+            selected: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            queued: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            copying_table: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            copied_table: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            following_wal: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            error: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            unknown: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }).annotate({
+            description:
+              "Observed states of the selected tables, not completion or percentage of a specific mutation. Last-known states may predate a restart or resync. Null when the selection is unavailable.",
+          }),
+          Schema.Null,
+        ]),
         items: Schema.Array(
           Schema.Struct({
             id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -15574,6 +15684,28 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
                 Schema.Null,
               ]),
               OpenString,
+            ]),
+            state_observation: Schema.Union([
+              Schema.Literals(["current", "last_known", "unavailable"]),
+              OpenString,
+            ]),
+            error: Schema.Union([
+              Schema.Struct({
+                reason: Schema.String,
+                solution: Schema.Union([Schema.String, Schema.Null]),
+                retry_policy: Schema.Union(
+                  [
+                    Schema.Struct({ policy: Schema.Literal("no_retry") }),
+                    Schema.Struct({ policy: Schema.Literal("manual_retry") }),
+                    Schema.Struct({
+                      policy: Schema.Literal("timed_retry"),
+                      next_retry: Schema.String,
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+              }),
+              Schema.Null,
             ]),
             sync_lag: Schema.Union([
               Schema.Struct({
@@ -15640,13 +15772,20 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
       }),
       capabilities: Schema.Struct({
         context: Schema.Boolean,
-        workload_metrics: Schema.Boolean,
-        query_explain: Schema.Boolean,
+        workload_metrics: Schema.Boolean.annotate({
+          description:
+            "Query statistics and capacity inspection are supported by the Management API. Metric availability is reported separately.",
+        }),
+        query_explain: Schema.Boolean.annotate({
+          description:
+            "Whether the Management API supports a query-explain operation. SQL EXPLAIN through the Warehouse connection is independent of this flag.",
+        }),
         table_layout_read: Schema.Boolean,
         table_layout_update: Schema.Boolean,
         replication_add: Schema.Boolean,
         replication_remove: Schema.Boolean,
         table_resync: Schema.Boolean,
+        replication_restart: Schema.Boolean,
       }).annotate({
         description:
           "Complete operations supported by this API, not caller authorization. Each operation still requires its feature, entitlement and project permission checks.",
@@ -20230,6 +20369,36 @@ export const V2RemoveWarehouseReplicationOutput = Schema.Struct({
     }),
   }),
 });
+export const V2RestartWarehouseReplicationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2RestartWarehouseReplicationOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_replication_restart").annotate({
+      description: "Resource type.",
+    }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      pipeline_id: Schema.String,
+      action: Schema.Union([Schema.Literals(["start", "restart"]), OpenString]),
+      application_status: Schema.Literal("accepted").annotate({
+        description:
+          "The runtime request was accepted. This does not establish resumed replication or completed initial copies.",
+      }),
+      pipeline_status_before: Schema.String,
+    }),
+  }),
+});
 export const V2ResyncWarehouseReplicationInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -21210,7 +21379,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
           Schema.Null,
         ]).annotate({
           description:
-            "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+            'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
         }),
         partition_by: Schema.optionalKey(
           Schema.Union([
@@ -21247,7 +21416,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
               }),
             ).annotate({
               description:
-                "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
             }),
             Schema.Null,
           ]),
@@ -21294,7 +21463,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
             Schema.Null,
           ]).annotate({
             description:
-              "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+              'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
           }),
         ),
         partition_by: Schema.Union([
@@ -21329,7 +21498,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
             }),
           ).annotate({
             description:
-              "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+              'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
           }),
           Schema.Null,
         ]),
@@ -21763,6 +21932,7 @@ export const openApiOperationIdMap = {
   "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
   "v2-remove-organization-members": "v2RemoveOrganizationMembers",
   "v2-remove-warehouse-replication": "v2RemoveWarehouseReplication",
+  "v2-restart-warehouse-replication": "v2RestartWarehouseReplication",
   "v2-resync-warehouse-replication": "v2ResyncWarehouseReplication",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
@@ -25018,7 +25188,7 @@ export const operationDefinitions = {
   v2GetWarehouseStatus: {
     id: "v2GetWarehouseStatus",
     description:
-      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions. Runtime diagnostics classify current failures. Table errors and progress are explicitly current, last-known or unavailable; they do not establish completion of a particular restart or resync. Capabilities describe Management API operations: workload_metrics includes query-stats and capacity; query_explain does not describe SQL EXPLAIN through the Warehouse connection.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/status",
     pathParams: ["ref"],
@@ -25519,6 +25689,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2RemoveWarehouseReplicationInput,
     outputSchema: V2RemoveWarehouseReplicationOutput,
+  },
+  v2RestartWarehouseReplication: {
+    id: "v2RestartWarehouseReplication",
+    description:
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/replication/restart",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2RestartWarehouseReplicationInput,
+    outputSchema: V2RestartWarehouseReplicationOutput,
   },
   v2ResyncWarehouseReplication: {
     id: "v2ResyncWarehouseReplication",
