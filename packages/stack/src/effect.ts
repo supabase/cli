@@ -381,6 +381,14 @@ const ownerGone = (cause: unknown) =>
       Predicate.hasProperty(cause.reason.cause.response, "status") &&
       cause.reason.cause.response.status === 401));
 
+/** A transport failure on an accepted connection, such as a reset, rather than a refusal or an HTTP status. */
+const lostMidCall = (cause: unknown) =>
+  Schema.is(RpcClientError)(cause) &&
+  !ownerGone(cause) &&
+  cause.reason._tag === "HttpError" &&
+  Predicate.hasProperty(cause.reason, "kind") &&
+  cause.reason.kind === "TransportError";
+
 interface Connection {
   readonly access: HostAccess;
   readonly rpc: Client;
@@ -541,7 +549,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
     ownerGone(cause) ? invalidate(connection) : Effect.void;
   if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
-  /** Reads the lease and the owner log tail after a call to `access` lost its connection. */
   const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (access: HostAccess) {
     const pid = access.endpoint.pid;
     const lease: LostOwnerLease = yield* Effect.gen(function* () {
@@ -568,7 +575,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });
     return lostOwnerDetail({ pid, lease, log, logTail });
   });
-  /** Runs `run` on a borrowed connection, recording which owner it reached in `reached`. */
   const invoke = <A, E, R>(
     run: (rpc: Client) => Effect.Effect<A, E, R>,
     reach: Reach,
@@ -593,7 +599,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           Effect.gen(function* () {
             const access = yield* Ref.get(reached);
             const detail =
-              Schema.is(RpcClientError)(cause) && !ownerGone(cause) && access !== undefined
+              lostMidCall(cause) && access !== undefined
                 ? yield* observeLostOwner(access)
                 : undefined;
             return yield* failure(operation, cause, undefined, detail);

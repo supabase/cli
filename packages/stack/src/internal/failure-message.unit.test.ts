@@ -67,4 +67,17 @@ describe("lostOwnerDetail", () => {
       "the stack lease of owner 4242 could not be read: EACCES (owner log: /state/stack/owner.log)",
     );
   });
+
+  it("names the owner that replaced the called one", () => {
+    expect(
+      lostOwnerDetail({
+        pid: 4242,
+        lease: { _tag: "Replaced", holderPid: 5151 },
+        log: "/state/stack/owner.log",
+        logTail: "",
+      }),
+    ).toBe(
+      "owner 4242 no longer holds the stack lease; owner 5151 holds it now (owner log: /state/stack/owner.log)",
+    );
+  });
 });
