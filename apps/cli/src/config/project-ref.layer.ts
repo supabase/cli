@@ -229,6 +229,16 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return Option.some(flagValue.value);
           }
+          const modeDefault = yield* DefaultProjectRef;
+          if (Option.isSome(modeDefault)) {
+            const project = yield* modeDefault.value.pipe(
+              Effect.provideService(CommandSettings, cliSettings),
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.option,
+            );
+            if (Option.isSome(project)) return Option.some(project.value.ref);
+          }
           if (Option.isSome(cliSettings.projectId)) {
             return cliSettings.projectId;
           }

@@ -29,6 +29,7 @@ import { withDevInstanceTarget } from "../spark-target.ts";
 
 const HEALTHY = "ACTIVE_HEALTHY";
 const HEALTHY_TIMEOUT_SECONDS = 60;
+const CREATE_TIMEOUT_SECONDS = 60;
 
 /** `dev-<folder>-<6 hex>`, the folder reduced to lowercase letters, digits and dashes. */
 const devInstanceName = Effect.fnUntraced(function* (root: string) {
@@ -146,10 +147,23 @@ const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option
   const name = yield* devInstanceName(path.resolve(settings.workdir));
   yield* ensureDevInstanceWritable();
   yield* output.raw(`Creating dev instance ${name} in organization ${organization}...\n`, "stderr");
-  // Uninterruptible as a pair: an interrupt between the two would leave a project nothing records.
-  const created = yield* Effect.uninterruptible(
+  // The write follows the create uninterruptibly: an interrupt between the two would leave a project
+  // nothing records. The call itself stays interruptible and bounded, so a stalled answer cannot
+  // hold the lock for good.
+  const created = yield* Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const ref = yield* createSparkProject({ name, organizationSlug: organization });
+      const ref = yield* restore(
+        createSparkProject({ name, organizationSlug: organization }).pipe(
+          Effect.timeoutOrElse({
+            duration: `${CREATE_TIMEOUT_SECONDS} seconds`,
+            orElse: () =>
+              new SparkDevInstanceError({
+                reason: "timeout",
+                message: `Creating the dev instance ${name} got no answer within ${CREATE_TIMEOUT_SECONDS} seconds. The project may or may not have been created: check \`supabase projects list\`, then run \`supabase start\` again.`,
+              }),
+          }),
+        ),
+      );
       const state: DevInstanceState = {
         ref,
         name,

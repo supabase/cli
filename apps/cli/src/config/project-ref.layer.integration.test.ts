@@ -20,6 +20,7 @@ import {
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { projectRefLayer, projectRefPicker } from "./project-ref.layer.ts";
 import { CommandSettings } from "./command-settings.service.ts";
+import { ProjectRefNotLinkedError } from "./project-ref.errors.ts";
 import { DefaultProjectRef, ProjectRefResolver } from "./project-ref.service.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
@@ -245,6 +246,44 @@ describe("projectRefLayer with a mode default project", () => {
   const FLAG_REF = "flagflagflagflagflag";
   const LINK_REF = "linklinklinklinklink";
 
+  const resolveOptionalWith = (
+    modeDefault: "found" | "missing" | "none",
+    flag: Option.Option<string>,
+  ) =>
+    Effect.gen(function* () {
+      const output = mockOutput();
+      const layer = projectRefLayer.pipe(
+        Layer.provide(mockCommandSettings({ workdir: workdir.current, projectId: Option.none() })),
+        Layer.provide(mockTty({ stdinIsTty: false })),
+        Layer.provide(output.layer),
+        Layer.provide(commandTargetLayer.pipe(Layer.provide(output.layer))),
+        Layer.provide(mockCommandPlatformApi({ response: { status: 200, body: [] } }).factoryLayer),
+        Layer.provide(BunServices.layer),
+      );
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = path.join(workdir.current, "supabase", ".temp");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        yield* fs.writeFileString(path.join(tempDir, "project-ref"), LINK_REF);
+        const { resolveOptional } = yield* ProjectRefResolver;
+        return yield* resolveOptional(flag);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(
+          DefaultProjectRef,
+          modeDefault === "none"
+            ? Option.none()
+            : Option.some(
+                modeDefault === "found"
+                  ? Effect.succeed({ ref: DEFAULT_REF, name: "dev" })
+                  : Effect.fail(new ProjectRefNotLinkedError({ message: "no dev instance" })),
+              ),
+        ),
+        Effect.provide(BunServices.layer),
+      );
+    });
+
   const resolveWith = (modeDefault: boolean, flag: Option.Option<string>, withEnv = true) => {
     const output = mockOutput();
     const layer = projectRefLayer.pipe(
@@ -292,6 +331,17 @@ describe("projectRefLayer with a mode default project", () => {
     Effect.gen(function* () {
       const resolved = yield* resolveWith(true, Option.some(FLAG_REF));
       expect(resolved).toMatchObject({ ref: FLAG_REF, source: "flag" });
+    }),
+  );
+
+  it.effect("resolveOptional marks the mode default, then the link when there is none", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveOptionalWith("found", Option.none())).toEqual(Option.some(DEFAULT_REF));
+      expect(yield* resolveOptionalWith("found", Option.some(FLAG_REF))).toEqual(
+        Option.some(FLAG_REF),
+      );
+      expect(yield* resolveOptionalWith("missing", Option.none())).toEqual(Option.some(LINK_REF));
+      expect(yield* resolveOptionalWith("none", Option.none())).toEqual(Option.some(LINK_REF));
     }),
   );
 

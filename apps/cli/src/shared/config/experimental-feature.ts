@@ -1,6 +1,6 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { cliConfigFormatForPath, parseCliConfigDocument } from "@supabase/config/internal";
-import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
+import { Config, Data, Effect, FileSystem, Option, Path, Predicate, Result, Schema } from "effect";
 import { type CliConfigSources, pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
@@ -70,7 +70,11 @@ export const readExperimentalFeatureConfig = (input: {
   readonly feature: ExperimentalFeature;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-}): Effect.Effect<boolean | undefined, never, FileSystem.FileSystem | Path.Path> =>
+}): Effect.Effect<
+  boolean | undefined,
+  ExperimentalFeatureFlagError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -88,12 +92,30 @@ export const readExperimentalFeatureConfig = (input: {
       parseCliConfigDocument(content, cliConfigFormatForPath(project.configPath)),
     );
     const table = featureTables[input.feature];
+    if (input.feature === "sparkDevInstance") {
+      // Early decoding takes literal booleans only, so a schema-valid `env(...)` reference would
+      // read as unset and silently select the mainline stack.
+      const experimental = Predicate.isObject(document) ? document["experimental"] : undefined;
+      const spark = Predicate.isObject(experimental) ? experimental[table] : undefined;
+      const raw = Predicate.isObject(spark) ? spark["dev_instance"] : undefined;
+      if (raw !== undefined && typeof raw !== "boolean")
+        return yield* new ExperimentalFeatureFlagError({
+          envName: CliConfigKeys.experimental.spark.devInstance.env[0] ?? "",
+          message:
+            "experimental.spark.dev_instance must be the literal true or false in the config file: an env(...) reference is not read at this stage. Set SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE in the shell instead.",
+        });
+    }
     const schema = Schema.Struct({
       experimental: Schema.optionalKey(Schema.Struct({ [table]: featureSchemas[input.feature] })),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
     return featureEnabled(input.feature, decoded.experimental?.[table]);
-  }).pipe(Effect.orElseSucceed(() => undefined));
+  }).pipe(
+    Effect.catchIf(
+      (error) => !(error instanceof ExperimentalFeatureFlagError),
+      () => Effect.undefined,
+    ),
+  );
 
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,

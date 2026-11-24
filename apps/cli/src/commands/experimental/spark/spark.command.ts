@@ -11,7 +11,11 @@ import { sparkLinkCommand } from "./link/link.command.ts";
 import { sparkMigrationFetchCommand } from "./migration/fetch/fetch.command.ts";
 import { sparkMigrationListCommand } from "./migration/list/list.command.ts";
 import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
-import { devInstanceHostedLayer, SparkDevInstanceMode } from "./spark-dev-instance.ts";
+import {
+  devInstanceDefaultProjectLayer,
+  devInstanceHostedLayer,
+  SparkDevInstanceMode,
+} from "./spark-dev-instance.ts";
 import { sparkDevStartCommand } from "./start/start.command.ts";
 import { sparkDevStatusCommand } from "./status/status.command.ts";
 import { sparkDevStopCommand } from "./stop/stop.command.ts";
@@ -64,6 +68,15 @@ export const sparkDevInstanceCommands = [
   sparkMigrationCommand.pipe(Command.provide(devInstanceMode)),
   sparkGenCommand.pipe(Command.provide(devInstanceMode)),
 ] as const;
+
+/**
+ * A mainline command with no project flags (`projects list`) mounted in the dev-instance tree: its
+ * soft project lookup finds the dev instance when the checkout has one, so no "not linked"
+ * warning is printed and the instance's row is the marked one.
+ */
+export const withSparkDevInstanceDefault = <const Name extends string, Input, ContextInput, E, R>(
+  command: Command.Command<Name, Input, ContextInput, E, R>,
+) => command.pipe(Command.provide(devInstanceDefaultProjectLayer));
 
 interface DevInstanceHelp {
   readonly description: string;

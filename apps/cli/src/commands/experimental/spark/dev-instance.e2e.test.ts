@@ -86,6 +86,9 @@ const DevInstanceStatus = Schema.fromJsonString(
   }),
 );
 const Projects = Schema.fromJsonString(Schema.Array(Schema.Struct({ ref: Schema.String })));
+const MarkedProjects = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ ref: Schema.String, linked: Schema.Boolean })),
+);
 const StateFile = Schema.fromJsonString(
   Schema.Struct({
     ref: Schema.String,
@@ -105,7 +108,12 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   let profilePath = "";
   let failedStep: string | undefined;
   const running = new Map<string, RunningInstance>();
-  const faults: ManagementApiFaults = { apiKeysFailures: 0, nullApiUrl: false, resetFailures: 0 };
+  const faults: ManagementApiFaults = {
+    apiKeysFailures: 0,
+    nullApiUrl: false,
+    resetFailures: 0,
+    stallCreate: false,
+  };
   const received: ManagementApiLog = { deploys: [], bulkUpdates: [] };
   let firstRef = "";
   let secondRef = "";
@@ -240,6 +248,13 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   const projectRefs = (cwd: string) =>
     Effect.map(run(["projects", "list", "-o", "json"], cwd), (result) =>
       Schema.decodeSync(Projects)(result.stdout).map((project) => project.ref),
+    );
+  /** The refs `projects list` marks in its `linked` column. */
+  const markedRefs = (cwd: string) =>
+    Effect.map(run(["projects", "list", "-o", "json"], cwd), (result) =>
+      Schema.decodeSync(MarkedProjects)(result.stdout)
+        .filter((project) => project.linked)
+        .map((project) => project.ref),
     );
   const status = (cwd: string) =>
     Effect.map(run(["status", "-o", "json"], cwd), (result) =>
@@ -395,6 +410,20 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   );
 
   step(
+    "start: a create that never answers times out, says so, and leaves no state and no lock",
+    Effect.gen(function* () {
+      faults.stallCreate = true;
+      const stalled = yield* runFails(["start", "--org", "org-a"], projectDir).pipe(
+        Effect.ensuring(Effect.sync(() => (faults.stallCreate = false))),
+      );
+      expect(stalled.log).toContain("may or may not have been created");
+      expect(stalled.log).toContain("supabase projects list");
+      expect(yield* projectRefs(projectDir)).toEqual([]);
+      expect(yield* exists(stateFile(projectDir))).toBe(false);
+    }),
+  );
+
+  step(
     "start: refuses to pick between organizations; a start that fails after the create is resumed by the next one",
     Effect.gen(function* () {
       const ambiguous = yield* runFails(["start"], projectDir);
@@ -444,6 +473,14 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
       expect(report.ref).toBe(firstRef);
       expect(report.status).toBe("ACTIVE_HEALTHY");
       expect(report.rest_url).toBe(`${report.api_url}/rest/v1`);
+      const listed = yield* run(["projects", "list"], projectDir);
+      expect(listed.log, "no link needed to find the dev instance").not.toContain(
+        "Cannot find project ref",
+      );
+      expect(yield* markedRefs(projectDir)).toEqual([firstRef]);
+      const keys = (yield* run(["projects", "api-keys", "--reveal", "-o", "json"], projectDir))
+        .stdout;
+      expect(keys, "api-keys defaults to the dev instance").toContain(report.service_role_key);
       const client = yield* HttpClient.HttpClient;
       const asService = yield* client.get(`${report.rest_url}/todos?select=title`, {
         headers: {

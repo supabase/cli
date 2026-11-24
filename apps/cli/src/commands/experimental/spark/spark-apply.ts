@@ -144,12 +144,21 @@ export const runSeedFiles = Effect.fn("Spark.runSeedFiles")(function* () {
     .pipe(Effect.mapError(configFailure));
   const { files, warnings } = yield* sqlFilesGlob(fs, path, patterns.value, workdir);
   if (warnings.length > 0) yield* output.raw(`WARN: ${warnings.join("\n")}\n`, "stderr");
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     yield* output.raw(`Seeding data from ${file}...\n`, "stderr");
-    const sql = yield* fs.readFileString(resolveUnderWorkdir(path, workdir, file));
+    const replay = `Each seed file is committed on its own, so the files before it already ran, and the next run replays the seed from the first file and fails on their rows. Run \`supabase db reset\` to empty the database and replay the migrations and seed.`;
+    const sql = yield* fs.readFileString(resolveUnderWorkdir(path, workdir, file)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SparkBackendError({
+            message: `Seeding ${file} failed: cannot read it: ${cause.message}.${index === 0 ? "" : ` ${replay}`}`,
+            cause,
+          }),
+      ),
+    );
     yield* spark.runQuery(sql, false).pipe(
       Effect.mapError((error) => {
-        const message = `Seeding ${file} failed: ${error.message}. Each seed file is committed on its own, so the files before it already ran, and the next run replays the seed from the first file and fails on their rows. Run \`supabase db reset\` to empty the database and replay the migrations and seed.`;
+        const message = `Seeding ${file} failed: ${error.message}. ${replay}`;
         return error._tag === "SparkApiError"
           ? new SparkApiError({
               message,

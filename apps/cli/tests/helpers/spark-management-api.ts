@@ -88,6 +88,8 @@ export interface ManagementApiFaults {
   nullApiUrl: boolean;
   /** How many of the next `POST /v1/projects/{ref}/database/reset` calls answer 400, resetting nothing. */
   resetFailures: number;
+  /** `POST /v1/projects` does not answer, creating nothing, until the test clears the fault. */
+  stallCreate: boolean;
 }
 
 /** What the multi-project stand-in received, for a test to assert on. */
@@ -232,6 +234,12 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
     const organization = organizations.find((org) => org.slug === body.organization_slug);
     if (organization === undefined)
       return json({ message: `no organization ${body.organization_slug}` }, 404);
+    if (faults?.stallCreate === true) {
+      // Held until the test clears the fault, then dropped without creating anything, so the
+      // listener's shutdown does not wait on a handler that never ends.
+      while (faults.stallCreate) yield* Effect.sleep("100 millis");
+      return json({ message: "the create was dropped (injected)" }, 500);
+    }
     const ref = yield* randomRef;
     const connection = yield* options.instances.create(ref);
     const project: HostedProject = {

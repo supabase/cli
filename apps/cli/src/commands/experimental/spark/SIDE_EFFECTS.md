@@ -28,6 +28,10 @@ tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projec
 effects), `start`, `status`, `stop`, `link`, and the `db`, `migration` and `gen` groups above. No local
 stack is started or read.
 
+- `projects api-keys` acts on the dev instance when neither `--project-ref` nor `--remote` is given, as
+  the commands below do. `projects list` prints no "Cannot find project ref" warning and marks the
+  dev instance's row in the `linked` column when the state file has a finished instance (the
+  link is used otherwise).
 - `functions list|deploy|delete` and `secrets set|list|unset` act on the dev instance when neither
   `--project-ref` nor `--remote` is given: its ref comes from the state file (no file, or one
   `start` has not finished, fails as the `db` commands do), and the target banner names the
@@ -60,8 +64,9 @@ stack is started or read.
   (`Finishing the setup of dev instance <name> (<ref>)...`). Otherwise the organization is
   `--org`, the linked project's (`supabase/.link.json`), or the account's only one (several, or
   none, fail and say how to choose); it creates `dev-<folder>-<6 hex>` with `POST /v1/projects`
-  `{name, organization_slug, postgres_engine: "spark"}` (no `db_pass`, no region) and writes the
-  state file at once with the ref. It then polls `GET /v1/projects/{ref}` every second until
+  `{name, organization_slug, postgres_engine: "spark"}` (no `db_pass`, no region; no answer within
+  60 s fails saying the project may or may not exist, and to check `supabase projects list`) and
+  writes the state file at once with the ref. It then polls `GET /v1/projects/{ref}` every second until
   `status` is `ACTIVE_HEALTHY` (60 s, then it fails naming the ref and its last status, and a
   later `start` keeps waiting for the same project), reads `GET /v1/projects/{ref}/api-keys`
   (`anon`, `service_role`) and adds the URL and keys to the state file. The API URL is the
@@ -77,10 +82,12 @@ stack is started or read.
   `DELETE /v1/projects/{ref}` (a 404 counts as deleted), then removes the state file; it works on
   an instance `start` has not finished.
 - `db reset`: `POST /v1/projects/{ref}/database/reset` with `{}`; once that succeeds it records the
-  seed as not run (a rejected reset leaves the state file as it was), then runs the pending
+  seed as not run, in one uninterruptible step (a rejected reset leaves the state file as it was; an
+  interrupt, or no answer within 60 s, records the seed as not run too, since the reset may have
+  happened), then runs the pending
   migrations and the seed files as `start` runs them, and records the seed as run. A seed file
-  that fails names the file and says to run `supabase db reset`, since the files before it were
-  committed.
+  that fails, or cannot be read after an earlier one ran, names the file and says to run
+  `supabase db reset`, since the files before it were committed.
 
 ## Files Read
 
@@ -111,8 +118,8 @@ management_api_url, api_url?, anon_key?, service_role_key?, seeded?}`. `api_url`
   absent until `start` finishes; `seeded` is whether the seed files ran on the current database.
   Before the first write, `.temp` is appended to `supabase/.gitignore` when that file (created if
   missing, left alone when it is a symlink) does not list it. `start` does this, and publishes and
-  removes a `dev-instance.json.probe` file there, before it creates a project, so a local write
-  error creates nothing remote.
+  removes a `dev-instance.json.probe` file there (also when the write fails or is interrupted), before it
+  creates a project, so a local write error creates nothing remote.
 - `supabase/.temp/dev-instance.lock` (`start`, `stop --delete`, `db reset` in dev-instance mode).
 
 ## API Routes

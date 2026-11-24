@@ -200,8 +200,9 @@ export const ensureDevInstanceWritable = Effect.fn("SparkDevInstance.ensureWrita
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
     yield* ensureGitignore(fs, path, path.resolve(settings.workdir), [".temp"]);
     const probe = `${file}.probe`;
-    yield* publish(fs, path, { target: probe, content: "" });
-    yield* fs.remove(probe, { force: true });
+    yield* publish(fs, path, { target: probe, content: "" }).pipe(
+      Effect.ensuring(Effect.ignore(fs.remove(probe, { force: true }))),
+    );
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -271,6 +272,12 @@ const devInstanceReport = (state: ReadyDevInstanceState, status: string) => {
 const devInstanceDefaultProject = requireReadyDevInstanceState().pipe(
   Effect.map((state) => ({ ref: state.ref, name: state.name })),
   Effect.mapError((error) => new ProjectRefNotLinkedError({ message: error.message })),
+);
+
+/** Makes the dev instance the default project of the commands it is provided to. */
+export const devInstanceDefaultProjectLayer = Layer.succeed(
+  DefaultProjectRef,
+  Option.some(devInstanceDefaultProject),
 );
 
 const API_ONLY_DEPLOY =

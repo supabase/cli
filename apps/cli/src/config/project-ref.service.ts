@@ -55,7 +55,7 @@ interface ProjectRefResolverShape {
     never
   >;
   /**
-   * Soft resolution chain (flag → `cliSettings.projectId` → the link), with no prompt and no
+   * Soft resolution chain (flag → the mode's {@link DefaultProjectRef}, when it resolves → `cliSettings.projectId` → the link), with no prompt and no
    * failure; returns `None` when nothing resolves. Unlike `resolve`, the value is not
    * format-validated — safe only because every caller treats it as a display marker, never
    * an API input; a caller needing validation must do it itself.

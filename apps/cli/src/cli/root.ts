@@ -27,6 +27,7 @@ import { computeCommand } from "../commands/experimental/compute/compute.command
 import {
   sparkCommands,
   sparkDevInstanceCommands,
+  withSparkDevInstanceDefault,
   withSparkDevInstanceProject,
 } from "../commands/experimental/spark/spark.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
@@ -49,6 +50,10 @@ import { notebooksCommand } from "../commands/notebooks/notebooks.command.ts";
 import { orgsCommand } from "../commands/orgs/orgs.command.ts";
 import { orgsListCommand } from "../commands/orgs/list/list.command.ts";
 import { postgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
+import { projectsApiKeysCommand } from "../commands/projects/api-keys/api-keys.command.ts";
+import { projectsCreateCommand } from "../commands/projects/create/create.command.ts";
+import { projectsDeleteCommand } from "../commands/projects/delete/delete.command.ts";
+import { projectsListCommand } from "../commands/projects/list/list.command.ts";
 import { projectsCommand } from "../commands/projects/projects.command.ts";
 import { pullCommand } from "../commands/pull/pull.command.ts";
 import { secretsCommand } from "../commands/secrets/secrets.command.ts";
@@ -253,12 +258,37 @@ const sparkSecretsCommand = Command.make("secrets").pipe(
   ]),
 );
 
+/** `projects` in a Spark dev-instance tree: `list` marks the dev instance and `api-keys` defaults to it. */
+const sparkProjectsCommand = Command.make("projects").pipe(
+  Command.withDescription("Manage Supabase projects."),
+  Command.withShortDescription("Manage projects"),
+  Command.withSubcommands([
+    withSparkDevInstanceDefault(projectsListCommand),
+    projectsCreateCommand,
+    withSparkDevInstanceProject(projectsApiKeysCommand, {
+      description:
+        "List all API keys for the dev instance. Pass --project-ref to list another project's.",
+      examples: [
+        {
+          command: "supabase projects api-keys",
+          description: "List all API keys for the dev instance",
+        },
+        {
+          command: "supabase projects api-keys --reveal --output json",
+          description: "List the dev instance's API keys with the secret keys revealed in full",
+        },
+      ],
+    }),
+    projectsDeleteCommand,
+  ]),
+);
+
 /** The mainline commands a Spark dev-instance tree adds to its own `start`, `status` and `stop`. */
 const sparkDevInstanceAccountCommands = [
   loginCommand,
   logoutCommand,
   sparkOrgsCommand,
-  projectsCommand,
+  sparkProjectsCommand,
   sparkFunctionsCommand,
   sparkSecretsCommand,
 ] as const;

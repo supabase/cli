@@ -10,6 +10,7 @@ import { TelemetryState } from "../../../../../telemetry/telemetry-state.service
 import { applyPendingMigrations, runSeedFiles } from "../../spark-apply.ts";
 import {
   requireReadyDevInstanceState,
+  SparkDevInstanceError,
   SparkDevInstanceMode,
   withDevInstanceLock,
   writeDevInstanceState,
@@ -75,10 +76,15 @@ const runSpark = (executable: string, args: ReadonlyArray<string>) =>
     ),
   );
 
+const RESET_TIMEOUT_SECONDS = 60;
+
 /**
  * The dev instance's reset: Spark empties it, then the migrations and seed files run again. The
  * state file records the seed as not run once the database is empty, until the seed succeeds, so
- * a failed reset seeds on `start`; a reset that fails before emptying the database leaves it as it was.
+ * a failed reset seeds on `start`; a reset the API rejects leaves the database and the marker as
+ * they were. The remote reset and the marker's clearing are one uninterruptible step, and a reset
+ * whose outcome is unknown (an interrupt or no answer within a minute) clears the marker too, so
+ * the next `start` seeds or fails loudly instead of skipping the seed on an empty database.
  */
 const resetDevInstance = withDevInstanceLock(
   Effect.gen(function* () {
@@ -86,8 +92,26 @@ const resetDevInstance = withDevInstanceLock(
     yield* withDevInstanceTarget(
       Effect.gen(function* () {
         const spark = yield* SparkTarget;
-        yield* spark.resetDatabase.pipe(Effect.withSpan("spark.db.reset.remote"));
-        yield* writeDevInstanceState({ ...state, seeded: false });
+        const clearMarker = writeDevInstanceState({ ...state, seeded: false });
+        yield* Effect.uninterruptibleMask((restore) =>
+          restore(
+            spark.resetDatabase.pipe(
+              Effect.withSpan("spark.db.reset.remote"),
+              Effect.timeoutOrElse({
+                duration: `${RESET_TIMEOUT_SECONDS} seconds`,
+                orElse: () =>
+                  Effect.andThen(
+                    clearMarker,
+                    new SparkDevInstanceError({
+                      reason: "timeout",
+                      message: `Resetting the dev instance ${state.ref} got no answer within ${RESET_TIMEOUT_SECONDS} seconds, so it may or may not have been emptied. Run \`supabase db reset\` again.`,
+                    }),
+                  ),
+              }),
+              Effect.onInterrupt(() => Effect.ignore(clearMarker)),
+            ),
+          ).pipe(Effect.andThen(clearMarker)),
+        );
         yield* applyPendingMigrations;
         yield* runSeedFiles();
       }),

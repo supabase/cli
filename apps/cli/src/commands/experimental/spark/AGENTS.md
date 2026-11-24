@@ -16,8 +16,9 @@ and `stop` (`start/`, `status/`, `stop/`) manage a remote dev instance through t
 provided `SparkDevInstanceMode`, so `withSparkTarget` sends a command with no target flag to that instance
 (`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). `start`, `stop --delete` and `db reset` change the
 instance only under `withDevInstanceLock`, and write the state file only through `writeDevInstanceState`. New
-dev-instance groups go in that list the same way. The mainline `functions` and `secrets` leaves are mounted by `root.ts`
-(this folder may not import them) through `withSparkDevInstanceProject`, which provides `DefaultProjectRef`
+dev-instance groups go in that list the same way. The mainline `functions`, `secrets` and `projects api-keys` leaves are mounted by `root.ts`
+(this folder may not import them) through `withSparkDevInstanceProject` (`projects list`, which has no project flags,
+through `withSparkDevInstanceDefault`: its soft `resolveOptional` lookup then marks the dev instance), which provides `DefaultProjectRef`
 (`config/project-ref.service.ts`) so a leaf with no `--project-ref` or `--remote` resolves the dev instance, and
 `FunctionsApiDeployMode` (`shared/functions/deploy.ts`) so `functions deploy` uploads through the API and prints each
 function's URL; with neither provided, the mainline tree is unchanged.
