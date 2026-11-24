@@ -1047,7 +1047,7 @@ it.live("never serves a link or directory escaping the root, or a FIFO, at a tem
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/* The open-and-verify step on POSIX; Windows checks its handle through `bun:ffi` instead. */
+/* Creating symlinks on Windows needs a privilege CI runners lack. */
 it.live.skipIf(process.platform === "win32")(
   "refuses a resolved template path whose final file was swapped for a link",
   () =>
