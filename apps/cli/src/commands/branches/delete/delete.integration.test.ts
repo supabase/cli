@@ -219,7 +219,7 @@ describe("branches delete integration", () => {
       linkedProjectCache: cache.layer,
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     });
-    const beforeReports: Array<readonly [number, number]> = [];
+    const beforeReports: Array<readonly [number, number, number]> = [];
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         runBranchesDelete({
@@ -229,7 +229,7 @@ describe("branches delete integration", () => {
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(beforeReports).toEqual([[1, 1]]);
+      expect(beforeReports).toEqual([[1, 1, 1]]);
       expect(cache.cacheCount).toBe(1);
       expect(cache.cachedRef).toBe(VALID_REF);
       expect(telemetry.flushCount).toBe(1);
@@ -256,7 +256,11 @@ describe("branches delete integration", () => {
             ...output,
             fail: (error) =>
               Effect.sync(() => {
-                beforeReports.push([cache.cacheCount, telemetry.flushCount]);
+                beforeReports.push([
+                  cache.cacheCount,
+                  telemetry.flushCount,
+                  analytics.captured.length,
+                ]);
               }).pipe(Effect.andThen(output.fail(error))),
           }),
         ),
