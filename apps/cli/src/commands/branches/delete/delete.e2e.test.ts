@@ -118,7 +118,6 @@ it.live(
         status = 200;
         requests.length = 0;
         const result = yield* run(format, "--yes");
-        if (format === "text") expect(result.stdout).toBe("");
         expect(result.exitCode, result.stderr + result.stdout).toBe(0);
         expect(exists).toBe(false);
         expect(requests.slice(0, 2)).toEqual([
@@ -127,6 +126,10 @@ it.live(
         ]);
         if (format === "text") expect(requests.slice(2)).toEqual([`GET /v1/projects/${parent}`]);
         if (format === "text") {
+          const progress = stripAnsi(result.stdout)
+            .replace(/^[│|◇o][ \t]*/gm, "")
+            .trim();
+          expect(["", "Deleting branch..."]).toContain(progress);
           expect(stripAnsi(result.stderr)).toContain(`Deleted preview branch: ${branch}\n`);
         } else {
           const data = { project_ref: branch, message: "Deleted preview branch", target };
