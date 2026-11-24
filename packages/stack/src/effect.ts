@@ -579,7 +579,9 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     // A starting owner retracts the previous holder record and then truncates the log, all while
     // holding the lease, so an unchanged lease around the read ties the tail to this owner.
     const tail =
-      lease._tag === "Unpublished" || (lease._tag === "Replaced" && lease.role === "owner")
+      lease._tag === "Unknown" ||
+      lease._tag === "Unpublished" ||
+      (lease._tag === "Replaced" && lease.role === "owner")
         ? ""
         : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
     const logTail = tail.length > 0 && sameLease(lease, yield* leaseOf(access)) ? tail : "";
