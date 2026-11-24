@@ -3,6 +3,7 @@ import { legacyProjectStateLayer } from "../config/legacy-project-state.layer.ts
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
+import { commandExecutorLayer } from "../../command-internal/command-executor.ts";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";
 import { dbDiffCommand } from "../../commands/db/diff/diff.command.ts";
@@ -47,6 +48,7 @@ const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<strin
   const out = mockOutput({ format: "text" });
   return Layer.mergeAll(
     CliOutput.layer(formatter),
+    commandExecutorLayer,
     Layer.succeed(CliArgs, { args }),
     out.layer,
     commandTargetLayer.pipe(Layer.provide(out.layer)),
