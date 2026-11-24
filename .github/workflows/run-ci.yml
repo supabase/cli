@@ -40,7 +40,8 @@ jobs:
   test:
     name: Test
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       contains(github.event.pull_request.labels.*.name, 'run-ci') &&
       (github.event.pull_request.draft ||
         (github.base_ref != 'main' &&

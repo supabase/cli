@@ -1,7 +1,7 @@
 name: Test
 
-# Release-notes PRs (head ref `release-notes/*`) only add markdown under
-# `release-notes/` and are published via approval — skip the full CI suite.
+# Skip tests for this repository's release-notes/* branches, which only add
+# release notes. The exemption doesn't apply to forks.
 #
 # Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
 # `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
@@ -55,7 +55,8 @@ concurrency:
 jobs:
   check:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -92,7 +93,8 @@ jobs:
 
   test-unit:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -117,7 +119,8 @@ jobs:
 
   test-integration:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -171,7 +174,8 @@ jobs:
 
   platform-changes:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -217,7 +221,8 @@ jobs:
 
   test-stack-ports:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false) &&
@@ -283,7 +288,8 @@ jobs:
 
   test-stack-native-scenarios:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false) &&
@@ -337,7 +343,8 @@ jobs:
   test-summary:
     if: |
       always() &&
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -365,7 +372,8 @@ jobs:
 
   test-e2e:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -434,7 +442,8 @@ jobs:
 
   test-stack-e2e:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -489,7 +498,8 @@ jobs:
 
   test-stack-podman-integration:
     if: |
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -541,7 +551,8 @@ jobs:
   test-e2e-summary:
     if: |
       always() &&
-      !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.event.pull_request.head.repo.full_name == github.repository &&
+        startsWith(github.head_ref, 'release-notes/')) &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)

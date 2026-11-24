@@ -7,12 +7,10 @@ Internal notes for maintaining the Supabase CLI contribution workflow. See
 
 External pull requests are only accepted when they link to an **open** GitHub issue
 that carries the **`open-for-contribution`** label. This is enforced by the
-[`Contribution Gate`](./workflows/contribution-gate.yml) workflow, whose decision logic
-lives in [`scripts/contribution-gate.ts`](./scripts/contribution-gate.ts).
+[Contribution Gate workflow on `develop`](https://github.com/supabase/cli/blob/develop/.github/workflows/contribution-gate.yml).
 
-The gate runs **reactively on each PR** so a non-conforming PR is closed right away, and
-can also be **swept across every open PR on demand** via the workflow's _Run workflow_
-button.
+The gate is scheduled to check every open PR every 15 minutes, including PRs targeting
+`v2.x`. Opening or editing a PR does not trigger an immediate check.
 
 A pull request is **auto-closed with an explanatory comment** when the author is external
 and any of these is true:
@@ -28,9 +26,8 @@ aren't public on GitHub.
 
 ### Running the gate manually
 
-Use **Actions → Contribution Gate → Run workflow** to sweep all open PRs on demand — for
-example right after bulk-applying `open-for-contribution` labels, so the whole backlog is
-re-evaluated at once instead of waiting for each PR's next edit. Set the **`dry_run`**
+Go to **Actions → Contribution Gate → Run workflow** and select `develop` to check all open
+PRs without waiting for the next scheduled sweep. Set the **`dry_run`**
 input to `true` first to log each PR's decision in the run output without commenting on or
 closing anything; run again with `dry_run` unchecked to apply the decisions.
 
