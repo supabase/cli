@@ -8,10 +8,7 @@ import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
-import {
-  resolveSparkDevInstance,
-  resolveSparkEnabled,
-} from "../commands/experimental/spark/spark-project.ts";
+import { resolveSparkEnabled } from "../commands/experimental/spark/spark-project.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { cliEntrypointForFeatures } from "./root.ts";
 
@@ -33,9 +30,7 @@ const selectionExit = await Effect.runPromiseExit(
       cwd: process.cwd(),
     });
     const sparkEnabled = yield* resolveSparkEnabled({ args, cwd: process.cwd() });
-    const sparkDevInstance =
-      sparkEnabled && (yield* resolveSparkDevInstance({ args, cwd: process.cwd() }));
-    return { projectState, stackBackend, computeEnabled, sparkEnabled, sparkDevInstance };
+    return { projectState, stackBackend, computeEnabled, sparkEnabled };
   }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
 );
 const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(

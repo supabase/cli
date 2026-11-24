@@ -46,8 +46,6 @@ export const apiRoute = (service: string): string | undefined => {
       return "/functions/v1";
     case "realtime":
       return "/realtime/v1";
-    case "spark":
-      return "/rest/v1";
     default:
       return undefined;
   }
@@ -119,23 +117,6 @@ export const sharedRoutes = (
           forwardedPrefix: "/.well-known/oauth-authorization-server",
         },
         { prefix: route, upstreamPrefix: "/", keyRewrite: { policy: "bearer", keys } },
-      ];
-    case "spark":
-      /* Spark serves both data plane APIs and its admin routes under their own paths. Studio's
-         pg-meta `POST /query` takes the same body and key as Spark's `/database/query`. */
-      return [
-        ...["/rest/v1", "/auth/v1", "/database", "/system/v1", "/_spark"].map((prefix) => ({
-          prefix,
-          upstreamPrefix: prefix,
-          forwardedPrefix: prefix,
-          keyRewrite: { policy: "apikey" as const, keys },
-        })),
-        {
-          prefix: "/pg/query",
-          upstreamPrefix: "/database/query",
-          exact: true,
-          keyRewrite: { policy: "apikey", keys },
-        },
       ];
     case "functions":
       return [
@@ -229,8 +210,6 @@ export const outputsFor = <E>(
     );
     outputs.runtimeUrl = output("http");
   }
-  if (creation.service === "spark" && endpointNames(creation).includes("http"))
-    outputs.pgmetaUrl = output("http").pipe(Effect.map((url) => `${url}/pg`));
   if (creation.service === "mail" && endpointNames(creation).includes("smtp"))
     outputs.smtpUrl = address("smtp", "runtime").pipe(
       Effect.map(({ host, port }) => `smtp://${host}:${port}`),

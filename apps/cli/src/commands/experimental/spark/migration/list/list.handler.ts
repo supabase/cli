@@ -7,13 +7,13 @@ import {
   makeMigrationListRows,
   migrationListTableCells,
 } from "../../../../../command-internal/migration-list.format.ts";
-import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import type { SparkTargetFlagValues } from "../../spark.flags.ts";
 import { localMigrations, projectPaths } from "../../spark.shared.ts";
 import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
 /** `supabase migration list`: local migration files against the project's migration history. */
 export const sparkMigrationList = Effect.fn("spark.migration.list")(function* (
-  flags: TargetFlagValues,
+  flags: SparkTargetFlagValues,
 ) {
   yield* withSparkTarget(flags, () =>
     Effect.gen(function* () {

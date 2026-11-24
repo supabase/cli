@@ -2,7 +2,7 @@ import { Data, Effect, Exit, Redacted, Schema } from "effect";
 import { postgresLine } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
-import { creationPin, ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
+import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort, sharesApiEndpoint } from "../host/Endpoints.ts";
@@ -112,13 +112,6 @@ const managedBindings: ReadonlyArray<{
     targetKind: "studio",
     input: "functionsUrl",
     lifecycleDependency: false,
-  },
-  {
-    sourceKind: "spark",
-    sourceEndpoint: "http",
-    output: "pgmetaUrl",
-    targetKind: "studio",
-    input: "pgmetaUrl",
   },
   {
     sourceKind: "mail",
@@ -291,7 +284,7 @@ const comparable = (
     Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
   );
   return {
-    pin: creationPin(creation),
+    pin: creation.pin,
     endpoints: withSharedApiPort(creation, sharedPort),
     config,
   };
@@ -329,7 +322,6 @@ const compareCreation = (
   const databaseLineChanged =
     initializedData &&
     saved.service === "database" &&
-    requested.service === "database" &&
     postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
   const incompatible = paths.filter(
     (path) => isEndpointPath(path) || (path === "pin" && databaseLineChanged),
@@ -832,7 +824,6 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           const lazy =
             options.eager !== true &&
             creation.service !== "database" &&
-            creation.service !== "spark" &&
             endpointNames(creation).length > 0;
           return lazy
             ? { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }

@@ -94,28 +94,7 @@ export const experimental = Schema.Struct({
       enabled: Schema.Boolean.annotate({
         default: false,
         description:
-          "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
-        tags,
-      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
-      executable: Schema.optionalKey(
-        Schema.String.annotate({
-          description: "Absolute path of the spark binary.",
-          examples: ["/usr/local/bin/spark", "env(SPARK_BIN)"],
-          tags,
-        }),
-      ),
-      studio_executable: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
-          examples: ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"],
-          tags,
-        }),
-      ),
-      dev_instance: Schema.Boolean.annotate({
-        default: false,
-        description:
-          "Develop against a remote Spark dev instance instead of a local stack: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+          "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
         tags,
       }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),

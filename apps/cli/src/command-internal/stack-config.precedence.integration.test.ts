@@ -180,11 +180,7 @@ describe("stack config precedence goldens", () => {
         const keys = yield* config.keys;
         const golden = {
           // Pins come from the artifact catalog, not config precedence.
-          creations: creations.map(({ service, config, endpoints }) => ({
-            service,
-            config,
-            endpoints,
-          })),
+          creations: creations.map(({ pin: _pin, ...creation }) => creation),
           keys,
           source: config.source,
           projectEnvValues: configEnvOnly(config.projectEnvValues),

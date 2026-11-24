@@ -10,7 +10,6 @@ import {
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import type { ApiHandler } from "../../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin } from "../../../../../../tests/helpers/mocks.ts";
-import { unusedStackServices } from "../../../../../../tests/helpers/unused-stack.ts";
 import { YesFlag } from "../../../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 import type { OutputFormat } from "../../../../../shared/output/types.ts";
@@ -48,7 +47,6 @@ function setup(opts: {
       cliSettings: mockCommandSettings({ workdir: workdir.current }),
       stdin: mockStdin(false, opts.pipedAnswer),
     }),
-    unusedStackServices,
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     Layer.succeed(YesFlag, false),
   );
@@ -57,7 +55,6 @@ function setup(opts: {
 
 const linked = {
   remote: Option.some({ _tag: "Ref", ref: REF } as const),
-  local: false,
   linked: false,
   projectRef: Option.none<string>(),
 };

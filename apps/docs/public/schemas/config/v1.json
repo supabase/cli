@@ -4354,30 +4354,7 @@
           "type": "object",
           "properties": {
             "enabled": {
-              "description": "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
-              "default": false,
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^env\\((.*)\\)$"
-                }
-              ]
-            },
-            "executable": {
-              "type": "string",
-              "description": "Absolute path of the spark binary.",
-              "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
-            },
-            "studio_executable": {
-              "type": "string",
-              "description": "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
-              "examples": ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"]
-            },
-            "dev_instance": {
-              "description": "Develop against a remote Spark dev instance instead of a local stack: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+              "description": "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
               "default": false,
               "anyOf": [
                 {
@@ -8988,30 +8965,7 @@
                         "type": "object",
                         "properties": {
                           "enabled": {
-                            "description": "Run the local stack on Spark (Data API and Auth on turso) instead of Postgres. Implies the experimental stack backend.",
-                            "default": false,
-                            "anyOf": [
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "string",
-                                "pattern": "^env\\((.*)\\)$"
-                              }
-                            ]
-                          },
-                          "executable": {
-                            "type": "string",
-                            "description": "Absolute path of the spark binary.",
-                            "examples": ["/usr/local/bin/spark", "env(SPARK_BIN)"]
-                          },
-                          "studio_executable": {
-                            "type": "string",
-                            "description": "Path to a Studio launcher to run instead of the pinned Studio build, for a Studio that has the Spark pg-meta fallbacks.",
-                            "examples": ["/path/to/studio/bin/studio", "env(SPARK_STUDIO_BIN)"]
-                          },
-                          "dev_instance": {
-                            "description": "Develop against a remote Spark dev instance instead of a local stack: start creates or reuses it through the Management API, and the Spark commands target it by default.",
+                            "description": "Develop against a remote Spark dev instance: start creates or reuses it through the Management API, and the Spark commands target it by default.",
                             "default": false,
                             "anyOf": [
                               {

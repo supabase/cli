@@ -1,35 +1,38 @@
 # Spark command tree (`[experimental.spark] enabled`)
 
 When `[experimental.spark] enabled = true` (or `SUPABASE_EXPERIMENTAL_SPARK_ENABLED`) is set, the
-root command tree is replaced by: `init`, `stack`, `start`, `status`, `stop` (the local stack
-harness, unchanged), `link`, `db diff`, `db pull`, `db push`, `db query`, `db reset`,
-`migration fetch`, `migration list` and `gen types`. Every other command, including `db dump`, `db lint`, `inspect db` and `test db`, is
-absent and fails as an unknown command.
+root command tree is replaced by: `init`, `login`, `logout`, `orgs list`,
+`projects list|create|delete|api-keys`, `functions new|list|deploy|delete`, `secrets set|list|unset`
+(the mainline commands, with their own side effects), `start`, `status`, `stop`, `link`,
+`db diff`, `db pull`, `db push`, `db query`, `db reset`, `migration fetch`, `migration list` and
+`gen types`. Every other command, including `stack`, `db dump`, `db lint`, `inspect db`, `test db`,
+`functions serve` and `functions download`, is absent and fails as an unknown command. No Spark
+process and no Studio run on the developer's machine.
+
+`[experimental.spark]` has no key but `enabled`: `dev_instance`, `executable` or `studio_executable`
+there makes every command exit 1 before it runs, with
+`experimental.spark.<key> does not exist: the Spark commands develop against a remote dev instance, and no local Spark process or Studio runs. Remove it from supabase/config.toml.`
+(the file's own name when it is `config.json` or `config.jsonc`). Their former environment
+variables are not read.
 
 `db diff`, `db pull`, `db push`, `db query`, `migration fetch`, `migration list` and `gen types`
-take the mainline target flags without `--db-url`, and the target decides how they reach the project:
+take `--remote[=<ref|branch>]` and its hidden aliases `--linked` and `--project-ref`; there is no
+`--local` or `--db-url`. Both targets are reached through the Management API:
 
-- Local (the default): the Spark server of the project's running stack, through the stack's API
-  URL (`[api] port`) with the stack's service_role key. No profile, access token or link is read.
-  When no stack runs for the project, the command fails and names `supabase start` and `--remote`.
+- The dev instance (the default): the project recorded in `supabase/.temp/dev-instance.json`,
+  reached like a linked project with its ref; its writes ask for no confirmation. Without the file
+  they fail with `No dev instance for this project.` and name `supabase start`; with a file `start`
+  has not finished, they fail with `... is not set up yet.` and name `supabase start`. When the
+  file's `management_api_url` is not the profile's `api_url`, they fail and name both.
 - Linked (`--remote`, `--remote=<ref>`, or the deprecated `--linked` and `--project-ref`): the
-  Management API, with the base URL from the profile's `api_url` (`SUPABASE_PROFILE`, a built-in
-  name or a YAML file), the token from `SUPABASE_ACCESS_TOKEN` or the stored login, and the ref
-  from the flag, `SUPABASE_PROJECT_ID` or `supabase/.link.json`. It never calls `/_spark` or uses
-  a service_role key.
+  project the flag, `SUPABASE_PROJECT_ID` or `supabase/.link.json` names.
 
-`link` always uses the Management API.
-
-## Dev-instance mode (`[experimental.spark] dev_instance`)
-
-With `dev_instance = true` (or `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`) on a Spark project, the
-tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projects list|create|delete|api-keys`,
-`functions new|list|deploy|delete`, `secrets set|list|unset` (the mainline commands, with their own side
-effects), `start`, `status`, `stop`, `link`, and the `db`, `migration` and `gen` groups above. No local
-stack is started or read.
+Both use the base URL from the profile's `api_url` (`SUPABASE_PROFILE`, a built-in name or a YAML
+file) and the token from `SUPABASE_ACCESS_TOKEN` or the stored login. No command calls `/_spark` or
+uses a service_role key. `link` always uses the Management API.
 
 - `projects api-keys` acts on the dev instance when neither `--project-ref` nor `--remote` is given, as
-  the commands below do. `projects list` prints no "Cannot find project ref" warning and marks the
+  the `db` commands do. `projects list` prints no "Cannot find project ref" warning and marks the
   dev instance's row in the `linked` column when the state file has a finished instance (the
   link is used otherwise).
 - `functions list|deploy|delete` and `secrets set|list|unset` act on the dev instance when neither
@@ -47,14 +50,6 @@ stack is started or read.
   on stdout for each function this run deployed, not the disabled ones (with `--output-format json`,
   `function_urls: {<slug>: <url>}`).
 
-- The default target of `db diff|pull|push|query`, `migration fetch|list` and `gen types` is the
-  dev instance recorded in `supabase/.temp/dev-instance.json`, reached like a linked project
-  through the Management API with its ref; its writes ask for no confirmation, as on the local
-  target. `--remote` still selects the linked project. There is no local stack, so `--local`
-  fails (`... has no local stack ...`) before any call. Without the file they fail with
-  `No dev instance for this project.` and name `supabase start`; with a file `start` has not
-  finished, they fail with `... is not set up yet.` and name `supabase start`. When the file's
-  `management_api_url` is not the profile's `api_url`, they fail and name both.
 - `start`, `stop --delete` and `db reset` hold `supabase/.temp/dev-instance.lock` (an SQLite file
   lock) for their whole run; while another command holds it they fail at once, naming the file,
   and change nothing.
@@ -92,9 +87,9 @@ stack is started or read.
 ## Files Read
 
 - `supabase/config.toml` and project `.env*` (the opt-in; the shadow Postgres image and settings).
-- `supabase/.link.json` (the linked ref; on the local target too, to hint that a linked project exists).
-- `supabase/.temp/dev-instance.json` (dev-instance mode: the default target's ref), and the
-  `[db.seed] sql_paths` files (`start` until the seed has run, `db reset` in dev-instance mode).
+- `supabase/.link.json` (the linked ref, and the organization `start` creates the dev instance in).
+- `supabase/.temp/dev-instance.json` (the default target's ref), and the `[db.seed] sql_paths`
+  files (`start` until the seed has run, `db reset`).
 - `supabase/schemas/**/*.sql` and `supabase/schemas/.pgdelta-export.json` (`db diff`).
 - `supabase/migrations/<version>_<name>.sql` (`db push`, `migration list`), and the directory's
   entries (`migration fetch`, to decide whether to ask before overwriting).
@@ -110,10 +105,9 @@ stack is started or read.
   refuses nothing).
 - `supabase/migrations/<version>_<name>.sql`, mode 0644, one per row of the project's migration
   history (`migration fetch`); the directory is created after the history is read.
-- `db reset` rewrites the local Spark database through `spark --workdir <project> db reset`.
 - `supabase/.temp/dev-instance.json`, mode 0600, published atomically (staged as
-  `supabase/.temp/.dev-instance.json.<pid>-<n>.tmp`, then renamed) by `start` and `db reset` in
-  dev-instance mode, removed by `stop --delete`: `{ref, name, organization_slug,
+  `supabase/.temp/.dev-instance.json.<pid>-<n>.tmp`, then renamed) by `start` and `db reset`,
+  removed by `stop --delete`: `{ref, name, organization_slug,
 management_api_url, api_url?, anon_key?, service_role_key?, seeded?, reset_pending?}`. `api_url` and the keys are
   absent until `start` finishes; `seeded` is whether the seed files ran on the current database;
   `reset_pending` is set when a `db reset` timed out or was interrupted (`seeded` is left as it was)
@@ -123,23 +117,11 @@ management_api_url, api_url?, anon_key?, service_role_key?, seeded?, reset_pendi
   missing, left alone when it is a symlink) does not list it. `start` does this, and publishes and
   removes a `dev-instance.json.probe` file there (also when the write fails or is interrupted), before it
   creates a project, so a local write error creates nothing remote.
-- `supabase/.temp/dev-instance.lock` (`start`, `stop --delete`, `db reset` in dev-instance mode).
+- `supabase/.temp/dev-instance.lock` (`start`, `stop --delete`, `db reset`).
 
 ## API Routes
 
-Local target, on the stack's API URL with `apikey` and `Authorization: Bearer` set to the
-service_role key:
-
-- `POST /database/query` with `{query, parameters: [], read_only}` (`db query`; `migration fetch`
-  with `read_only: true`).
-- `GET /system/v1/migrations` (`db push`, `migration list`).
-- `POST /system/v1/migrations?dry_run=1` with `{version, name, sql}`, the version taken from the
-  current time (`db diff`, `db push`).
-- `POST /system/v1/migrations` with `{version, name, sql}`, the file's version (`db push`).
-- `GET /_spark/v1/dump[?schemas=a,b]` (`db diff`, `db pull`): Spark renders the dump.
-- `GET /_spark/v1/schema` (`gen types`): the types are rendered in the CLI from the description.
-
-Linked target, and `link`:
+The dev instance and a linked target, and `link`:
 
 - `GET /v1/projects/{ref}` (`link`).
 - `GET /v1/projects/{ref}/database/dump[?schemas=a,b]`, `application/sql` (`db diff`, `db pull`).
@@ -181,11 +163,9 @@ with `docker rm -f -v` when the command ends.
 
 ## Environment Variables
 
-`SUPABASE_EXPERIMENTAL_SPARK_ENABLED`, `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`,
-`SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE` (`db reset`),
-`SUPABASE_HOME` (where the local target finds the project's stack), and for a linked target
-`SUPABASE_PROFILE`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_YES`.
-`SUPABASE_YES` also answers `migration fetch`'s overwrite prompt on the local target.
+`SUPABASE_EXPERIMENTAL_SPARK_ENABLED`, `SUPABASE_PROFILE`, `SUPABASE_ACCESS_TOKEN`, and for a
+linked target `SUPABASE_PROJECT_ID`. `SUPABASE_YES` answers a linked project's confirmations and
+`migration fetch`'s overwrite prompt on either target.
 
 ## Exit Codes
 
@@ -208,7 +188,7 @@ with `docker rm -f -v` when the command ends.
   `Remote database is up to date.`; `link`: `Finished supabase link.`
 - `migration list`: a Local / Remote / Time (UTC) table. `gen types`: the types on stdout.
 - `migration fetch`: nothing on success, after the overwrite prompt on stderr.
-- Dev-instance `status` and `start`: one `<label>: <value>` row each for the instance, status,
+- `status` and `start`: one `<label>: <value>` row each for the instance, status,
   URLs and keys on stdout (progress on stderr); `--env` or `-o env` prints `API_URL`, `REST_URL`,
   `AUTH_URL`, `FUNCTIONS_URL`, `ANON_KEY` and `SERVICE_ROLE_KEY` as dotenv; `-o json|yaml|toml`
   prints `{name, ref, status, api_url, rest_url, auth_url, functions_url, anon_key,
@@ -216,7 +196,7 @@ service_role_key}`.
 
 ### `--output-format json`
 
-`migration list` emits `{migrations: [{local, remote, time}]}`; dev-instance `status` and `start`
+`migration list` emits `{migrations: [{local, remote, time}]}`; `status` and `start`
 emit the `-o json` object (with `--env`, the variables); `migration fetch` emits
 `{files: [<absolute path>]}` with the message `Migration history fetched`; the others emit their
 text.

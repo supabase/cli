@@ -3,7 +3,7 @@ import {
   ArtifactPin,
   artifactSourceService,
   type ArtifactSelection,
-  type PinnedServiceKind,
+  type ServiceKind,
 } from "./Artifacts.ts";
 import { SLIM_IMAGE_GHCR_REGISTRY } from "./preparation/SlimEndpoints.ts";
 import { publish } from "./StackNamespace.ts";
@@ -38,7 +38,7 @@ const IMAGE_REFERENCE = /^([^/:@]+):([^/:@]+)@sha256:[0-9a-f]{64}$/u;
  * The image of a pin must be the digest-pinned GHCR release `<upstreamVersion>-r<revision>` of the
  * service's producer; download mirrors are derived from it when pulling, never recorded.
  */
-const resolvedPin = (kind: PinnedServiceKind) =>
+const resolvedPin = (kind: ServiceKind) =>
   ArtifactPin.check(
     Schema.makeFilter((pin) => {
       const producer = artifactSourceService(kind);
@@ -56,7 +56,7 @@ const resolvedPin = (kind: PinnedServiceKind) =>
     }),
   );
 
-const serviceFields = (kind: PinnedServiceKind) => ({
+const serviceFields = (kind: ServiceKind) => ({
   /** The effective version request. */
   specifier: Schema.String,
   linked: Schema.optionalKey(LinkedVersion),
@@ -64,7 +64,7 @@ const serviceFields = (kind: PinnedServiceKind) => ({
   resolved: resolvedPin(kind),
 });
 
-const serviceLock = (kind: PinnedServiceKind) =>
+const serviceLock = (kind: ServiceKind) =>
   Schema.Struct(serviceFields(kind)).annotate({ identifier: "ServiceLock" });
 
 const DatabaseLock = Schema.Struct({

@@ -180,7 +180,7 @@ const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option
 });
 
 /**
- * `supabase start` in dev-instance mode: creates, finishes or reuses the checkout's dev instance,
+ * `supabase start`: creates, finishes or reuses the checkout's dev instance,
  * applies the pending migrations, runs the seed files unless they ran on the current database,
  * and prints what `status` prints.
  */
@@ -197,9 +197,9 @@ export const sparkDevStart = Effect.fn("spark.start")(function* (flags: {
         "spark.dev_instance.created": created,
         "spark.dev_instance.seed": seed,
       });
-      yield* withDevInstanceTarget(applyPendingMigrations);
+      yield* withDevInstanceTarget(() => applyPendingMigrations);
       if (seed) {
-        yield* withDevInstanceTarget(runSeedFiles());
+        yield* withDevInstanceTarget(() => runSeedFiles());
         yield* writeDevInstanceState({ ...state, seeded: true });
       }
       yield* emitDevInstanceStatus(state, HEALTHY, { env: false });

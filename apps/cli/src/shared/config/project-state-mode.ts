@@ -33,7 +33,7 @@ export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* 
         cwd: input.cwd,
       }),
     });
-  // A Spark project runs on the stack backend: Spark is one of its service compositions.
+  // A Spark project keeps its link and project caches where the stack mode keeps them.
   const enabled = (yield* feature("stack")) || (yield* feature("spark"));
   const mode: ProjectStateMode = enabled ? "stack" : "legacy";
   yield* Effect.annotateCurrentSpan("project_state.mode", mode);

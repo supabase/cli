@@ -546,79 +546,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         config: {},
         endpoints: { http: endpoint(undefined) },
       };
-      const studioCreation = {
-        service: "studio" as const,
-        pin: selection.studio,
-        config: {
-          snippetsRoot: `${projectRoot}/supabase/snippets`,
-          apiSchemas: validatedConfig.api.schemas.join(","),
-          apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
-          apiMaxRows: validatedConfig.api.max_rows,
-          cliVersion: CLI_VERSION,
-          ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
-          ...(validatedConfig.studio.openai_api_key === undefined
-            ? {}
-            : { openaiApiKey: validatedConfig.studio.openai_api_key }),
-          ...(validatedConfig.studio.api_url === getDefaultCliConfig().studio.api_url
-            ? {}
-            : { publicApiUrl: validatedConfig.studio.api_url }),
-        },
-        endpoints: { http: endpoint(studioPort) },
-      } satisfies ServiceCreationType;
-      const spark = validatedConfig.experimental.spark;
-      const sparkExecutable = spark?.executable ?? "";
-      if (spark?.enabled === true && !path.isAbsolute(sparkExecutable))
-        return yield* new StackConfigError({
-          message:
-            "experimental.spark.executable must be the absolute path of the spark binary (or set SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE)",
-        });
-      const studioExecutable = spark?.studio_executable;
-      if (
-        spark?.enabled === true &&
-        studioExecutable !== undefined &&
-        !path.isAbsolute(studioExecutable)
-      )
-        return yield* new StackConfigError({
-          message:
-            "experimental.spark.studio_executable must be the absolute path of a Studio launcher (or set SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE)",
-        });
-      // The pinned Studio has no pg-meta fallbacks for Spark's catalog, so it would start and show nothing.
-      if (
-        spark?.enabled === true &&
-        validatedConfig.studio.enabled &&
-        studioExecutable === undefined
-      )
-        return yield* new StackConfigError({
-          message:
-            "Studio on a Spark project needs a build with the Spark pg-meta fallbacks: set experimental.spark.studio_executable (or SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE), or set [studio] enabled = false",
-        });
-      /** Spark serves the Data API, Auth and Studio's SQL itself. */
-      const sparkCreations: ReadonlyArray<ServiceCreationType> = [
-        {
-          service: "spark",
-          config: { executable: sparkExecutable, projectRoot },
-          endpoints: { http: endpoint(apiPort) },
-        },
-        ...(validatedConfig.studio.enabled
-          ? [
-              studioExecutable === undefined
-                ? studioCreation
-                : {
-                    ...studioCreation,
-                    config: {
-                      ...studioCreation.config,
-                      executable: studioExecutable,
-                      postgresEngine: "spark" as const,
-                    },
-                  },
-            ]
-          : []),
-      ];
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
         Effect.sync(() => {
-          if (spark?.enabled === true) return sparkCreations;
           return [
             {
               service: "database",
@@ -770,7 +701,29 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.studio.enabled ? [studioCreation] : []),
+            ...(validatedConfig.studio.enabled
+              ? [
+                  {
+                    service: "studio" as const,
+                    pin: selection.studio,
+                    config: {
+                      snippetsRoot: `${projectRoot}/supabase/snippets`,
+                      apiSchemas: validatedConfig.api.schemas.join(","),
+                      apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
+                      apiMaxRows: validatedConfig.api.max_rows,
+                      cliVersion: CLI_VERSION,
+                      ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
+                      ...(validatedConfig.studio.openai_api_key === undefined
+                        ? {}
+                        : { openaiApiKey: validatedConfig.studio.openai_api_key }),
+                      ...(validatedConfig.studio.api_url === getDefaultCliConfig().studio.api_url
+                        ? {}
+                        : { publicApiUrl: validatedConfig.studio.api_url }),
+                    },
+                    endpoints: { http: endpoint(studioPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
             ...(validatedConfig.local_smtp.enabled
               ? [
                   {

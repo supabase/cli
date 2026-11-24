@@ -10,9 +10,6 @@ import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { holdLock } from "./Lock.ts";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** How long a destroyed stack's empty directories stay, so a same-id restart finds them. */
 const DESTROYED_RETENTION_MILLIS = 10 * 60 * 1000;
 
@@ -96,75 +93,12 @@ const checkId = (id: string): Effect.Effect<void, NamespaceError> =>
     ? Effect.void
     : Effect.fail(namespaceError("identity", `Invalid state id: ${id}`));
 
-/**
- * A stack the previous CLI saved lists a `sparkmeta` service, a kind that no longer exists. Dropping it on read lets
- * the stack stop and start again with its Spark database.
- */
-const withoutRetiredServices = (state: unknown): unknown => {
-  if (!isRecord(state) || !Array.isArray(state.instances) || !isRecord(state.composition))
-    return state;
-  const retired = state.instances.flatMap((instance: unknown) =>
-    isRecord(instance) &&
-    isRecord(instance.creation) &&
-    instance.creation.service === "sparkmeta" &&
-    typeof instance.id === "string"
-      ? [instance.id]
-      : [],
-  );
-  if (retired.length === 0) return state;
-  const gone = new Set<unknown>(retired);
-  const kept = (items: unknown, ...keys: ReadonlyArray<string>) =>
-    Array.isArray(items)
-      ? items.filter(
-          (item: unknown) => !(isRecord(item) && keys.some((key) => gone.has(item[key]))),
-        )
-      : items;
-  return {
-    ...state,
-    instances: kept(state.instances, "id"),
-    composition: {
-      ...state.composition,
-      members: kept(state.composition.members, "id"),
-      dependencies: kept(state.composition.dependencies, "from", "to"),
-    },
-  };
-};
-
-/**
- * The previous CLI told Studio the engine through sparkmeta, so the Studio it saved for a Spark stack has no
- * `postgresEngine`. A stack with a Spark service is a Spark project: its Studio gets the engine on read, as
- * `supabase start` gives it, so a restart from the saved state keeps Studio's Spark queries.
- */
-const withSparkStudioEngine = (state: unknown): unknown => {
-  if (!isRecord(state) || !Array.isArray(state.instances)) return state;
-  const creationOf = (instance: unknown) =>
-    isRecord(instance) && isRecord(instance.creation) ? instance.creation : undefined;
-  if (!state.instances.some((instance: unknown) => creationOf(instance)?.service === "spark"))
-    return state;
-  return {
-    ...state,
-    instances: state.instances.map((instance: unknown) => {
-      const creation = creationOf(instance);
-      if (!isRecord(instance) || creation?.service !== "studio") return instance;
-      const config = isRecord(creation.config) ? creation.config : {};
-      if (config.postgresEngine !== undefined) return instance;
-      return {
-        ...instance,
-        creation: { ...creation, config: { ...config, postgresEngine: "spark" } },
-      };
-    }),
-  };
-};
-
 const decodeState = (
   text: string,
   id: string,
   target: string,
 ): Effect.Effect<SavedStack, NamespaceError> =>
-  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
-    Effect.map(withoutRetiredServices),
-    Effect.map(withSparkStudioEngine),
-    Effect.flatMap(Schema.decodeUnknownEffect(SavedStack)),
+  Schema.decodeEffect(Schema.fromJsonString(SavedStack))(text).pipe(
     Effect.mapError((cause) =>
       namespaceError(
         "decode",

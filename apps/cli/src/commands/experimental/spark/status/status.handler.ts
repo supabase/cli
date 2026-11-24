@@ -8,7 +8,7 @@ import {
   SparkDevInstanceError,
 } from "../spark-dev-instance.ts";
 
-/** `supabase status` in dev-instance mode: the instance's status, URLs and keys. */
+/** `supabase status`: the dev instance's status, URLs and keys. */
 export const sparkDevStatus = Effect.fn("spark.status")(function* (flags: {
   readonly env: boolean;
 }) {

@@ -10,7 +10,7 @@ import {
 } from "../spark-dev-instance.ts";
 
 /**
- * `supabase stop` in dev-instance mode: the instance keeps running; with `--delete` the project
+ * `supabase stop`: the dev instance keeps running; with `--delete` the project
  * is deleted and the state file removed.
  */
 export const sparkDevStop = Effect.fn("spark.stop")(function* (flags: {

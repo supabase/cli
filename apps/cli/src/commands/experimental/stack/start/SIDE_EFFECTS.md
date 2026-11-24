@@ -351,26 +351,6 @@ Successful startup leaves the owner available after the CLI exits. Abrupt proces
 bypasses finalizers requires manual inspection and, for an incomplete first bootstrap, destruction
 before retrying; there is no recovery journal.
 
-## Spark projects (experimental)
-
-With `[experimental.spark] enabled = true` (or `SUPABASE_EXPERIMENTAL_SPARK_ENABLED=1`), the project
-uses the stack backend and its composition is `spark` and, when `[studio] enabled`, `studio`; no Postgres, PostgREST, Auth, Realtime, Storage or pg-meta service runs.
-
-- The runtime is always native; `--runtime docker` or `--runtime podman` exits 1.
-- `spark` runs the binary `experimental.spark.executable` names (`SUPABASE_EXPERIMENTAL_SPARK_EXECUTABLE`)
-  as `spark --workdir <project> start`, which applies `supabase/migrations` and keeps its data in
-  `supabase/.temp/spark.db`. A relative or missing path exits 1 before the stack is created.
-- `studio` runs the launcher `experimental.spark.studio_executable` names
-  (`SUPABASE_EXPERIMENTAL_SPARK_STUDIO_EXECUTABLE`) instead of the pinned Studio build, with the same
-  environment plus `POSTGRES_ENGINE=spark`, when it is set. A relative or missing path exits 1
-  before the stack is created.
-- `spark` serves `/rest/v1`, `/auth/v1`, `/database`, `/system/v1` and `/_spark` on `[api] port`;
-  publishable and secret keys in `apikey` and `Authorization` are rewritten to the anon and
-  service_role JWTs.
-- `POST /pg/query` on `[api] port`, Studio's `STUDIO_PG_META_URL`, goes to Spark's
-  `POST /database/query` unchanged. Spark runs Studio's SQL, schema changes included; nothing is
-  recorded as a migration and no file is written. No other `/pg` path answers.
-
 ## Processes, network, and output
 
 The package's detached owner manages service processes, listeners, readiness, and runtime resources.

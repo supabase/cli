@@ -4,6 +4,7 @@ import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.
 import {
   type ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
+  rejectUnsupportedSparkKeys,
   resolveExperimentalFeature,
 } from "../../../shared/config/experimental-feature.ts";
 import {
@@ -12,7 +13,7 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/** A Spark project command could not reach or drive its local Spark stack. */
+/** A Spark command found the project's local files or migration history unusable. */
 export class SparkBackendError extends Data.TaggedError("SparkBackendError")<{
   readonly message: string;
   readonly cause?: unknown;
@@ -55,7 +56,8 @@ export class SparkShadowError extends Data.TaggedError("SparkShadowError")<{
 /**
  * Whether the invoked project opted into Spark with `[experimental.spark] enabled` (or
  * `SUPABASE_EXPERIMENTAL_SPARK_ENABLED`), read before parse so the root swaps in the Spark
- * command tree. `--version` never selects it.
+ * command tree. `--version` never selects it. A key of that table this CLI does not support
+ * fails, whatever selects the tree.
  */
 export const resolveSparkEnabled = (input: {
   readonly args: ReadonlyArray<string>;
@@ -68,6 +70,7 @@ export const resolveSparkEnabled = (input: {
         : input.args;
     if (hasRootVersionFlag(routingArgs) && extractCommandPath(routingArgs).length === 0)
       return false;
+    yield* rejectUnsupportedSparkKeys({ ...input, args: routingArgs });
     return yield* resolveExperimentalFeature({
       feature: "spark",
       configValue: readExperimentalFeatureConfig({
@@ -77,17 +80,3 @@ export const resolveSparkEnabled = (input: {
       }),
     });
   }).pipe(Effect.withSpan("Spark.resolveEnabled"));
-
-/**
- * Whether a Spark project develops against a remote dev instance (`[experimental.spark]
- * dev_instance`, or `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`), read before parse like
- * {@link resolveSparkEnabled}.
- */
-export const resolveSparkDevInstance = (input: {
-  readonly args: ReadonlyArray<string>;
-  readonly cwd: string;
-}): Effect.Effect<boolean, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
-  resolveExperimentalFeature({
-    feature: "sparkDevInstance",
-    configValue: readExperimentalFeatureConfig({ feature: "sparkDevInstance", ...input }),
-  }).pipe(Effect.withSpan("Spark.resolveDevInstance"));

@@ -4,7 +4,7 @@ import {
   resolveOverwriteYes,
   writeMigrationHistory,
 } from "../../../../../command-internal/migration-fetch-run.ts";
-import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import type { SparkTargetFlagValues } from "../../spark.flags.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { SparkApiError } from "../../spark-project.ts";
 import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
@@ -37,7 +37,7 @@ const readHistory = Effect.fn("spark.migration.fetch.read")(function* () {
 
 /** `supabase migration fetch`: writes the project's migration history as local migration files. */
 export const sparkMigrationFetch = Effect.fn("spark.migration.fetch")(function* (
-  flags: TargetFlagValues,
+  flags: SparkTargetFlagValues,
 ) {
   yield* withSparkTarget(flags, () =>
     Effect.gen(function* () {

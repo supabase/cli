@@ -21,7 +21,6 @@ import * as Pgmeta from "./Pgmeta.ts";
 import * as Pooler from "./Pooler.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Rest from "./Rest.ts";
-import * as Spark from "./spark/Spark.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
 import {
@@ -52,7 +51,6 @@ const endpointSchemas = [
   ["mail", Mail.Endpoints],
   ["analytics", Analytics.Endpoints],
   ["pooler", Pooler.Endpoints],
-  ["spark", Spark.Endpoints],
 ] as const;
 
 export const allowedEndpointNames = (kind: ServiceKind): ReadonlyArray<string> => {
@@ -92,13 +90,8 @@ export const ServiceCreation = Schema.Union([
   Mail.Creation,
   Analytics.Creation,
   Pooler.Creation,
-  Spark.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
-
-/** The artifact a creation runs, or `undefined` for a host service kind. */
-export const creationPin = (creation: ServiceCreation | ServiceCreationInput) =>
-  "pin" in creation ? creation.pin : undefined;
 
 /** Inputs a service cannot launch without; a composition binding or the caller supplies them. */
 const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = {
@@ -145,7 +138,6 @@ export const ServiceCreationInput = Schema.Union([
   Mail.Creation,
   Analytics.Creation,
   Pooler.Creation,
-  Spark.Creation,
 ]);
 export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
 /** A restart candidate; a restart keeps the instance's saved pin. */
@@ -166,7 +158,6 @@ export const serviceSchemas = {
   mail: Mail.Config,
   analytics: Analytics.Config,
   pooler: Pooler.Config,
-  spark: Spark.Config,
 } as const;
 
 const serviceError = (operation: string, cause: unknown) =>
@@ -445,12 +436,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
             creation,
             yield* makeProcessRecipe(options, deps, Pooler.makeSpec()),
             Schema.is(Pooler.Creation),
-          );
-        case "spark":
-          return catalogRecipe(
-            creation,
-            yield* makeProcessRecipe(options, deps, Spark.makeSpec()),
-            Schema.is(Spark.Creation),
           );
       }
     }),

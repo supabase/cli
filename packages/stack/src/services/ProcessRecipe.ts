@@ -22,9 +22,6 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/p
 import { HttpClient, HttpClientRequest } from "effect/http";
 import {
   prepareNativeArtifact,
-  type ArtifactPin,
-  isPinnedServiceKind,
-  type PinnedServiceKind,
   resolveArtifact,
   useNativeArtifact,
   type ServiceKind,
@@ -98,11 +95,6 @@ export interface StartupCommand {
 export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown>> {
   readonly service: C["service"];
   readonly executable: string;
-  /**
-   * A host executable the creation names instead of the pinned artifact, or `undefined` for the
-   * artifact; a named executable runs only on the native runtime.
-   */
-  readonly hostExecutable?: (creation: C) => string | undefined;
   readonly ports: Readonly<Record<string, number>>;
   readonly healthPath: string;
   /** The `ports` entry `healthPath` is probed on; defaults to `http`. */
@@ -206,22 +198,6 @@ export interface ProcessDependencies {
 }
 
 const serviceError = mapToServiceError;
-
-/** The pinned artifact a creation runs, or a failure for a host executable kind. */
-const pinnedArtifact = (
-  operation: string,
-  creation: RecipeCreation<ServiceKind, unknown>,
-): Effect.Effect<
-  { readonly service: PinnedServiceKind; readonly pin: ArtifactPin },
-  ServiceError
-> => {
-  const { service, pin } = creation;
-  return isPinnedServiceKind(service) && pin !== undefined
-    ? Effect.succeed({ service, pin })
-    : Effect.fail(
-        serviceError(operation, `${service} runs a host executable and needs the native runtime`),
-      );
-};
 
 const describeProcessExit = (code: number) => `Process exited with ${code}`;
 
@@ -446,33 +422,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
     // with the recipe's own owned files.
     const environmentRoot = deps.path.join(instanceRoot, ".supabase-environment");
 
-    const nativeArtifactFor = Effect.fn("ProcessRecipe.nativeArtifact")(function* (
-      creation: C,
-      launchScope: Scope.Scope,
-    ) {
-      const hostExecutable = spec.hostExecutable?.(creation);
-      if (hostExecutable !== undefined)
-        return {
-          executable: hostExecutable,
-          root: deps.path.dirname(hostExecutable),
-          lockPath: undefined,
-        };
-      return yield* useNativeArtifact(
-        yield* pinnedArtifact("launch", creation),
-        options.cacheRoot,
-        options.platform,
-      ).pipe(
-        Scope.provide(launchScope),
-        Effect.provideService(FileSystem.FileSystem, deps.fs),
-        Effect.provideService(Path.Path, deps.path),
-        Effect.provideService(SecureRandom.SecureRandom, deps.crypto),
-        Effect.provideService(Digest.Digest, deps.digest),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
-        Effect.provideService(HttpClient.HttpClient, deps.client),
-        Effect.mapError((cause) => serviceError("launch", cause)),
-      );
-    });
-
     const prepare = Effect.fn("ProcessRecipe.prepare")(function* (candidate: C) {
       if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(options.instanceId))
         return yield* serviceError("identity", "Instance id is not a safe path segment");
@@ -484,31 +433,18 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         for (const candidatePath of spec.callerPaths(candidate))
           yield* deps.borrowCallerPath(candidatePath);
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
-      const executable = spec.hostExecutable?.(candidate);
-      if (executable !== undefined) {
-        if (options.runtime !== "native")
-          return yield* serviceError(
-            "prepare",
-            `${candidate.service} runs a host executable and needs the native runtime`,
-          );
-        const present = yield* deps.fs
-          .exists(executable)
-          .pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
-        if (!present)
-          return yield* serviceError(
-            "prepare",
-            `${candidate.service} executable not found: ${executable}`,
-          );
-        return;
-      }
-      const pinned = yield* pinnedArtifact("prepare", candidate);
-      const resolved = yield* resolveArtifact(pinned).pipe(
-        Effect.mapError((cause) => serviceError("prepare", cause)),
-      );
+      const resolved = yield* resolveArtifact({
+        service: candidate.service,
+        pin: candidate.pin,
+      }).pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
       if (options.runtime === "native") {
         // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
         // `launch` resolves (or prepares) and pins its own copy right before it spawns.
-        yield* prepareNativeArtifact(pinned, options.cacheRoot, options.platform).pipe(
+        yield* prepareNativeArtifact(
+          { service: candidate.service, pin: candidate.pin },
+          options.cacheRoot,
+          options.platform,
+        ).pipe(
           Effect.provideService(FileSystem.FileSystem, deps.fs),
           Effect.provideService(Path.Path, deps.path),
           Effect.provideService(SecureRandom.SecureRandom, deps.crypto),
@@ -538,7 +474,20 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         // pin is registered on it first, every native process scope below forks from it (not from
         // `context.scope`), so closing it always runs their cleanup before releasing the pin.
         const launchScope = yield* Scope.fork(context.scope, "sequential");
-        const artifact = yield* nativeArtifactFor(context.config, launchScope);
+        const artifact = yield* useNativeArtifact(
+          { service: context.config.service, pin: context.config.pin },
+          options.cacheRoot,
+          options.platform,
+        ).pipe(
+          Scope.provide(launchScope),
+          Effect.provideService(FileSystem.FileSystem, deps.fs),
+          Effect.provideService(Path.Path, deps.path),
+          Effect.provideService(SecureRandom.SecureRandom, deps.crypto),
+          Effect.provideService(Digest.Digest, deps.digest),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+          Effect.provideService(HttpClient.HttpClient, deps.client),
+          Effect.mapError((cause) => serviceError("launch", cause)),
+        );
         const executable = artifact.executable;
         const artifactRoot = artifact.root;
         const environment = yield* Environment.confine(deps.fs, deps.path, environmentRoot).pipe(
@@ -604,7 +553,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                 env: command.env,
                 environment,
                 cwd: artifactRoot,
-                ...(artifact.lockPath === undefined ? {} : { artifactLockPath: artifact.lockPath }),
+                artifactLockPath: artifact.lockPath,
               },
               defaultNativeProcessLauncher(),
               {
@@ -614,7 +563,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             ).pipe(
               Scope.provide(startupScope),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
-              Effect.provideService(FileSystem.FileSystem, deps.fs),
               Effect.mapError((cause) => serviceError("launch", cause)),
             );
             const result = yield* awaitStartup(
@@ -659,7 +607,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               args,
               env,
               environment,
-              ...(artifact.lockPath === undefined ? {} : { artifactLockPath: artifact.lockPath }),
+              artifactLockPath: artifact.lockPath,
               gracefulStopSignal: "SIGTERM",
               gracefulStopTimeout: "5 seconds",
             },
@@ -668,7 +616,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           ).pipe(
             Scope.provide(scope),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
-            Effect.provideService(FileSystem.FileSystem, deps.fs),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
           const collected = yield* collectNativeOutput(
@@ -824,7 +771,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           ),
           exit: Deferred.await(settled),
           stop: Ref.get(live).pipe(
-            Effect.flatMap((attempt) => attempt.native.stop),
+            Effect.flatMap((attempt) => attempt.native.kill),
             Effect.mapError((cause) => serviceError("stop", cause)),
           ),
           remove: Ref.set(endpoints, new Map()),
@@ -832,9 +779,10 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       }
       if (deps.container === undefined)
         return yield* serviceError("launch", "Container runtime unavailable");
-      const resolved = yield* resolveArtifact(yield* pinnedArtifact("launch", context.config)).pipe(
-        Effect.mapError((cause) => serviceError("launch", cause)),
-      );
+      const resolved = yield* resolveArtifact({
+        service: context.config.service,
+        pin: context.config.pin,
+      }).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
       const containerDesired = startupEndpointsFor(context.config, spec, { container: true });
       for (const process of spec.startupCommands) {
         if (process.skipInContainer === true) continue;

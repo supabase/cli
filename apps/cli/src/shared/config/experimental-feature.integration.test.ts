@@ -6,12 +6,17 @@ import { useTempWorkdir, withConfigEnv } from "../../../tests/helpers/command-mo
 import {
   ExperimentalFeatureFlagError,
   readExperimentalFeatureConfig,
+  rejectUnsupportedSparkKeys,
 } from "./experimental-feature.ts";
+import { projectStateMode } from "./project-state-mode.ts";
 
-describe("readExperimentalFeatureConfig for [experimental.spark]", () => {
+describe("[experimental.spark] in the early config read", () => {
   const workdir = useTempWorkdir("experimental-feature-");
 
-  const read = (feature: "spark" | "sparkDevInstance", sparkTable: string) =>
+  const inProject = <A, E>(
+    sparkTable: string,
+    effect: (cwd: string) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -20,39 +25,47 @@ describe("readExperimentalFeatureConfig for [experimental.spark]", () => {
         path.join(workdir.current, "supabase", "config.toml"),
         `[experimental.spark]\n${sparkTable}\n`,
       );
-      return yield* withConfigEnv(
-        { SUPABASE_WORKDIR: workdir.current },
-        readExperimentalFeatureConfig({ feature, args: [], cwd: workdir.current }),
-      );
+      return yield* withConfigEnv({ SUPABASE_WORKDIR: workdir.current }, effect(workdir.current));
     }).pipe(Effect.provide(BunServices.layer));
 
-  it.effect("reads literal booleans", () =>
+  const read = (sparkTable: string) =>
+    inProject(sparkTable, (cwd) =>
+      readExperimentalFeatureConfig({ feature: "spark", args: [], cwd }),
+    );
+
+  it.effect("reads a literal enabled", () =>
     Effect.gen(function* () {
-      expect(yield* read("sparkDevInstance", "dev_instance = true")).toBe(true);
-      expect(yield* read("sparkDevInstance", "enabled = true")).toBe(false);
+      expect(yield* read("enabled = true")).toBe(true);
+      expect(yield* read("enabled = false")).toBe(false);
     }),
   );
 
-  it.effect("refuses an env(...) dev_instance instead of reading it as unset", () =>
-    Effect.gen(function* () {
-      const error = yield* read("sparkDevInstance", 'dev_instance = "env(MY_DEV)"').pipe(
-        Effect.flip,
-      );
-      expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
-      expect(error.message).toContain("experimental.spark.dev_instance");
-    }),
-  );
-
-  it.effect("reads enabled whatever the other keys of the table hold", () =>
-    Effect.gen(function* () {
-      expect(yield* read("spark", 'enabled = true\ndev_instance = "env(MY_DEV)"')).toBe(true);
-      expect(yield* read("spark", "enabled = true\nexecutable = 3")).toBe(true);
-    }),
+  it.effect(
+    "refuses each key of a local Spark stack by name, as a Spark error the stack routing does not raise",
+    () =>
+      Effect.gen(function* () {
+        for (const [key, table] of [
+          ["dev_instance", "enabled = true\ndev_instance = true"],
+          ["executable", 'enabled = true\nexecutable = "/usr/local/bin/spark"'],
+          ["studio_executable", 'studio_executable = "/opt/studio/bin/studio"'],
+        ] as const) {
+          const error = yield* inProject(table, (cwd) =>
+            rejectUnsupportedSparkKeys({ args: [], cwd }),
+          ).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
+          expect(error.message).toContain(`experimental.spark.${key} does not exist`);
+          expect(error.message).toContain("supabase/config.toml");
+          expect(error.message).not.toContain("SUPABASE_EXPERIMENTAL_STACK");
+          expect(yield* inProject(table, (cwd) => projectStateMode({ cwd }))).toBe(
+            key === "studio_executable" ? "legacy" : "stack",
+          );
+        }
+      }),
   );
 
   it.effect("still reads an env(...) enabled as unset (unchanged)", () =>
     Effect.gen(function* () {
-      expect(yield* read("spark", 'enabled = "env(MY_SPARK)"')).toBeUndefined();
+      expect(yield* read('enabled = "env(MY_SPARK)"')).toBeUndefined();
     }),
   );
 });

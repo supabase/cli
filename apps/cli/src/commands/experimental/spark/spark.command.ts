@@ -1,4 +1,3 @@
-import { Layer } from "effect";
 import { Command } from "effect/cli";
 
 import { sparkDbDiffCommand } from "./db/diff/diff.command.ts";
@@ -11,11 +10,7 @@ import { sparkLinkCommand } from "./link/link.command.ts";
 import { sparkMigrationFetchCommand } from "./migration/fetch/fetch.command.ts";
 import { sparkMigrationListCommand } from "./migration/list/list.command.ts";
 import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
-import {
-  devInstanceDefaultProjectLayer,
-  devInstanceHostedLayer,
-  SparkDevInstanceMode,
-} from "./spark-dev-instance.ts";
+import { devInstanceDefaultProjectLayer, devInstanceHostedLayer } from "./spark-dev-instance.ts";
 import { sparkDevStartCommand } from "./start/start.command.ts";
 import { sparkDevStatusCommand } from "./status/status.command.ts";
 import { sparkDevStopCommand } from "./stop/stop.command.ts";
@@ -45,32 +40,22 @@ const sparkGenCommand = Command.make("gen").pipe(
   Command.withSubcommands([sparkGenTypesCommand]),
 );
 
-/** The commands a Spark project's tree adds to `init` and the local stack harness. */
+/**
+ * The Spark commands of a Spark project's tree: `start`, `status` and `stop` manage the checkout's
+ * dev instance, and the others target it by default.
+ */
 export const sparkCommands = [
+  sparkDevStartCommand,
+  sparkDevStatusCommand,
+  sparkDevStopCommand,
   sparkLinkCommand,
   sparkDbCommand,
   sparkMigrationCommand,
   sparkGenCommand,
 ] as const;
 
-const devInstanceMode = Layer.succeed(SparkDevInstanceMode, true);
-
 /**
- * The Spark commands of a dev-instance project (`[experimental.spark] dev_instance`): `start`,
- * `status` and `stop` act on the dev instance, and the others target it by default.
- */
-export const sparkDevInstanceCommands = [
-  sparkDevStartCommand,
-  sparkDevStatusCommand,
-  sparkDevStopCommand,
-  sparkLinkCommand,
-  sparkDbCommand.pipe(Command.provide(devInstanceMode)),
-  sparkMigrationCommand.pipe(Command.provide(devInstanceMode)),
-  sparkGenCommand.pipe(Command.provide(devInstanceMode)),
-] as const;
-
-/**
- * A mainline command with no project flags (`projects list`) mounted in the dev-instance tree: its
+ * A mainline command with no project flags (`projects list`) mounted in the Spark tree: its
  * soft project lookup finds the dev instance when the checkout has one, so no "not linked"
  * warning is printed and the instance's row is the marked one.
  */
@@ -84,7 +69,7 @@ interface DevInstanceHelp {
 }
 
 /**
- * A mainline hosted command (`functions`, `secrets`) mounted in the dev-instance tree: with no
+ * A mainline hosted command (`functions`, `secrets`) mounted in the Spark tree: with no
  * `--project-ref` or `--remote` it acts on the dev instance, and `functions deploy` uploads
  * through the API. `help` replaces the mainline description, which says "linked project".
  */

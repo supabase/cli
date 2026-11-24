@@ -1,4 +1,4 @@
-// One sequential scenario for the Spark dev-instance mode, driven through the compiled CLI: the
+// One sequential scenario for a Spark project, driven through the compiled CLI: the
 // test serves the Management API stand-in with its own Spark processes (one per project, in temp
 // directories on free ports), and the CLI creates, uses, resets and deletes its dev instance
 // through it. No local stack runs. Needs SUPABASE_SPARK_BIN; without it the suite is skipped.
@@ -273,7 +273,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
     Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(path));
   const exists = (path: string) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.exists(path));
 
-  /** A `supabase init` project in dev-instance mode, with the example migration and a seed file unless `bare`. */
+  /** A `supabase init` Spark project, with the example migration and a seed file unless `bare`. */
   const makeProject = (name: string, options: { readonly bare?: boolean } = {}) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -283,7 +283,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
       const configPath = join(dir, "supabase", "config.toml");
       yield* writeText(
         configPath,
-        `${yield* readText(configPath)}\n[experimental.spark]\nenabled = true\ndev_instance = true\n`,
+        `${yield* readText(configPath)}\n[experimental.spark]\nenabled = true\n`,
       );
       if (options.bare === true) return dir;
       yield* writeText(
@@ -500,7 +500,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   );
 
   step(
-    "db query reads the seeded row; a second start reuses the instance; --local is refused",
+    "db query reads the seeded row; a second start reuses the instance; --local is unknown",
     Effect.gen(function* () {
       expect(
         (yield* run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
@@ -511,7 +511,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
       expect(again.log).not.toContain("Seeding data");
       expect(yield* projectRefs(projectDir)).toEqual([firstRef]);
       const local = yield* runFails(["db", "query", "--local", "select 1"], projectDir);
-      expect(local.log).toContain("has no local stack");
+      expect(local.log).toContain("--local");
       expect(local.log).not.toContain("isn't needed");
     }),
   );

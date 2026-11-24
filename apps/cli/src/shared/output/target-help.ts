@@ -5,7 +5,7 @@ import { TargetPolicyAnnotation } from "../../command-internal/target/target-pol
 
 type TargetKind = "selectable" | "hosted" | "local-only";
 
-interface TargetCopy {
+export interface TargetCopy {
   readonly scope: string;
   /** The TARGET summary, given the value hint of the command's `--remote` flag. */
   readonly summary: (hint: string) => string;
@@ -27,6 +27,14 @@ const TARGET_COPY: Readonly<Record<TargetKind, TargetCopy>> = {
   },
 };
 
+/**
+ * A leaf whose default target is neither the local stack nor the linked project declares its own
+ * TARGET copy, which replaces its policy group's.
+ */
+export class TargetHelpAnnotation extends Context.Service<TargetHelpAnnotation, TargetCopy>()(
+  "supabase/TargetHelpAnnotation",
+) {}
+
 const KIND_BY_GROUP: Readonly<Record<string, TargetKind | undefined>> = {
   selectable: "selectable",
   hosted: "hosted",
@@ -41,9 +49,11 @@ export interface TargetHelp {
   readonly summary: string;
 }
 
-const kindOf = (annotations: Context.Context<never>): TargetKind | undefined =>
+const copyOf = (annotations: Context.Context<never>): TargetCopy | undefined =>
+  Option.getOrUndefined(Context.getOption(annotations, TargetHelpAnnotation)) ??
   Context.getOption(annotations, TargetPolicyAnnotation).pipe(
     Option.flatMapNullishOr((policy) => KIND_BY_GROUP[policy.group]),
+    Option.map((kind) => TARGET_COPY[kind]),
     Option.getOrUndefined,
   );
 
@@ -52,9 +62,9 @@ const remoteFlagOf = (doc: HelpDoc.HelpDoc): HelpDoc.FlagDoc | undefined =>
 
 /** What a leaf's help says of its target; `undefined` for account, removed and group commands. */
 export function targetHelpFor(doc: HelpDoc.HelpDoc): TargetHelp | undefined {
-  const kind = kindOf(doc.annotations);
-  if (kind === undefined) return undefined;
-  const { scope, summary } = TARGET_COPY[kind];
+  const copy = copyOf(doc.annotations);
+  if (copy === undefined) return undefined;
+  const { scope, summary } = copy;
   const flag = remoteFlagOf(doc);
   const full = summary(flag?.type ?? "");
   return { scope, summary: flag === undefined ? full.slice(0, full.indexOf(".") + 1) : full };
@@ -130,8 +140,8 @@ export function subcommandScopes(
   const parent = commandForDoc(root, doc);
   if (parent === undefined) return scopes;
   for (const child of parent.subcommands.flatMap((group) => group.commands)) {
-    const kind = kindOf(child.annotations);
-    if (kind !== undefined) scopes.set(child.name, TARGET_COPY[kind].scope);
+    const copy = copyOf(child.annotations);
+    if (copy !== undefined) scopes.set(child.name, copy.scope);
   }
   return scopes;
 }

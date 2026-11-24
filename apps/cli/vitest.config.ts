@@ -15,7 +15,7 @@ if (!Number.isSafeInteger(e2eWorkers) || e2eWorkers < 1) {
 
 /**
  * E2e files that run alone: `start.health` tags a broken image under the tag every stack's
- * Mailpit resolves to, `spark.e2e` starts a stack on the fixed ports 54321 to 54323, and the rest provision pg-delta shadow databases on host ports the CLI
+ * Mailpit resolves to, and the rest provision pg-delta shadow databases on host ports the CLI
  * picks and releases before Docker binds them, which a concurrent stack could take.
  */
 const E2E_EXCLUSIVE_FILES = [
@@ -27,7 +27,6 @@ const E2E_EXCLUSIVE_FILES = [
   "src/commands/db/schema/declarative/sync/sync.e2e.test.ts",
   "src/commands/db/schema/declarative/sync/sync.jobs.e2e.test.ts",
   "src/commands/db/start/start.roles.e2e.test.ts",
-  "src/commands/experimental/spark/spark.e2e.test.ts",
 ];
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));

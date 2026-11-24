@@ -683,58 +683,6 @@ it.live("serves legacy Kong's gateway routes while each service runs", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live(
-  "sends the OpenAPI document path /rest/v1/ and Studio's POST /pg/query to Spark's own routes",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-spark-routes-" });
-        const state = yield* makeTestState(root);
-        yield* state.save(stack("stack"));
-        const spark = yield* backendWith(echo("spark"));
-        const keys = {
-          publishableKey: "sb_publishable_example",
-          secretKey: "sb_secret_example",
-          anonKey: "anon.jwt.value",
-          serviceRoleKey: "service.role.jwt",
-        };
-        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
-        const sparkNamespace = yield* network.register({
-          id: "spark",
-          endpoints: {
-            http: {
-              ...endpoint(spark, Effect.succeed(true)),
-              shared: sharedRoutes({ service: "spark" }, "http", keys, () => Effect.succeed(spark)),
-            },
-          },
-        });
-        yield* sparkNamespace.bind;
-        const address = yield* sparkNamespace.address("http", "host");
-        const post = (path: string) =>
-          Effect.gen(function* () {
-            const client = yield* HttpClient.HttpClient;
-            const response = yield* client.post(`http://${address.host}:${address.port}${path}`, {
-              headers: { apiKey: keys.serviceRoleKey },
-            });
-            return response.status === 404 ? 404 : yield* response.json;
-          }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
-
-        expect(yield* post("/rest/v1/")).toEqual(
-          expect.objectContaining({ backend: "spark", url: "/rest/v1/" }),
-        );
-        expect(yield* post("/rest/v1/todos")).toEqual(
-          expect.objectContaining({ backend: "spark", url: "/rest/v1/todos" }),
-        );
-        expect(yield* post("/pg/query")).toEqual(
-          expect.objectContaining({ backend: "spark", url: "/database/query" }),
-        );
-        expect(yield* post("/pg/tables")).toBe(404);
-        expect(yield* post("/pg/query/extra")).toBe(404);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's gateway set", () =>
   Effect.scoped(
     Effect.gen(function* () {

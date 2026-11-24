@@ -8,9 +8,8 @@ import { aiToolLayer } from "../../../../../shared/telemetry/ai-tool.layer.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { telemetryOutputFormatLayer } from "../../../../../telemetry/telemetry-output-format.layer.ts";
-import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
-import { sparkRuntimeLayer } from "../../spark.flags.ts";
+import { sparkRuntimeLayer, sparkTargetFlags, withSparkTargetHelp } from "../../spark.flags.ts";
 import { sparkDbQuery } from "./query.handler.ts";
 
 const config = {
@@ -18,7 +17,7 @@ const config = {
     Argument.withDescription("SQL query to execute."),
     Argument.optional,
   ),
-  ...targetFlags({ subject: "database", dbUrl: false }),
+  ...sparkTargetFlags(),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
@@ -55,4 +54,5 @@ export const sparkDbQueryCommand = Command.make("query", config).pipe(
     ),
   ),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  withSparkTargetHelp,
 );

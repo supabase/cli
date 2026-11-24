@@ -18,7 +18,6 @@ type RouteContribution = Pick<
   | "forwardedPrefix"
   | "keyRewrite"
   | "upstreamCors"
-  | "exact"
 > &
   Partial<Pick<HttpRoute, "target">>;
 

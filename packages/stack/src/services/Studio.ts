@@ -27,10 +27,6 @@ export const Config = Schema.Struct({
   secretKey: Schema.optionalKey(Schema.String),
   openaiApiKey: Schema.optionalKey(Schema.String),
   cliVersion: Schema.optionalKey(Schema.String),
-  /** A Studio launcher on the host to run instead of the pinned build, with the same environment. */
-  executable: Schema.optionalKey(Schema.String),
-  /** The database engine Studio's project detail reports; Postgres when unset. */
-  postgresEngine: Schema.optionalKey(Schema.Literal("spark")),
 });
 
 export interface Config extends Schema.Schema.Type<typeof Config> {}
@@ -44,7 +40,6 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "studio",
   executable: "bin/studio",
-  hostExecutable: (creation) => creation.config.executable,
   ports: { http: 3000 },
   healthPath: "/api/platform/profile",
   env: (creation, endpoints, container) =>
@@ -112,8 +107,6 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         values.EDGE_FUNCTIONS_URL = creation.config.functionsUrl;
       if (creation.config.cliVersion !== undefined)
         values.CURRENT_CLI_VERSION = creation.config.cliVersion;
-      if (creation.config.postgresEngine !== undefined)
-        values.POSTGRES_ENGINE = creation.config.postgresEngine;
       return values;
     }),
   args: () => Effect.succeed([]),

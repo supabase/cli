@@ -26,7 +26,6 @@ import {
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import {
   sparkCommands,
-  sparkDevInstanceCommands,
   withSparkDevInstanceDefault,
   withSparkDevInstanceProject,
 } from "../commands/experimental/spark/spark.command.ts";
@@ -164,20 +163,18 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
-  /** A Spark project gets its own reduced command tree instead of the mainline one. */
+  /** A Spark project gets its own reduced command tree, on its dev instance, instead of the mainline one. */
   readonly sparkEnabled?: boolean;
-  /** A Spark project in dev-instance mode develops against a remote instance, not a local stack. */
-  readonly sparkDevInstance?: boolean;
 }
 
-/** `orgs` in a Spark dev-instance tree, which only reads the organizations `start` picks from. */
+/** `orgs` in the Spark tree, which only reads the organizations `start` picks from. */
 const sparkOrgsCommand = Command.make("orgs").pipe(
   Command.withDescription("Manage Supabase organizations"),
   Command.withShortDescription("Manage Supabase organizations"),
   Command.withSubcommands([orgsListCommand]),
 );
 
-/** `functions` in a Spark dev-instance tree: no `serve` or `download`, and the dev instance by default. */
+/** `functions` in the Spark tree: no `serve` or `download`, and the dev instance by default. */
 const sparkFunctionsCommand = Command.make("functions").pipe(
   Command.withDescription("Manage Supabase Edge functions."),
   Command.withShortDescription("Manage Supabase Edge functions"),
@@ -228,7 +225,7 @@ const sparkFunctionsCommand = Command.make("functions").pipe(
   ]),
 );
 
-/** `secrets` in a Spark dev-instance tree, on the dev instance by default. */
+/** `secrets` in the Spark tree, on the dev instance by default. */
 const sparkSecretsCommand = Command.make("secrets").pipe(
   Command.withDescription("Manage Supabase secrets."),
   Command.withShortDescription("Manage Supabase secrets"),
@@ -258,7 +255,7 @@ const sparkSecretsCommand = Command.make("secrets").pipe(
   ]),
 );
 
-/** `projects` in a Spark dev-instance tree: `list` marks the dev instance and `api-keys` defaults to it. */
+/** `projects` in the Spark tree: `list` marks the dev instance and `api-keys` defaults to it. */
 const sparkProjectsCommand = Command.make("projects").pipe(
   Command.withDescription("Manage Supabase projects."),
   Command.withShortDescription("Manage projects"),
@@ -283,8 +280,8 @@ const sparkProjectsCommand = Command.make("projects").pipe(
   ]),
 );
 
-/** The mainline commands a Spark dev-instance tree adds to its own `start`, `status` and `stop`. */
-const sparkDevInstanceAccountCommands = [
+/** The mainline commands the Spark tree mounts beside its own. */
+const sparkAccountCommands = [
   loginCommand,
   logoutCommand,
   sparkOrgsCommand,
@@ -307,18 +304,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
     Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands(
       options.sparkEnabled
-        ? [
-            initCommand,
-            ...(options.stackBackend === "stack" ? [stackCommand] : []),
-            ...(options.sparkDevInstance
-              ? [...sparkDevInstanceAccountCommands, ...sparkDevInstanceCommands]
-              : [
-                  stackStartAliasCommand,
-                  stackStatusAliasCommand,
-                  stackStopAliasCommand,
-                  ...sparkCommands,
-                ]),
-          ]
+        ? [initCommand, ...sparkAccountCommands, ...sparkCommands]
         : [
             backupsCommand,
             bootstrapCommand,

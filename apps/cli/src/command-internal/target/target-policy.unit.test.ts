@@ -20,7 +20,6 @@ const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: Permiss
       stackBackend: "stack",
       computeEnabled: true,
       sparkEnabled: false,
-      sparkDevInstance: false,
     } satisfies Required<NonNullable<PermissionVariant>>,
   },
 ];

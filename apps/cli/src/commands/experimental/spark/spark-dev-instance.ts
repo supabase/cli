@@ -1,5 +1,5 @@
 import { holdLock, isLockBusy, publish } from "@supabase/stack/effect";
-import { Context, Data, Duration, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Data, Duration, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
@@ -20,15 +20,6 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-
-/**
- * Whether the Spark tree runs in dev-instance mode (`[experimental.spark] dev_instance`): the
- * tree `spark.command.ts` builds for that mode provides `true`.
- */
-export const SparkDevInstanceMode = Context.Reference<boolean>(
-  "supabase/cli/SparkDevInstanceMode",
-  { defaultValue: () => false },
-);
 
 /**
  * `supabase/.temp/dev-instance.json`: the checkout's dev instance. `start` writes it as soon as
@@ -73,7 +64,6 @@ type DevInstanceErrorReason =
   | "api-url"
   | "state"
   | "locked"
-  | "local-flag"
   | "reset-pending";
 
 /** The dev instance is absent, unreadable, busy, or could not be created or reached. */
@@ -88,7 +78,6 @@ export class SparkDevInstanceError extends Data.TaggedError("SparkDevInstanceErr
         return actionability.provideFlags;
       case "timeout":
         return actionability.externalNetwork;
-      case "local-flag":
       case "reset-pending":
         return actionability.invalidInput;
       case "locked":
@@ -300,10 +289,10 @@ export const devInstanceDefaultProjectLayer = Layer.succeed(
 );
 
 const API_ONLY_DEPLOY =
-  "A dev instance takes functions only through the API upload, so --use-docker and --legacy-bundle are not supported in dev-instance mode. Drop the flag: functions deploy uploads through the API by default.";
+  "A dev instance takes functions only through the API upload, so --use-docker and --legacy-bundle are not supported in a Spark project. Drop the flag: functions deploy uploads through the API by default.";
 
 /**
- * What a mainline hosted command (`functions`, `secrets`) needs in dev-instance mode: with no
+ * What a mainline hosted command (`functions`, `secrets`) needs in the Spark tree: with no
  * `--project-ref` or `--remote` it acts on the dev instance, and `functions deploy` uploads
  * through the API and prints each function's URL on the instance.
  */

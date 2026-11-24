@@ -1,19 +1,18 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import type { ServiceInstance, Stack, StackCredentials } from "@supabase/stack/effect";
-import { Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   buildTestRuntime,
   mockCommandPlatformApi,
   mockCommandSettings,
+  useTempWorkdir,
 } from "../../../../../../tests/helpers/command-mocks.ts";
 import type { ApiHandler } from "../../../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin } from "../../../../../../tests/helpers/mocks.ts";
-import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import { AgentFlag, YesFlag } from "../../../../../command-internal/global-flags.ts";
-import { StackApi } from "../../../../../command-internal/stack-api.ts";
 import { TargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 import { Random } from "../../../../../shared/runtime/random.service.ts";
 import { AiTool } from "../../../../../shared/telemetry/ai-tool.service.ts";
@@ -22,102 +21,23 @@ import { sparkDbQueryCommand } from "./query.command.ts";
 import { sparkDbQuery } from "./query.handler.ts";
 
 const REF = "abcdefghijklmnopqrst";
+const DEV_REF = "devinstancerefabcdef";
 const BOUNDARY = "00112233445566778899aabbccddeeff";
-const API_URL = "http://127.0.0.1:54321";
-const SERVICE_ROLE_KEY = "local-service-role-key";
+const API_URL = "https://api.supabase.test";
 
-const unused = Effect.die("unused by db query");
+const workdir = useTempWorkdir("spark-db-query-");
 
-/** A project stack with a running Spark member, or none when `running` is false. */
-const sparkStackApi = (running: boolean) => {
-  const spark: ServiceInstance<"spark"> = {
-    id: "spark-primary",
-    service: "spark",
-    start: unused,
-    ready: unused,
-    stop: unused,
-    restart: () => unused,
-    destroy: unused,
-    prepare: unused,
-    status: Effect.succeed({
-      id: "spark-primary",
-      endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
-      config: {
-        service: "spark",
-        config: { executable: "/bin/spark", projectRoot: "/work/project" },
-        endpoints: {},
-      },
-      lifecycle: "running",
-      health: "healthy",
-      error: undefined,
-      exit: undefined,
-      currentOperation: undefined,
-      wakeEnabled: true,
-    }),
-    followStatus: Stream.empty,
-    readLogs: () => Stream.empty,
-    credentials: () => Effect.succeed({ url: `${API_URL}/rest/v1`, apiUrl: API_URL }),
-  };
-  const credentials: StackCredentials = {
-    jwtSecret: "secret",
-    postgresRootKey: "root",
-    databasePassword: "password",
-    publishableKey: "publishable",
-    secretKey: "secret-key",
-    anonKey: "anon",
-    serviceRoleKey: SERVICE_ROLE_KEY,
-    jwks: "{}",
-    gotrueJwtKeys: "[]",
-    remoteJwks: "{}",
-    anonKeyIsOverride: false,
-    serviceRoleKeyIsOverride: false,
-  };
-  const stack: Stack = {
-    id: "s".repeat(64),
-    services: { create: () => unused, get: () => unused, list: Effect.succeed([spark]) },
-    credentials: { get: Effect.succeed(credentials) },
-    composition: {
-      plan: () => unused,
-      describe: unused,
-      supabase: () => unused,
-      configure: () => unused,
-      start: unused,
-      stop: unused,
-      restart: unused,
-    },
-    startupEndpointChanges: unused,
-    stop: unused,
-    destroy: unused,
-    gateway: unusedGateway,
-    commands: { run: () => unused },
-  };
-  return Layer.succeed(StackApi, {
-    create: () => unused,
-    open: () => Effect.succeed(stack),
-    discover: () => unused,
-    find: () =>
-      Effect.succeed(
-        running
-          ? Option.some({
-              definition: {
-                id: stack.id,
-                identity: {
-                  projectRoot: "/work/project",
-                  branchContext: "main",
-                  stackName: "default",
-                },
-                runtime: "native" as const,
-                instances: [],
-                lifetime: "detached" as const,
-                composition: { members: [], dependencies: [] },
-              },
-              host: undefined,
-            })
-          : Option.none(),
-      ),
-    findDeleted: () => unused,
-  });
-};
+/** The state file `start` leaves once the dev instance is set up. */
+const writeDevInstance = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const temp = path.join(workdir.current, "supabase", ".temp");
+  yield* fs.makeDirectory(temp, { recursive: true });
+  yield* fs.writeFileString(
+    path.join(temp, "dev-instance.json"),
+    `{"ref":"${DEV_REF}","name":"dev-project-abc123","organization_slug":"acme","management_api_url":"${API_URL}","api_url":"https://${DEV_REF}.supabase.test","anon_key":"anon","service_role_key":"service-role"}`,
+  );
+}).pipe(Effect.provide(BunServices.layer));
 
 const answer =
   (body: string, status = 201): ApiHandler =>
@@ -127,7 +47,6 @@ const answer =
 function setup(opts: {
   readonly handler: ApiHandler;
   readonly agent?: "yes" | "no";
-  readonly stack?: boolean;
   readonly yes?: boolean;
 }) {
   const out = mockOutput({ format: "text" });
@@ -136,10 +55,9 @@ function setup(opts: {
     buildTestRuntime({
       out,
       api,
-      cliSettings: mockCommandSettings({ workdir: "/work/project" }),
+      cliSettings: mockCommandSettings({ workdir: workdir.current, apiUrl: API_URL }),
       stdin: mockStdin(true),
     }),
-    sparkStackApi(opts.stack ?? true),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(YesFlag, opts.yes ?? true),
     Layer.succeed(AgentFlag, opts.agent ?? "no"),
@@ -158,7 +76,6 @@ const flags = (over: Partial<Parameters<typeof sparkDbQuery>[0]> = {}) => ({
   file: Option.none<string>(),
   readOnly: false,
   remote: Option.none(),
-  local: false,
   linked: false,
   projectRef: Option.none<string>(),
   ...over,
@@ -171,32 +88,26 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const ROWS = '[{"id":1,"title":"milk"},{"id":2,"title":"eggs"}]';
 
 describe("spark db query integration", () => {
-  it.effect(
-    "runs on the local Spark server through the stack's API URL and service_role key",
-    () => {
-      const { layer, out, api } = setup({ handler: answer(ROWS) });
-      return Effect.gen(function* () {
-        yield* sparkDbQuery(flags({ sql: Option.some("select * from todos") }));
-        expect(api.requests.map((r) => r.url)).toEqual([`${API_URL}/database/query`]);
-        expect(api.requests[0]?.headers["apikey"]).toBe(SERVICE_ROLE_KEY);
-        expect(api.requests[0]?.body).toEqual({
-          query: "select * from todos",
-          parameters: [],
-          read_only: false,
-        });
-        expect(out.stdoutText).toContain("│ id │ title │");
-        expect(out.stderrText).not.toContain("Confirmed by");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("runs on the dev instance by default and asks no confirmation for a write", () => {
+    const { layer, out, api } = setup({ handler: answer(ROWS), yes: false });
+    return Effect.gen(function* () {
+      yield* writeDevInstance;
+      yield* sparkDbQuery(flags({ sql: Option.some("insert into todos default values") }));
+      expect(api.requests.map((r) => new URL(r.url).pathname)).toEqual([
+        `/v1/projects/${DEV_REF}/database/query`,
+      ]);
+      expect(api.requests[0]?.body).toEqual({ query: "insert into todos default values" });
+      expect(out.stdoutText).toContain("│ id │ title │");
+      expect(out.stderrText).not.toContain("Confirmed by");
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect("names both ways out when no local stack is running", () => {
-    const { layer, api } = setup({ handler: answer(ROWS), stack: false });
+  it.effect("names supabase start when the checkout has no dev instance", () => {
+    const { layer, api } = setup({ handler: answer(ROWS) });
     return Effect.gen(function* () {
       const exit = yield* sparkDbQuery(flags({ sql: Option.some("select 1") })).pipe(Effect.exit);
-      expect(String(exit)).toContain("No local Spark stack is running for this project");
+      expect(String(exit)).toContain("No dev instance for this project");
       expect(String(exit)).toContain("supabase start");
-      expect(String(exit)).toContain("--remote");
       expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
@@ -291,7 +202,6 @@ describeHostedConsent("db query", {
     run: sparkDbQuery(flags({ sql: Option.some("insert into t values (1)"), ...linked })).pipe(
       Effect.provide(
         Layer.mergeAll(
-          sparkStackApi(true),
           Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
           Layer.succeed(AiTool, { name: Option.none() }),
           Layer.succeed(TelemetryOutputFormat, {

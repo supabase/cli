@@ -5,7 +5,7 @@ import { emitManagementApiRows } from "../../../../../command-internal/db/query-
 import { resolveQueryFormat, sqlPreview } from "../../../../../command-internal/db/query.format.ts";
 import { AgentFlag, OutputFlag } from "../../../../../command-internal/global-flags.ts";
 import { requireTargetMutationConsent } from "../../../../../command-internal/hosted-consent/hosted-consent.ts";
-import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import type { SparkTargetFlagValues } from "../../spark.flags.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../../shared/runtime/stdin.service.ts";
@@ -14,9 +14,9 @@ import { TelemetryOutputFormat } from "../../../../../telemetry/telemetry-output
 import { SparkApiError } from "../../spark-project.ts";
 import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
-/** `supabase db query`: runs SQL on the local Spark server or a linked Spark project. */
+/** `supabase db query`: runs SQL on the dev instance or a linked Spark project. */
 export const sparkDbQuery = Effect.fn("spark.db.query")(function* (
-  flags: TargetFlagValues & {
+  flags: SparkTargetFlagValues & {
     readonly sql: Option.Option<string>;
     readonly file: Option.Option<string>;
     readonly readOnly: boolean;
@@ -38,7 +38,7 @@ export const sparkDbQuery = Effect.fn("spark.db.query")(function* (
     });
   }
 
-  yield* withSparkTarget(flags, (target) =>
+  yield* withSparkTarget(flags, (project) =>
     Effect.gen(function* () {
       const spark = yield* SparkTarget;
       const sql = yield* Effect.gen(function* () {
@@ -77,7 +77,7 @@ export const sparkDbQuery = Effect.fn("spark.db.query")(function* (
       // report the table default as `text`.
       yield* telemetryOutputFormat.set(format);
       yield* Effect.annotateCurrentSpan({
-        "db.conn_type": target.kind,
+        "db.conn_type": project.kind,
         "query.format": format,
         "query.agent_mode": agentMode,
         "query.read_only": flags.readOnly,
@@ -85,8 +85,9 @@ export const sparkDbQuery = Effect.fn("spark.db.query")(function* (
 
       // No client-side read-only keyword check: Spark owns SQL semantics, so its parser decides
       // and the server answers 25006 for a write.
-      if (!flags.readOnly)
-        yield* requireTargetMutationConsent(target, {
+      // The checkout's own dev instance needs no consent; a linked project does.
+      if (!flags.readOnly && project.kind === "linked")
+        yield* requireTargetMutationConsent(project, {
           action: "Run a SQL statement",
           readOnlyAlternative: true,
           details: [`sql: ${sqlPreview(sql)}`],

@@ -94,10 +94,6 @@ import {
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
-import {
-  readExperimentalFeatureConfig,
-  resolveExperimentalFeature,
-} from "../../../../shared/config/experimental-feature.ts";
 
 const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   const supported = new Set<string>(STACK_START_EXCLUDABLE_CAPABILITIES);
@@ -268,11 +264,7 @@ const sameKinds = (
  */
 const studioNeedsRest = (requestedServices: ReadonlyArray<{ readonly service: string }>): boolean =>
   requestedServices.some(({ service }) => service === "studio") &&
-  !requestedServices.some(({ service }) => service === "rest" || service === "spark");
-
-/** The member that owns the stack's data: Postgres, or Spark in a Spark project. */
-const isPrimary = ({ service }: { readonly service: string }) =>
-  service === "database" || service === "spark";
+  !requestedServices.some(({ service }) => service === "rest");
 
 const endpointPortLabel = (endpoints: unknown, name: string): string => {
   const intent = isRecord(endpoints) ? endpoints[name] : undefined;
@@ -607,33 +599,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
     const configFile = yield* loadConfigFileRef(target.projectRoot);
     const runtime = yield* RuntimeInfo;
-    const sparkProject = yield* resolveExperimentalFeature({
-      feature: "spark",
-      configValue: readExperimentalFeatureConfig({
-        feature: "spark",
-        args: [],
-        cwd: target.projectRoot,
-      }),
-    }).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    if (sparkProject && (target.runtime === "docker" || target.runtime === "podman"))
-      return yield* new StackCommandStartError({
-        reason: "flags",
-        message: "A Spark project runs on the native runtime",
-        suggestion: "Remove --runtime, or pass --runtime native.",
-      });
-    yield* Effect.annotateCurrentSpan({ "stack.spark": sparkProject });
-    const selectedRuntime = yield* selectStackRuntime(
-      sparkProject ? "native" : target.runtime,
-    ).pipe(
+    const selectedRuntime = yield* selectStackRuntime(target.runtime).pipe(
       Effect.mapError(
         (error) =>
           new StackCommandStartError({
@@ -666,7 +632,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ),
     );
     if (target.id === undefined || !target.hostRunning) yield* startConfig;
-    if (target.id === undefined && !sparkProject) yield* ensurePostgresUser;
+    if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
     const resolveRequested = (
@@ -814,9 +780,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         );
       });
     const runtimeNotice =
-      target.id === undefined && !sparkProject
-        ? automaticRuntimeNotice(target.runtime, selectedRuntime)
-        : undefined;
+      target.id === undefined ? automaticRuntimeNotice(target.runtime, selectedRuntime) : undefined;
     if (runtimeNotice !== undefined) yield* output.info(runtimeNotice);
     const existingServices = yield* stack.services.list.pipe(Effect.mapError(stackError));
     const composition = yield* stack.composition.describe.pipe(Effect.mapError(stackError));
@@ -826,7 +790,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const currentStatuses = yield* Effect.forEach(currentInstances, (instance) =>
       instance.status.pipe(Effect.mapError(stackError)),
     );
-    const primaryDatabase = currentInstances.find(isPrimary);
+    const primaryDatabase = currentInstances.find((instance) => instance.service === "database");
     const databaseStatus = currentStatuses.find(({ id }) => id === primaryDatabase?.id);
     const fullyStarted =
       databaseStatus !== undefined &&
@@ -903,7 +867,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     endpointChanges = yield* stack.startupEndpointChanges.pipe(Effect.mapError(stackError));
     for (const change of endpointChanges)
       yield* output.info(`${endpointLabel(change)}: ${change.from} → ${change.to}`);
-    if (target.id !== undefined && !sparkProject) yield* ensurePostgresUser;
+    if (target.id !== undefined) yield* ensurePostgresUser;
     const shadowDatabase =
       composition.members.length === 0
         ? existingServices.find((instance) => instance.service === "database")
@@ -1092,26 +1056,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.flatMap((complete) => (complete ? Effect.void : cleanupInitialSafe)),
         ),
       );
-    }
-    const spark = members.find((instance) => instance.service === "spark");
-    if (spark !== undefined) {
-      // Spark applies the project's migrations and seed itself when it starts.
-      yield* spark.start.pipe(
-        Effect.andThen(spark.ready),
-        Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError(stackError),
-      );
-      yield* stack.composition.start.pipe(
-        Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError((error) => stackError(error, members, requested, { configFile })),
-      );
-      yield* Ref.set(startupComplete, true);
-      const report = yield* startReport(stack, members).pipe(
-        Effect.tapError((error) => starting.fail(error.message)),
-      );
-      yield* starting.succeed("Stack is ready.");
-      yield* reportReady(report, "");
-      return stack.id;
     }
     const database = members.find((instance) => instance.service === "database");
     if (database === undefined)

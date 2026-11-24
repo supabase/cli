@@ -11,7 +11,7 @@ import {
 } from "../../../../../command-internal/db/pgdelta/pgdelta-files.ts";
 import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
 import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
-import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import type { SparkTargetFlagValues } from "../../spark.flags.ts";
 import { isRefused } from "../../spark-api.ts";
 import { SparkBackendError, SparkMigrationRefusedError } from "../../spark-project.ts";
 import { locateInSchemaFiles } from "../../spark-schema-files.ts";
@@ -24,7 +24,7 @@ import { migrationVersion, SparkTarget, withSparkTarget } from "../../spark-targ
  * with pg-delta, then dry-runs the migration on Spark; a refused statement writes nothing.
  */
 export const sparkDbDiff = Effect.fn("spark.db.diff")(function* (
-  flags: TargetFlagValues & {
+  flags: SparkTargetFlagValues & {
     readonly schema: ReadonlyArray<string>;
     readonly file: Option.Option<string>;
   },

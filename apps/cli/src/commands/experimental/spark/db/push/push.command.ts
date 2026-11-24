@@ -1,13 +1,12 @@
 import { Command } from "effect/cli";
 
-import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
 import { sparkDbPush } from "./push.handler.ts";
-import { sparkRuntimeLayer } from "../../spark.flags.ts";
+import { sparkRuntimeLayer, sparkTargetFlags, withSparkTargetHelp } from "../../spark.flags.ts";
 
-const config = { ...targetFlags({ subject: "database", dbUrl: false }) } as const;
+const config = { ...sparkTargetFlags() } as const;
 
 export const sparkDbPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
@@ -19,4 +18,5 @@ export const sparkDbPushCommand = Command.make("push", config).pipe(
   ),
   Command.provide(sparkRuntimeLayer(["db", "push"])),
   withTargetPolicy({ group: "selectable", consent: "no" }),
+  withSparkTargetHelp,
 );

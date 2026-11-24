@@ -97,61 +97,6 @@ describe("loadStackConfig", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("runs Spark and the named Studio on the Spark engine instead of Postgres", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-spark"
-[api]
-port = 55521
-[experimental.spark]
-enabled = true
-executable = "/opt/spark/bin/spark"
-studio_executable = "/opt/studio/bin/studio"
-`);
-      const config = yield* load(root);
-      const services = yield* config.creations("stack-spark");
-
-      expect(services.map(({ service }) => service)).toEqual(["spark", "studio"]);
-      expect(byService(services).get("spark")).toEqual({
-        service: "spark",
-        config: { executable: "/opt/spark/bin/spark", projectRoot: root },
-        endpoints: { http: { port: 55521 } },
-      });
-      const studio = byService(services).get("studio");
-      expect(studio?.service === "studio" ? studio.config : undefined).toMatchObject({
-        executable: "/opt/studio/bin/studio",
-        postgresEngine: "spark",
-      });
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("refuses a Spark project whose Studio has no launcher with the pg-meta fallbacks", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-spark-stock-studio"
-[experimental.spark]
-enabled = true
-executable = "/opt/spark/bin/spark"
-`);
-      const exit = yield* load(root).pipe(
-        Effect.flatMap((config) => config.creations("stack-spark-stock-studio")),
-        Effect.exit,
-      );
-
-      expect(String(exit)).toContain("experimental.spark.studio_executable");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("requires an absolute Spark binary path when Spark is enabled", () =>
-    Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-spark-bin"
-[experimental.spark]
-enabled = true
-`);
-      const error = yield* load(root).pipe(Effect.flip);
-
-      expect(error.message).toContain("experimental.spark.executable");
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("decodes the default recipe and leaves listeners automatic", () =>
     Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"
@@ -169,8 +114,7 @@ enabled = true
       expect(keys.gotrueJwtKeys).toBeUndefined();
       expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
-      for (const service of services)
-        if (service.service !== "spark") expect(service.pin).toEqual(selection[service.service]);
+      for (const service of services) expect(service.pin).toEqual(selection[service.service]);
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
       ).toBeUndefined();

@@ -28,7 +28,7 @@ describe("CLI feature routing", () => {
   );
 
   it.live(
-    "selects the Spark tree for enabled = true and names an env(...) dev_instance, instead of starting the mainline stack",
+    "refuses a local Spark stack key in [experimental.spark] by name, instead of ignoring it",
     () =>
       withTempHome((home) =>
         withTempCliProject("supabase-main-spark-routing-e2e-", (project) =>
@@ -39,7 +39,7 @@ describe("CLI feature routing", () => {
             yield* fs.makeDirectory(path.dirname(configPath), { recursive: true });
             yield* fs.writeFileString(
               configPath,
-              `project_id = "routing"\n\n[experimental.spark]\nenabled = true\ndev_instance = "env(MY_DEV)"\n`,
+              `project_id = "routing"\n\n[experimental.spark]\nenabled = true\nexecutable = "/usr/local/bin/spark"\n`,
             );
             const result = yield* runSupabaseEffect(["start"], {
               cwd: project.dir,
@@ -47,19 +47,18 @@ describe("CLI feature routing", () => {
               env: {
                 SUPABASE_WORKDIR: undefined,
                 SUPABASE_EXPERIMENTAL_SPARK_ENABLED: undefined,
-                SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE: undefined,
                 SUPABASE_EXPERIMENTAL_STACK: undefined,
                 NODE_PATH: undefined,
-                MY_DEV: "true",
               },
             });
 
             expect(result.exitCode).toBe(1);
             expect(result.stdout).toBe("");
-            expect(result.stderr).toContain("experimental.spark.dev_instance");
+            expect(result.stderr).toContain("experimental.spark.executable does not exist");
+            expect(result.stderr).not.toContain("SUPABASE_EXPERIMENTAL_STACK");
             expect(
-              yield* fs.exists(path.join(project.dir, "supabase", ".temp", "stacks")),
-              "no stack was started",
+              yield* fs.exists(path.join(project.dir, "supabase", ".temp", "dev-instance.json")),
+              "no dev instance was started",
             ).toBe(false);
           }).pipe(Effect.provide(BunServices.layer)),
         ),

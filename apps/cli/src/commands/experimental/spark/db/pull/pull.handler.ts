@@ -4,7 +4,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { reportPgDeltaNextDiagnostics } from "../../../../../command-internal/db/pgdelta/pgdelta-next-diagnostics.ts";
 import { PgDeltaNextAdapter } from "../../../../../command-internal/db/pgdelta/pgdelta-next-adapter.service.ts";
 import { writeDeclarativeSchemas } from "../../../../../command-internal/db/pgdelta/pgdelta.write.ts";
-import type { TargetFlagValues } from "../../../../../command-internal/target/target-flags.ts";
+import type { SparkTargetFlagValues } from "../../spark.flags.ts";
 import { withoutBaselineFiles } from "../../spark-schema-files.ts";
 import { acquireSparkShadows, loadSparkDump } from "../../spark-shadow.ts";
 import { projectPaths } from "../../spark.shared.ts";
@@ -12,7 +12,7 @@ import { SparkTarget, withSparkTarget } from "../../spark-target.ts";
 
 /** `supabase db pull`: the project's dump, loaded into a shadow Postgres, exported to `supabase/schemas`. */
 export const sparkDbPull = Effect.fn("spark.db.pull")(function* (
-  flags: TargetFlagValues & { readonly schema: ReadonlyArray<string> },
+  flags: SparkTargetFlagValues & { readonly schema: ReadonlyArray<string> },
 ) {
   yield* withSparkTarget(flags, () =>
     Effect.gen(function* () {
