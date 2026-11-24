@@ -88,6 +88,8 @@ export interface ManagementApiFaults {
   nullApiUrl: boolean;
   /** How many of the next `POST /v1/projects/{ref}/database/reset` calls answer 400, resetting nothing. */
   resetFailures: number;
+  /** `POST /v1/projects/{ref}/database/reset` does not answer, resetting nothing, until the test clears the fault. */
+  stallReset: boolean;
   /** `POST /v1/projects` does not answer, creating nothing, until the test clears the fault. */
   stallCreate: boolean;
 }
@@ -386,6 +388,10 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
       project !== undefined &&
       "instances" in options
     ) {
+      if (faults?.stallReset === true) {
+        while (faults.stallReset) yield* Effect.sleep("100 millis");
+        return json({ message: "the reset was dropped (injected)" }, 500);
+      }
       if (faults !== undefined && faults.resetFailures > 0) {
         faults.resetFailures -= 1;
         return json({ message: "the reset was rejected (injected)" }, 400);

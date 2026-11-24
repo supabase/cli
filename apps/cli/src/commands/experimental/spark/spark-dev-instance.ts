@@ -44,6 +44,12 @@ const DevInstanceState = Schema.Struct({
   service_role_key: Schema.optionalKey(Schema.String),
   /** Whether the seed files ran on the current database. */
   seeded: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A `db reset` whose outcome is unknown (it timed out or was interrupted): the server may or may
+   * not have emptied the database, so `seeded` is left as it was and nothing that would apply
+   * migrations or seed runs until a `db reset` finishes.
+   */
+  reset_pending: Schema.optionalKey(Schema.Boolean),
 });
 export interface DevInstanceState extends Schema.Schema.Type<typeof DevInstanceState> {}
 
@@ -67,7 +73,8 @@ type DevInstanceErrorReason =
   | "api-url"
   | "state"
   | "locked"
-  | "local-flag";
+  | "local-flag"
+  | "reset-pending";
 
 /** The dev instance is absent, unreadable, busy, or could not be created or reached. */
 export class SparkDevInstanceError extends Data.TaggedError("SparkDevInstanceError")<{
@@ -82,6 +89,7 @@ export class SparkDevInstanceError extends Data.TaggedError("SparkDevInstanceErr
       case "timeout":
         return actionability.externalNetwork;
       case "local-flag":
+      case "reset-pending":
         return actionability.invalidInput;
       case "locked":
         return { ...actionability.invalidInput, fingerprint_suffix: "lease_held" };
@@ -144,6 +152,17 @@ export const requireDevInstanceState = Effect.fn("SparkDevInstance.requireState"
       message: `The dev instance ${state.value.ref} was created through ${state.value.management_api_url}, but the profile's Management API is ${settings.apiUrl}. Switch back to that profile, or delete supabase/.temp/dev-instance.json and run \`supabase start\`.`,
     });
   return state.value;
+});
+
+/** Fails while the last `db reset` did not finish: the database may still hold the old data. */
+export const requireNoPendingReset = Effect.fn("SparkDevInstance.requireNoPendingReset")(function* (
+  state: DevInstanceState,
+) {
+  if (state.reset_pending === true)
+    return yield* new SparkDevInstanceError({
+      reason: "reset-pending",
+      message: `The last database reset of the dev instance ${state.ref} did not finish, so its data may or may not have been emptied. Run \`supabase db reset\` again before anything else changes the database.`,
+    });
 });
 
 /** The recorded dev instance, which `start` must have finished setting up. */

@@ -96,6 +96,7 @@ const StateFile = Schema.fromJsonString(
     api_url: Schema.optionalKey(Schema.String),
     service_role_key: Schema.optionalKey(Schema.String),
     seeded: Schema.optionalKey(Schema.Boolean),
+    reset_pending: Schema.optionalKey(Schema.Boolean),
   }),
 );
 
@@ -113,6 +114,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
     nullApiUrl: false,
     resetFailures: 0,
     stallCreate: false,
+    stallReset: false,
   };
   const received: ManagementApiLog = { deploys: [], bulkUpdates: [] };
   let firstRef = "";
@@ -563,6 +565,36 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
         (yield* run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
           .stdout,
       ).toContain(SEEDED_TITLE);
+      expect((yield* run(["start"], projectDir)).log).not.toContain("Seeding data");
+    }),
+  );
+
+  step(
+    "a db reset that never answers records reset_pending and keeps seeded; start refuses until a db reset finishes",
+    Effect.gen(function* () {
+      faults.stallReset = true;
+      const stalled = yield* runFails(["db", "reset"], projectDir).pipe(
+        Effect.ensuring(Effect.sync(() => (faults.stallReset = false))),
+      );
+      expect(stalled.log).toContain("may or may not have been emptied");
+      const pending = yield* readState(projectDir);
+      expect(pending.reset_pending).toBe(true);
+      expect(pending.seeded, "seeded is left as it was").toBe(true);
+
+      const refused = yield* runFails(["start"], projectDir);
+      expect(refused.log).toContain("did not finish");
+      expect(refused.log).toContain("supabase db reset");
+      expect(refused.log).not.toContain("Seeding data");
+      expect((yield* runFails(["db", "push"], projectDir)).log).toContain("did not finish");
+      expect((yield* run(["stop"], projectDir)).log).toContain("keeps running");
+      expect((yield* status(projectDir)).ref).toBe(firstRef);
+      expect((yield* readState(projectDir)).reset_pending).toBe(true);
+
+      const reset = yield* run(["db", "reset"], projectDir);
+      expect(reset.log).toContain("Seeding data from supabase/seed.sql");
+      const settled = yield* readState(projectDir);
+      expect(settled.reset_pending).toBeUndefined();
+      expect(settled.seeded).toBe(true);
       expect((yield* run(["start"], projectDir)).log).not.toContain("Seeding data");
     }),
   );

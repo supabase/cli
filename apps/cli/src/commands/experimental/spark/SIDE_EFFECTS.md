@@ -83,8 +83,8 @@ stack is started or read.
   an instance `start` has not finished.
 - `db reset`: `POST /v1/projects/{ref}/database/reset` with `{}`; once that succeeds it records the
   seed as not run, in one uninterruptible step (a rejected reset leaves the state file as it was; an
-  interrupt, or no answer within 60 s, records the seed as not run too, since the reset may have
-  happened), then runs the pending
+  interrupt, or no answer within 60 s, records `reset_pending` and leaves `seeded` as it was, since
+  the server may not have reset), then runs the pending
   migrations and the seed files as `start` runs them, and records the seed as run. A seed file
   that fails, or cannot be read after an earlier one ran, names the file and says to run
   `supabase db reset`, since the files before it were committed.
@@ -114,8 +114,11 @@ stack is started or read.
 - `supabase/.temp/dev-instance.json`, mode 0600, published atomically (staged as
   `supabase/.temp/.dev-instance.json.<pid>-<n>.tmp`, then renamed) by `start` and `db reset` in
   dev-instance mode, removed by `stop --delete`: `{ref, name, organization_slug,
-management_api_url, api_url?, anon_key?, service_role_key?, seeded?}`. `api_url` and the keys are
-  absent until `start` finishes; `seeded` is whether the seed files ran on the current database.
+management_api_url, api_url?, anon_key?, service_role_key?, seeded?, reset_pending?}`. `api_url` and the keys are
+  absent until `start` finishes; `seeded` is whether the seed files ran on the current database;
+  `reset_pending` is set when a `db reset` timed out or was interrupted (`seeded` is left as it was)
+  and cleared by the next `db reset` that succeeds. While it is set, `start` and `db push` refuse;
+  `status`, `stop` and `db reset` still run.
   Before the first write, `.temp` is appended to `supabase/.gitignore` when that file (created if
   missing, left alone when it is a symlink) does not list it. `start` does this, and publishes and
   removes a `dev-instance.json.probe` file there (also when the write fails or is interrupted), before it

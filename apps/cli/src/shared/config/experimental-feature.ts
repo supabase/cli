@@ -20,11 +20,18 @@ export class ExperimentalFeatureFlagError extends Data.TaggedError("Experimental
   }
 }
 
+/**
+ * Each Spark feature is decoded on its own key, so another key of the `[experimental.spark]` table
+ * that fails its schema cannot make `enabled` read as unset and select the mainline tree.
+ */
+const sparkFields = CliConfigSchema.fields.experimental.to.fields.spark.schema.to.fields;
 const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
-  spark: CliConfigSchema.fields.experimental.to.fields.spark,
-  sparkDevInstance: CliConfigSchema.fields.experimental.to.fields.spark,
+  spark: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(sparkFields.enabled) })),
+  sparkDevInstance: Schema.optionalKey(
+    Schema.Struct({ dev_instance: Schema.optionalKey(sparkFields.dev_instance) }),
+  ),
 } as const;
 
 type ExperimentalFeature = keyof typeof featureSchemas;

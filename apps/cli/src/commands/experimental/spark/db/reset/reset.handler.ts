@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from "effect";
+import { Effect, Option, Stream, Struct } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
@@ -82,17 +82,19 @@ const RESET_TIMEOUT_SECONDS = 60;
  * The dev instance's reset: Spark empties it, then the migrations and seed files run again. The
  * state file records the seed as not run once the database is empty, until the seed succeeds, so
  * a failed reset seeds on `start`; a reset the API rejects leaves the database and the marker as
- * they were. The remote reset and the marker's clearing are one uninterruptible step, and a reset
- * whose outcome is unknown (an interrupt or no answer within a minute) clears the marker too, so
- * the next `start` seeds or fails loudly instead of skipping the seed on an empty database.
+ * they were. The remote reset and the marker's clearing are one uninterruptible step. A reset
+ * whose outcome is unknown (an interrupt or no answer within a minute) leaves `seeded` alone and
+ * records `reset_pending`, which makes `start` and `db push` refuse until a `db reset` finishes.
  */
 const resetDevInstance = withDevInstanceLock(
   Effect.gen(function* () {
     const state = yield* requireReadyDevInstanceState();
+    const emptied = Struct.omit(state, ["reset_pending"]);
     yield* withDevInstanceTarget(
       Effect.gen(function* () {
         const spark = yield* SparkTarget;
-        const clearMarker = writeDevInstanceState({ ...state, seeded: false });
+        const clearMarker = writeDevInstanceState({ ...emptied, seeded: false });
+        const markPending = writeDevInstanceState({ ...state, reset_pending: true });
         yield* Effect.uninterruptibleMask((restore) =>
           restore(
             spark.resetDatabase.pipe(
@@ -101,14 +103,14 @@ const resetDevInstance = withDevInstanceLock(
                 duration: `${RESET_TIMEOUT_SECONDS} seconds`,
                 orElse: () =>
                   Effect.andThen(
-                    clearMarker,
+                    markPending,
                     new SparkDevInstanceError({
                       reason: "timeout",
                       message: `Resetting the dev instance ${state.ref} got no answer within ${RESET_TIMEOUT_SECONDS} seconds, so it may or may not have been emptied. Run \`supabase db reset\` again.`,
                     }),
                   ),
               }),
-              Effect.onInterrupt(() => Effect.ignore(clearMarker)),
+              Effect.onInterrupt(() => Effect.ignore(markPending)),
             ),
           ).pipe(Effect.andThen(clearMarker)),
         );
@@ -116,7 +118,7 @@ const resetDevInstance = withDevInstanceLock(
         yield* runSeedFiles();
       }),
     );
-    yield* writeDevInstanceState({ ...state, seeded: true });
+    yield* writeDevInstanceState({ ...emptied, seeded: true });
   }),
 );
 

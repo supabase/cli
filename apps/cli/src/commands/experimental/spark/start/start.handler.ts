@@ -20,6 +20,7 @@ import {
   readDevInstanceState,
   type ReadyDevInstanceState,
   requireDevInstanceState,
+  requireNoPendingReset,
   SparkDevInstanceError,
   withDevInstanceLock,
   writeDevInstanceState,
@@ -190,6 +191,7 @@ export const sparkDevStart = Effect.fn("spark.start")(function* (flags: {
   yield* withDevInstanceLock(
     Effect.gen(function* () {
       const { state, created } = yield* withPlatformApi(ensureDevInstance(flags.org));
+      yield* requireNoPendingReset(state);
       const seed = state.seeded !== true;
       yield* Effect.annotateCurrentSpan({
         "spark.dev_instance.created": created,

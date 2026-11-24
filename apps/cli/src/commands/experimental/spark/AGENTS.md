@@ -14,7 +14,7 @@ With `[experimental.spark] dev_instance` also set (or `SUPABASE_EXPERIMENTAL_SPA
 `serve` or `download`) and `secrets`: `start`, `status`
 and `stop` (`start/`, `status/`, `stop/`) manage a remote dev instance through the Management API, and the groups are
 provided `SparkDevInstanceMode`, so `withSparkTarget` sends a command with no target flag to that instance
-(`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). `start`, `stop --delete` and `db reset` change the
+(`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). A `db reset` that timed out or was interrupted records `reset_pending` there (and leaves `seeded` alone); `start` and `db push` refuse through `requireNoPendingReset` until a `db reset` finishes. `start`, `stop --delete` and `db reset` change the
 instance only under `withDevInstanceLock`, and write the state file only through `writeDevInstanceState`. New
 dev-instance groups go in that list the same way. The mainline `functions`, `secrets` and `projects api-keys` leaves are mounted by `root.ts`
 (this folder may not import them) through `withSparkDevInstanceProject` (`projects list`, which has no project flags,

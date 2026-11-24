@@ -43,6 +43,13 @@ describe("readExperimentalFeatureConfig for [experimental.spark]", () => {
     }),
   );
 
+  it.effect("reads enabled whatever the other keys of the table hold", () =>
+    Effect.gen(function* () {
+      expect(yield* read("spark", 'enabled = true\ndev_instance = "env(MY_DEV)"')).toBe(true);
+      expect(yield* read("spark", "enabled = true\nexecutable = 3")).toBe(true);
+    }),
+  );
+
   it.effect("still reads an env(...) enabled as unset (unchanged)", () =>
     Effect.gen(function* () {
       expect(yield* read("spark", 'enabled = "env(MY_SPARK)"')).toBeUndefined();
