@@ -525,7 +525,11 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         );
         const finishedAt = yield* Clock.currentTimeMillis;
         // A config failure the command swallowed must not label a success or an unrelated failure.
-        const { [PropConfigKey]: configKey, ...recordedAttributes } = yield* Ref.get(attributes);
+        const {
+          [PropConfigKey]: configKey,
+          processControlledFailure,
+          ...recordedAttributes
+        } = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -579,7 +583,9 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           failureCause !== undefined
             ? failureTelemetryPropertiesForCause(failureCause)
             : recordedExitCode === 1
-              ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+              ? toFailureTelemetryProperties(
+                  processControlledFailure ?? processControlledFailureActionability(command),
+                )
               : {};
         const entitlement =
           failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;

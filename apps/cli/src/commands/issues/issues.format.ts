@@ -6,6 +6,7 @@ export type IssueSeverity = typeof IssueSeverity.Type;
 export const IssueCategory = Schema.Literals(["security", "performance", "health"]);
 export type IssueCategory = typeof IssueCategory.Type;
 const Resource = Schema.Struct({
+  id: Schema.optionalKey(Schema.String),
   type: Schema.String,
   name: Schema.String,
   schema: Schema.NullOr(Schema.String),
@@ -36,6 +37,8 @@ export interface CheckCoverage {
   readonly reason?: string;
 }
 const Metadata = Schema.Struct({
+  extension_name: Schema.optionalKey(Schema.String),
+  foreign_key: Schema.optionalKey(Schema.String),
   name: Schema.optionalKey(Schema.String),
   entity: Schema.optionalKey(Schema.String),
   type: Schema.optionalKey(Schema.String),
@@ -85,6 +88,11 @@ const severityRank = { info: 0, warning: 1, critical: 2 };
 export const severityAtLeast = (severity: IssueSeverity, minimum: IssueSeverity): boolean =>
   severityRank[severity] >= severityRank[minimum];
 const Level = Schema.Literals(["INFO", "WARN", "ERROR"]);
+export const validateIssueLevels = Effect.fnUntraced(function* (lints: ReadonlyArray<AdvisorLint>) {
+  for (const lint of lints) {
+    if (!isUnavailableCheck(lint)) yield* Schema.decodeUnknownEffect(Level)(lint.level);
+  }
+});
 const severityByLevel = { INFO: "info", WARN: "warning", ERROR: "critical" } as const;
 export const groupIssues = Effect.fnUntraced(function* (
   lints: ReadonlyArray<AdvisorLint>,
@@ -97,27 +105,31 @@ export const groupIssues = Effect.fnUntraced(function* (
     const metadata = Option.getOrElse(Schema.decodeUnknownOption(Metadata)(lint.metadata), () =>
       Metadata.make({}),
     );
+    const type =
+      resourceTypes.get(metadata.type ?? "") ??
+      (metadata.arguments !== undefined
+        ? "function"
+        : lint.name === "fkey_to_auth_unique"
+          ? "table"
+          : "project");
     const resource =
-      metadata.entity !== undefined
-        ? {
-            type:
-              resourceTypes.get(metadata.type ?? "") ??
-              (metadata.arguments === undefined ? "project" : "function"),
-            name: metadata.entity,
-            schema: null,
-          }
-        : metadata.name === undefined
-          ? { type: "project", name: "Project", schema: null }
-          : {
-              type:
-                resourceTypes.get(metadata.type ?? "") ??
-                (metadata.arguments === undefined ? "project" : "function"),
-              name:
-                metadata.arguments === undefined
-                  ? metadata.name
-                  : `${metadata.name}(${metadata.arguments})`,
-              schema: metadata.schema ?? null,
-            };
+      metadata.extension_name !== undefined
+        ? { type: "extension", name: metadata.extension_name, schema: null }
+        : metadata.entity !== undefined
+          ? { type, name: metadata.entity, schema: null }
+          : metadata.name === undefined
+            ? { type: "project", name: "Project", schema: null }
+            : {
+                type,
+                name:
+                  metadata.arguments === undefined
+                    ? metadata.name
+                    : `${metadata.name}(${metadata.arguments})`,
+                schema: metadata.schema ?? null,
+                ...(type === "function" && metadata.arguments === undefined && lint.cacheKey !== ""
+                  ? { id: lint.cacheKey }
+                  : {}),
+              };
     const docsUrl = issueDocsUrl(lint.remediation);
     const affected = {
       id:

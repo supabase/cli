@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { stringWidth } from "../../command-internal/string-width.ts";
 import type { Issue } from "./issues.format.ts";
+import { Effect } from "effect";
+import { scanAdvisorLintRow } from "../../command-internal/advisors/advisors.format.ts";
+import { groupIssues } from "./issues.format.ts";
 import { renderIssuesText } from "./issues.text.ts";
 
 const title = "Long table check 界🙂e\u0301 ".repeat(12) + "\u001b[31m\nInjected line";
@@ -25,6 +28,31 @@ const issue: Issue = {
 };
 
 describe("readable issue tables", () => {
+  it.each([20, 120])(
+    "counts observed function rows when upstream cache identities collide at %s columns",
+    (width) => {
+      const rows = [
+        "function_search_path_mutable_public_lookup_1b1aee4c303cb30f3b1b99f399a942bf",
+        "function_search_path_mutable_public_lookup_d9fba05c5f1f705d8d5d18da0c7b7acd",
+        "function_search_path_mutable_public_lookup_1b1aee4c303cb30f3b1b99f399a942bf",
+      ].map((cache_key) =>
+        scanAdvisorLintRow({
+          name: "function_search_path_mutable",
+          title: "Check",
+          level: "WARN",
+          categories: ["SECURITY"],
+          metadata: { type: "function", schema: "public", name: "lookup" },
+          cache_key,
+        }),
+      );
+      const issues = Effect.runSync(groupIssues(rows, "info"));
+      expect(issues[0]?.affected).toHaveLength(3);
+      const output = renderIssuesText(issues, [], "info", width);
+      expect(
+        width === 20 ? output : output.split("\n").find((line) => line.includes("Check")),
+      ).toMatch(width === 20 ? /Affected:\n  3/ : /│\s*3\s*│/);
+    },
+  );
   it.each([20, 120])(
     "counts distinct resources without counting duplicate findings at %s columns",
     (width) => {

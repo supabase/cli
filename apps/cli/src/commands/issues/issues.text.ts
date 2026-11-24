@@ -5,8 +5,14 @@ import type { CheckCoverage, Issue, IssueSeverity } from "./issues.format.ts";
 
 const affectedResourceCount = (issue: Issue): number =>
   new Set(
-    issue.affected.map(({ resource }) =>
-      JSON.stringify([resource.type, resource.schema, resource.name]),
+    issue.affected.map(({ resource }, index) =>
+      JSON.stringify([
+        resource.type,
+        resource.schema,
+        resource.name,
+        resource.id ?? null,
+        issue.id === "function_search_path_mutable" && resource.id !== undefined ? index : null,
+      ]),
     ),
   ).size;
 

@@ -28,10 +28,11 @@ const mapPerformanceError = mapHttpError({
 export const fetchSecurityAdvisors = Effect.fn("db.advisors.fetchSecurity")(function* (
   ref: string,
   client?: ApiClient,
+  options: { readonly preserveMetadata?: boolean } = {},
 ) {
   const api = client ?? (yield* (yield* CommandPlatformApiFactory).make);
   const output = yield* api.v1.getSecurityAdvisors({ ref }).pipe(Effect.catch(mapSecurityError));
-  const lints = apiLintsToAdvisorLints(output.lints);
+  const lints = apiLintsToAdvisorLints(output.lints, options);
   yield* Effect.annotateCurrentSpan("advisor.count", lints.length);
   return lints;
 });
@@ -39,12 +40,13 @@ export const fetchSecurityAdvisors = Effect.fn("db.advisors.fetchSecurity")(func
 export const fetchPerformanceAdvisors = Effect.fn("db.advisors.fetchPerformance")(function* (
   ref: string,
   client?: ApiClient,
+  options: { readonly preserveMetadata?: boolean } = {},
 ) {
   const api = client ?? (yield* (yield* CommandPlatformApiFactory).make);
   const output = yield* api.v1
     .getPerformanceAdvisors({ ref })
     .pipe(Effect.catch(mapPerformanceError));
-  const lints = apiLintsToAdvisorLints(output.lints);
+  const lints = apiLintsToAdvisorLints(output.lints, options);
   yield* Effect.annotateCurrentSpan("advisor.count", lints.length);
   return lints;
 });

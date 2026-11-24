@@ -1,5 +1,6 @@
+import { BunCrypto } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Option } from "effect";
+import { Deferred, Effect, Layer, Option, Stdio } from "effect";
 import { useTempWorkdir, VALID_REF } from "../../../tests/helpers/command-mocks.ts";
 import {
   lintRow,
@@ -9,6 +10,9 @@ import {
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { issues } from "./issues.handler.ts";
+import { mockContextualAnalytics } from "../../../tests/helpers/mocks.ts";
+import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import type { IssuesFlags } from "./issues.command.ts";
 
 const tempRoot = useTempWorkdir("supabase-issues-int-");
@@ -27,6 +31,43 @@ const flags = (over: Partial<IssuesFlags> = {}): IssuesFlags => ({
   ...over,
 });
 describe("issues", () => {
+  it.effect("preserves resource metadata through the remote API parser", () => {
+    const metadata = {
+      extension_name: "pg_stat_statements",
+      installed_version: "1.10",
+      default_version: "1.11",
+    };
+    const { layer, out } = setup({
+      format: "json",
+      securityLints: [
+        lintRow({
+          name: "extension_versions_outdated",
+          metadata,
+          cache_key: "extension_versions_outdated_pg_stat_statements_1.10",
+        }),
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* issues(flags({ remote: REMOTE_LINKED, type: Option.some("security") }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            issues: [
+              expect.objectContaining({
+                id: "extension_versions_outdated",
+                affected: [
+                  expect.objectContaining({
+                    resource: { type: "extension", name: "pg_stat_statements", schema: null },
+                    metadata,
+                  }),
+                ],
+              }),
+            ],
+          }),
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
   it.effect.each([
     { direct: false, format: "json" as const },
     { direct: true, format: "stream-json" as const },
@@ -326,25 +367,64 @@ describe("issues boundary failures", () => {
       expect(processControl.exitCode).toBe(1);
     }).pipe(Effect.provide(layer));
   });
-  it.effect.each([false, true])(
-    "rejects future severity values without reporting a clean success (remote %s)",
-    (remote) => {
-      const { layer, out } = setup({
+  it.effect("rejects local future severity values without reporting a clean success", () => {
+    const { layer, out } = setup({
+      format: "json",
+      rows: [lintRow({ level: "FUTURE" })],
+    });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(issues(flags({ type: Option.some("security") })));
+      expect(error._tag).toBe("SchemaError");
+      expect(out.messages.some((message) => message.type === "success")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+  it.effect.each(["security", "performance", "health"] as const)(
+    "preserves valid categories when %s contains mixed known and unknown severity values",
+    (failed) => {
+      const categoryLints = (category: string) => [
+        lintRow({ name: `${category}_known`, level: "WARN" }),
+        ...(category === failed ? [lintRow({ name: `${category}_unknown`, level: "FUTURE" })] : []),
+      ];
+      const { layer, out, cache, processControl, telemetry } = setup({
         format: "json",
-        rows: [lintRow({ level: "FUTURE" })],
-        securityLints: [lintRow({ level: "FUTURE" })],
+        securityLints: categoryLints("security"),
+        performanceLints: categoryLints("performance"),
+        healthLints: categoryLints("health"),
       });
       return Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          issues(
-            flags({
-              remote: remote ? REMOTE_LINKED : Option.none(),
-              type: Option.some("security"),
-            }),
-          ),
+        yield* issues(flags({ remote: REMOTE_LINKED }));
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: {
+              issues: expect.arrayContaining(
+                ["security", "performance", "health"]
+                  .filter((category) => category !== failed)
+                  .map((category) =>
+                    expect.objectContaining({
+                      id: `${category}_known`,
+                      category,
+                      severity: "warning",
+                    }),
+                  ),
+              ),
+              checks: ["security", "performance", "health"].map((category) =>
+                category === failed
+                  ? {
+                      type: category,
+                      status: "unavailable",
+                      reason: expect.stringContaining("could not be processed"),
+                    }
+                  : { type: category, status: "complete" },
+              ),
+            },
+          }),
         );
-        expect(error._tag).toBe("SchemaError");
-        expect(out.messages.some((message) => message.type === "success")).toBe(false);
+        const result = out.messages.find((message) => message.type === "success")?.data;
+        expect(result).toHaveProperty("issues.length", 2);
+        expect(processControl.exitCode).toBe(1);
+        expect(cache.cachedRef).toBe(VALID_REF);
+        expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -448,5 +528,76 @@ describe("issues readable text", () => {
       const separator = out.stdoutText.split("\n").find((line) => line.startsWith("┌"));
       expect(separator?.length).toBe(columns);
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("issues telemetry", () => {
+  it.effect.each([
+    {
+      name: "local health limitation does not override threshold",
+      remote: false,
+      unavailable: false,
+      finding: true,
+      failOn: "warning",
+      fingerprint: "tag:IssuesFailOnError",
+      kind: "user_actionable",
+      category: "invalid_config",
+    },
+    {
+      name: "threshold disabled",
+      remote: true,
+      unavailable: false,
+      finding: true,
+      failOn: "none",
+      fingerprint: undefined,
+      kind: undefined,
+      category: undefined,
+    },
+  ] as const)("records $name without changing the output payload", (testCase) => {
+    const analytics = mockContextualAnalytics();
+    const { layer, out, processControl } = setup({
+      format: "json",
+      rows: testCase.finding ? [lintRow()] : [],
+      securityLints: testCase.finding ? [lintRow()] : [],
+      healthStatus: testCase.unavailable ? 503 : 200,
+    });
+    return Effect.gen(function* () {
+      yield* issues(
+        flags({
+          remote: testCase.remote ? REMOTE_LINKED : Option.none(),
+          failOn: Option.some(testCase.failOn),
+        }),
+      ).pipe(withCommandTelemetry());
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "issues",
+          data: expect.objectContaining({
+            issues: testCase.finding
+              ? [expect.objectContaining({ id: "rls_disabled_in_public" })]
+              : [],
+          }),
+        }),
+      );
+      const event = analytics.captured.find(
+        (captured) => captured.event === "cli_command_executed",
+      );
+      expect(event).toBeDefined();
+      expect(event?.properties.exit_code).toBe(testCase.fingerprint === undefined ? 0 : 1);
+      expect(processControl.exitCode).toBe(testCase.fingerprint === undefined ? undefined : 1);
+      expect(event?.properties.error_fingerprint).toBe(testCase.fingerprint);
+      expect(event?.properties.error_kind).toBe(testCase.kind);
+      expect(event?.properties.error_category).toBe(testCase.category);
+      expect(event?.properties).not.toHaveProperty("processControlledFailure");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          analytics.layer,
+          Stdio.layerTest({ args: Effect.succeed(["issues"]) }),
+          commandRuntimeLayer(["issues"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+    );
   });
 });

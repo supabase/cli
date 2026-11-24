@@ -18,7 +18,12 @@ import {
   apiLintsToAdvisorLints,
   type AdvisorLint,
 } from "../../command-internal/advisors/advisors.format.ts";
-import { issueCheckCoverage, type CheckCoverage, type IssueCategory } from "./issues.format.ts";
+import {
+  issueCheckCoverage,
+  validateIssueLevels,
+  type CheckCoverage,
+  type IssueCategory,
+} from "./issues.format.ts";
 
 const healthChecks = [
   "log_data_api_error_rate_high",
@@ -55,8 +60,10 @@ const fetchRemoteIssues = Effect.fn("issues.fetchRemote")(function* (
   ref: string,
   category: IssueCategory,
 ) {
-  if (category === "security") return yield* fetchSecurityAdvisors(ref, api);
-  if (category === "performance") return yield* fetchPerformanceAdvisors(ref, api);
+  if (category === "security")
+    return yield* fetchSecurityAdvisors(ref, api, { preserveMetadata: true });
+  if (category === "performance")
+    return yield* fetchPerformanceAdvisors(ref, api, { preserveMetadata: true });
   const result = yield* api.v2.runProjectAdvisors({
     ref,
     data: {
@@ -64,7 +71,7 @@ const fetchRemoteIssues = Effect.fn("issues.fetchRemote")(function* (
       attributes: { lints: healthChecks.map((name) => ({ name })) },
     },
   });
-  return apiLintsToAdvisorLints(result.data.attributes.lints);
+  return apiLintsToAdvisorLints(result.data.attributes.lints, { preserveMetadata: true });
 });
 
 export const collectRemoteIssues = Effect.fn("issues.collectRemote")(function* (
@@ -76,6 +83,7 @@ export const collectRemoteIssues = Effect.fn("issues.collectRemote")(function* (
     categories,
     (category) =>
       fetchRemoteIssues(api, ref, category).pipe(
+        Effect.tap(validateIssueLevels),
         Effect.map((found) => {
           const check = issueCheckCoverage(category, found);
           const lints: ReadonlyArray<AdvisorLint> = found.map((lint) => ({

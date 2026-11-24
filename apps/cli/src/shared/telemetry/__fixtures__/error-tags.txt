@@ -318,6 +318,8 @@ InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidServiceVersionTagError
+IssuesChecksUnavailableError
+IssuesFailOnError
 IssuesHealthAuthorizationError
 IssuesHealthUnsupportedError
 IssuesOutputFlagUnsupportedError

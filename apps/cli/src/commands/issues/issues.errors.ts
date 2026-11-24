@@ -30,3 +30,21 @@ export class IssuesHealthAuthorizationError extends Schema.TaggedError<IssuesHea
     return statusCodeActionability(this.status);
   }
 }
+
+export class IssuesFailOnError extends Schema.TaggedError<IssuesFailOnError>()(
+  "IssuesFailOnError",
+  { message: Schema.String },
+) {
+  get [ErrorActionabilityId]() {
+    return actionability.dbFinding;
+  }
+}
+
+export class IssuesChecksUnavailableError extends Schema.TaggedError<IssuesChecksUnavailableError>()(
+  "IssuesChecksUnavailableError",
+  { message: Schema.String },
+) {
+  get [ErrorActionabilityId]() {
+    return actionability.apiStatus;
+  }
+}

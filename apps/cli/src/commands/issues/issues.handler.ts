@@ -18,7 +18,14 @@ import {
   type IssueCategory,
 } from "./issues.format.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
-import { IssuesOutputFlagUnsupportedError, IssuesHealthUnsupportedError } from "./issues.errors.ts";
+import {
+  IssuesFailOnError,
+  IssuesChecksUnavailableError,
+  IssuesOutputFlagUnsupportedError,
+  IssuesHealthUnsupportedError,
+} from "./issues.errors.ts";
+import { recordCommandTelemetry } from "../../telemetry/command-telemetry-attributes.ts";
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import type { IssuesFlags } from "./issues.command.ts";
 
 const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
@@ -92,7 +99,16 @@ const runIssues = Effect.fn("issues.run")(function* (flags: IssuesFlags) {
     target.kind === "linked" && checks.some((check) => check.status === "unavailable");
   const thresholdReached =
     failOn !== "none" && issues.some((issue) => severityAtLeast(issue.severity, failOn));
-  if (unavailableRemote || thresholdReached) yield* process.setExitCode(1);
+  if (unavailableRemote || thresholdReached) {
+    yield* recordCommandTelemetry({
+      processControlledFailure: classifyCliErrorActionability(
+        unavailableRemote
+          ? new IssuesChecksUnavailableError({ message: "Some remote checks are unavailable." })
+          : new IssuesFailOnError({ message: "Issues meet the fail-on threshold." }),
+      ),
+    });
+    yield* process.setExitCode(1);
+  }
 });
 export const issues = Effect.fn("issues")(function* (flags: IssuesFlags) {
   yield* runIssues(flags).pipe(Effect.ensuring((yield* TelemetryState).flush));
