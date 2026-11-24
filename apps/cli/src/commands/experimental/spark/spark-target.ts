@@ -6,7 +6,7 @@ import {
   type SparkTypegenError,
   sparkTypescriptTypes,
 } from "@supabase/stack/spark";
-import { Clock, Context, Effect, Option } from "effect";
+import { Clock, Context, Effect, Option, Result } from "effect";
 import { HttpClient } from "effect/http";
 
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
@@ -16,6 +16,8 @@ import { configureLoopbackProxyBypass } from "../../../command-internal/hostname
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { formatMigrationTimestamp } from "../../../command-internal/migration-file.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
 import {
   resolveTarget,
   type ResolvedTarget,
@@ -28,9 +30,11 @@ import {
   dryRunSparkMigration,
   dumpSparkSchema,
   listSparkMigrations,
+  resetSparkDatabase,
   runSparkQuery,
   sparkTypescriptTypes as remoteTypescriptTypes,
 } from "./spark-api.ts";
+import { requireDevInstanceState, SparkDevInstanceMode } from "./spark-dev-instance.ts";
 import { SparkApiError, SparkBackendError } from "./spark-project.ts";
 import { isSparkRunning, openSpark } from "./spark-stack.ts";
 
@@ -63,6 +67,8 @@ export class SparkTarget extends Context.Service<
     readonly typescriptTypes: (
       schemas: ReadonlyArray<string>,
     ) => Effect.Effect<string, SparkTargetError>;
+    /** Empties the database and its migration history. */
+    readonly resetDatabase: Effect.Effect<void, SparkTargetError>;
   }
 >()("supabase/cli/SparkTarget") {}
 
@@ -88,6 +94,7 @@ const remoteSparkTarget = Effect.fn("SparkTarget.remote")(function* (ref: string
     dryRunMigration: (migration) => bind(dryRunSparkMigration(ref, migration)),
     dump: (schemas) => bind(dumpSparkSchema(ref, schemas)),
     typescriptTypes: (schemas) => bind(remoteTypescriptTypes(ref, schemas)),
+    resetDatabase: bind(resetSparkDatabase(ref)),
   });
 });
 
@@ -157,12 +164,36 @@ const localSparkTarget = Effect.fn("SparkTarget.local")(function* () {
       sparkTypescriptTypes(admin, only(schemas)).pipe(
         Effect.mapError(adminFailure("generate types")),
       ),
+    // The local database is rebuilt by `spark db reset` while the stack is stopped (`db reset`).
+    resetDatabase: Effect.fail(
+      new SparkBackendError({
+        message: "The local Spark database is reset by `supabase db reset`.",
+      }),
+    ),
   });
+});
+
+/** The checkout's dev instance, reached through the Management API like a linked project. */
+const devInstanceSparkTarget = Effect.fn("SparkTarget.devInstance")(function* () {
+  const state = yield* requireDevInstanceState();
+  return yield* remoteSparkTarget(state.ref);
+});
+
+/** Runs `body` with the dev instance's {@link SparkTarget} (`start`, `db reset`). */
+export const withDevInstanceTarget = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+  body.pipe(Effect.provideServiceEffect(SparkTarget, devInstanceSparkTarget()));
+
+/** Whether no target flag was given, so the mode's default target applies. */
+const selectsDefaultTarget = Effect.fnUntraced(function* (flags: TargetFlagValues) {
+  const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
+  const parsed = parseTargetSelector(flags, { remoteConflict: cliArgs?.remoteConflict === true });
+  return Result.isSuccess(parsed) && parsed.success.selection._tag === "Default";
 });
 
 /**
  * Resolves the command's target and runs `body` with its {@link SparkTarget}: the local Spark
- * server by default, the Management API for a linked project, which is cached for telemetry.
+ * server by default (the dev instance in dev-instance mode), the Management API for a linked
+ * project, which is cached for telemetry.
  */
 export const withSparkTarget = <A, E, R>(
   flags: TargetFlagValues,
@@ -171,6 +202,9 @@ export const withSparkTarget = <A, E, R>(
   Effect.gen(function* () {
     const telemetryState = yield* TelemetryState;
     const run = Effect.gen(function* () {
+      // A personal dev instance is treated like the local stack: its writes need no consent.
+      if ((yield* SparkDevInstanceMode) && (yield* selectsDefaultTarget(flags)))
+        return yield* withDevInstanceTarget(body({ kind: "local" }));
       const target = yield* resolveTarget(flags);
       switch (target.kind) {
         case "linked": {

@@ -1,3 +1,4 @@
+import { Layer } from "effect";
 import { Command } from "effect/cli";
 
 import { sparkDbDiffCommand } from "./db/diff/diff.command.ts";
@@ -9,6 +10,10 @@ import { sparkGenTypesCommand } from "./gen/types/types.command.ts";
 import { sparkLinkCommand } from "./link/link.command.ts";
 import { sparkMigrationFetchCommand } from "./migration/fetch/fetch.command.ts";
 import { sparkMigrationListCommand } from "./migration/list/list.command.ts";
+import { SparkDevInstanceMode } from "./spark-dev-instance.ts";
+import { sparkDevStartCommand } from "./start/start.command.ts";
+import { sparkDevStatusCommand } from "./status/status.command.ts";
+import { sparkDevStopCommand } from "./stop/stop.command.ts";
 
 const sparkDbCommand = Command.make("db").pipe(
   Command.withDescription("Manage the Spark project's database schema and migrations."),
@@ -41,4 +46,20 @@ export const sparkCommands = [
   sparkDbCommand,
   sparkMigrationCommand,
   sparkGenCommand,
+] as const;
+
+const devInstanceMode = Layer.succeed(SparkDevInstanceMode, true);
+
+/**
+ * The Spark commands of a dev-instance project (`[experimental.spark] dev_instance`): `start`,
+ * `status` and `stop` act on the dev instance, and the others target it by default.
+ */
+export const sparkDevInstanceCommands = [
+  sparkDevStartCommand,
+  sparkDevStatusCommand,
+  sparkDevStopCommand,
+  sparkLinkCommand,
+  sparkDbCommand.pipe(Command.provide(devInstanceMode)),
+  sparkMigrationCommand.pipe(Command.provide(devInstanceMode)),
+  sparkGenCommand.pipe(Command.provide(devInstanceMode)),
 ] as const;

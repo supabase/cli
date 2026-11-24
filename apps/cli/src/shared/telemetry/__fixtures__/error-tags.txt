@@ -461,6 +461,7 @@ SnippetsListUnexpectedStatusError
 SnippetsTomlEncodeError
 SparkApiError
 SparkBackendError
+SparkDevInstanceError
 SparkMigrationRefusedError
 SparkShadowError
 SslEnforcementGetNetworkError

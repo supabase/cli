@@ -24,15 +24,27 @@ const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
   spark: CliConfigSchema.fields.experimental.to.fields.spark,
+  sparkDevInstance: CliConfigSchema.fields.experimental.to.fields.spark,
 } as const;
 
 type ExperimentalFeature = keyof typeof featureSchemas;
 
-/** The opt-in boolean inside a decoded feature value; `[experimental.spark]` is a table. */
+/** The `[experimental]` key each feature is read from. */
+const featureTables = {
+  stack: "stack",
+  compute: "compute",
+  spark: "spark",
+  sparkDevInstance: "spark",
+} as const satisfies Record<ExperimentalFeature, string>;
+
+/** The boolean inside a decoded feature value; `[experimental.spark]` is a table. */
 const featureEnabled = (feature: ExperimentalFeature, value: unknown): boolean | undefined => {
   if (typeof value === "boolean") return value;
-  if (feature === "spark" && typeof value === "object" && value !== null && "enabled" in value)
+  if (typeof value !== "object" || value === null) return undefined;
+  if (feature === "spark" && "enabled" in value)
     return typeof value.enabled === "boolean" ? value.enabled : undefined;
+  if (feature === "sparkDevInstance" && "dev_instance" in value)
+    return typeof value.dev_instance === "boolean" ? value.dev_instance : undefined;
   return undefined;
 };
 
@@ -75,19 +87,19 @@ export const readExperimentalFeatureConfig = (input: {
     const document = yield* Effect.try(() =>
       parseCliConfigDocument(content, cliConfigFormatForPath(project.configPath)),
     );
+    const table = featureTables[input.feature];
     const schema = Schema.Struct({
-      experimental: Schema.optionalKey(
-        Schema.Struct({ [input.feature]: featureSchemas[input.feature] }),
-      ),
+      experimental: Schema.optionalKey(Schema.Struct({ [table]: featureSchemas[input.feature] })),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return featureEnabled(input.feature, decoded.experimental?.[input.feature]);
+    return featureEnabled(input.feature, decoded.experimental?.[table]);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,
   compute: CliConfigKeys.experimental.compute,
   spark: CliConfigKeys.experimental.spark.enabled,
+  sparkDevInstance: CliConfigKeys.experimental.spark.devInstance,
 } as const;
 
 /**
@@ -118,9 +130,14 @@ export const resolveExperimentalFeature = <E, R>(input: {
     const picked =
       input.feature === "spark"
         ? Result.map(pickCliConfigKey(featureKeys.spark, sources), ({ value }) => value)
-        : Result.map(pickCliConfigKey(featureKeys[input.feature], sources), ({ value }) =>
-            Option.getOrElse(value, () => false),
-          );
+        : input.feature === "sparkDevInstance"
+          ? Result.map(
+              pickCliConfigKey(featureKeys.sparkDevInstance, sources),
+              ({ value }) => value,
+            )
+          : Result.map(pickCliConfigKey(featureKeys[input.feature], sources), ({ value }) =>
+              Option.getOrElse(value, () => false),
+            );
     if (Result.isFailure(picked)) {
       return yield* new ExperimentalFeatureFlagError({
         envName,

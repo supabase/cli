@@ -57,6 +57,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "name",
   "name-id-format",
   "notify-url",
+  "org",
   "org-id",
   "override-name",
   "payload",

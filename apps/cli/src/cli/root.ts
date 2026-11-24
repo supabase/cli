@@ -24,7 +24,10 @@ import {
   projectStateModeLayer,
 } from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
-import { sparkCommands } from "../commands/experimental/spark/spark.command.ts";
+import {
+  sparkCommands,
+  sparkDevInstanceCommands,
+} from "../commands/experimental/spark/spark.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
@@ -39,6 +42,7 @@ import { networkBansCommand } from "../commands/network-bans/network-bans.comman
 import { networkRestrictionsCommand } from "../commands/network-restrictions/network-restrictions.command.ts";
 import { notebooksCommand } from "../commands/notebooks/notebooks.command.ts";
 import { orgsCommand } from "../commands/orgs/orgs.command.ts";
+import { orgsListCommand } from "../commands/orgs/list/list.command.ts";
 import { postgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
 import { projectsCommand } from "../commands/projects/projects.command.ts";
 import { pullCommand } from "../commands/pull/pull.command.ts";
@@ -149,7 +153,24 @@ interface RootCommandFeatures {
   readonly computeEnabled?: boolean;
   /** A Spark project gets its own reduced command tree instead of the mainline one. */
   readonly sparkEnabled?: boolean;
+  /** A Spark project in dev-instance mode develops against a remote instance, not a local stack. */
+  readonly sparkDevInstance?: boolean;
 }
+
+/** `orgs` in a Spark dev-instance tree, which only reads the organizations `start` picks from. */
+const sparkOrgsCommand = Command.make("orgs").pipe(
+  Command.withDescription("Manage Supabase organizations"),
+  Command.withShortDescription("Manage Supabase organizations"),
+  Command.withSubcommands([orgsListCommand]),
+);
+
+/** The account commands a Spark dev-instance tree adds to its own `start`, `status` and `stop`. */
+const sparkDevInstanceAccountCommands = [
+  loginCommand,
+  logoutCommand,
+  sparkOrgsCommand,
+  projectsCommand,
+] as const;
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
 const agentDefaultOutputFormatFor = (
@@ -168,10 +189,14 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
         ? [
             initCommand,
             ...(options.stackBackend === "stack" ? [stackCommand] : []),
-            stackStartAliasCommand,
-            stackStatusAliasCommand,
-            stackStopAliasCommand,
-            ...sparkCommands,
+            ...(options.sparkDevInstance
+              ? [...sparkDevInstanceAccountCommands, ...sparkDevInstanceCommands]
+              : [
+                  stackStartAliasCommand,
+                  stackStatusAliasCommand,
+                  stackStopAliasCommand,
+                  ...sparkCommands,
+                ]),
           ]
         : [
             backupsCommand,

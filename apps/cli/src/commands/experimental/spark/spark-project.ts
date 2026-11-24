@@ -77,3 +77,17 @@ export const resolveSparkEnabled = (input: {
       }),
     });
   }).pipe(Effect.withSpan("Spark.resolveEnabled"));
+
+/**
+ * Whether a Spark project develops against a remote dev instance (`[experimental.spark]
+ * dev_instance`, or `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`), read before parse like
+ * {@link resolveSparkEnabled}.
+ */
+export const resolveSparkDevInstance = (input: {
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+}): Effect.Effect<boolean, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
+  resolveExperimentalFeature({
+    feature: "sparkDevInstance",
+    configValue: readExperimentalFeatureConfig({ feature: "sparkDevInstance", ...input }),
+  }).pipe(Effect.withSpan("Spark.resolveDevInstance"));

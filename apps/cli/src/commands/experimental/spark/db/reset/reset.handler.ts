@@ -7,8 +7,11 @@ import { CommandSettings } from "../../../../../config/command-settings.service.
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { withChildTraceEnv, withProcessSpan } from "../../../../../shared/telemetry/spans.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
+import { applyPendingMigrations, runSeedFiles } from "../../spark-apply.ts";
+import { SparkDevInstanceMode } from "../../spark-dev-instance.ts";
 import { SparkBackendError } from "../../spark-project.ts";
 import { SparkStack } from "../../spark-stack.ts";
+import { SparkTarget, withDevInstanceTarget } from "../../spark-target.ts";
 import { projectPaths } from "../../spark.shared.ts";
 
 const sparkExecutable = Effect.fn("Spark.executable")(function* () {
@@ -67,10 +70,25 @@ const runSpark = (executable: string, args: ReadonlyArray<string>) =>
     ),
   );
 
-/** `supabase db reset`: rebuilds the local Spark stack's database from migrations and seed files. */
+/** The dev instance's reset: Spark empties it, then the migrations and seed files run again. */
+const resetDevInstance = withDevInstanceTarget(
+  Effect.gen(function* () {
+    const spark = yield* SparkTarget;
+    yield* spark.resetDatabase.pipe(Effect.withSpan("spark.db.reset.remote"));
+    yield* applyPendingMigrations;
+    yield* runSeedFiles();
+  }),
+);
+
+/** `supabase db reset`: rebuilds the Spark database from migrations and seed files. */
 export const sparkDbReset = Effect.gen(function* () {
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
+  if (yield* SparkDevInstanceMode)
+    return yield* resetDevInstance.pipe(
+      Effect.andThen(output.raw("Finished supabase db reset.\n")),
+      Effect.ensuring(telemetryState.flush),
+    );
   yield* Effect.gen(function* () {
     const paths = yield* projectPaths();
     const executable = yield* sparkExecutable();

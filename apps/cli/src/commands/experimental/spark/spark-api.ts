@@ -9,6 +9,7 @@ import {
   unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { SparkApiError } from "./spark-project.ts";
 
@@ -51,6 +52,31 @@ const Project = Schema.Struct({
   organization_slug: Schema.optionalKey(Schema.String),
 });
 
+const ProjectDetail = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.String),
+  organization_slug: Schema.optionalKey(Schema.String),
+  api_url: Schema.optionalKey(Schema.String),
+});
+
+const CreatedProject = Schema.Struct({
+  id: Schema.optionalKey(Schema.String),
+  ref: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+  organization_slug: Schema.optionalKey(Schema.String),
+});
+
+const Organizations = Schema.Array(
+  Schema.Struct({
+    slug: Schema.optionalKey(Schema.String),
+    name: Schema.optionalKey(Schema.String),
+  }),
+);
+
+const ApiKeys = Schema.Array(
+  Schema.Struct({ name: Schema.String, api_key: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
+);
+
 const MigrationHistory = Schema.Array(
   Schema.Struct({
     version: Schema.String,
@@ -63,8 +89,9 @@ const AppliedMigration = Schema.Struct({ version: Schema.NullOr(Schema.String) }
 const DryRun = Schema.Struct({ statuses: Schema.Array(SparkDryRunStatus) });
 
 /**
- * A raw call for the Spark routes the Management API contract does not describe yet (the dump
- * and `?dry_run=true`), with the same base URL and access token as the typed client.
+ * A raw call for the Spark routes and shapes the Management API contract does not describe yet
+ * (the dump, `?dry_run=true`, the reset, a project without `db_pass`), with the same base URL and
+ * access token as the typed client.
  */
 const rawRequest = Effect.fn("SparkApi.rawRequest")(function* (
   what: string,
@@ -93,8 +120,15 @@ const rawRequest = Effect.fn("SparkApi.rawRequest")(function* (
   return yield* okText(what, response);
 });
 
+/** Provides the typed Management API client, whose access token resolves on first use. */
+export const withPlatformApi = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const api = yield* (yield* CommandPlatformApiFactory).make;
+    return yield* effect.pipe(Effect.provideService(CommandPlatformApi, api));
+  });
+
 const projectPath = (ref: string, rest: string) =>
-  // oxlint-disable-next-line supabase/no-raw-management-api-url -- the dump and dry-run routes are not in the Management API OpenAPI spec, so no typed operation exists
+  // oxlint-disable-next-line supabase/no-raw-management-api-url -- the dump, dry-run and reset routes are not in the Management API OpenAPI spec, so no typed operation exists
   `/v1/projects/${encodeURIComponent(ref)}${rest}`;
 
 /** `GET /v1/projects/{ref}`: the project, which must exist for `link`. */
@@ -104,6 +138,101 @@ export const getSparkProject = Effect.fn("SparkApi.getProject")(function* (ref: 
     .executeRaw(operationDefinitions.v1GetProject, { ref })
     .pipe(Effect.mapError(apiFailure("GET project")));
   return yield* decodeJson("project", Project, yield* okText("GET project", response));
+});
+
+/** `GET /v1/projects/{ref}`: the project's status and API URL, `None` when it does not exist. */
+export const findSparkProject = Effect.fn("SparkApi.findProject")(function* (ref: string) {
+  const api = yield* CommandPlatformApi;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v1GetProject, { ref })
+    .pipe(Effect.mapError(apiFailure("GET project")));
+  if (response.status === 404) return Option.none<typeof ProjectDetail.Type>();
+  const project = yield* decodeJson(
+    "project",
+    ProjectDetail,
+    yield* okText("GET project", response),
+  );
+  yield* Effect.annotateCurrentSpan({ "spark.project.status": project.status ?? "" });
+  return Option.some(project);
+});
+
+/**
+ * `POST /v1/projects` with `postgres_engine: "spark"`: no `db_pass` or region, which the typed
+ * client's input requires, so it is a raw call. Resolves to the new project's ref.
+ */
+export const createSparkProject = Effect.fn("SparkApi.createProject")(function* (project: {
+  readonly name: string;
+  readonly organizationSlug: string;
+}) {
+  const text = yield* rawRequest(
+    "create project",
+    // oxlint-disable-next-line supabase/no-raw-management-api-url -- the typed input requires db_pass, which a Spark project has none of
+    HttpClientRequest.post("/v1/projects").pipe(
+      HttpClientRequest.bodyJsonUnsafe({
+        name: project.name,
+        organization_slug: project.organizationSlug,
+        postgres_engine: "spark",
+      }),
+    ),
+  );
+  const created = yield* decodeJson("create project", CreatedProject, text);
+  const ref = created.ref ?? created.id;
+  if (ref === undefined)
+    return yield* new SparkApiError({ message: "create project answered no project ref" });
+  yield* Effect.annotateCurrentSpan({ "spark.project.created": true });
+  return ref;
+});
+
+/** `DELETE /v1/projects/{ref}`; a project that no longer exists counts as deleted. */
+export const deleteSparkProject = Effect.fn("SparkApi.deleteProject")(function* (ref: string) {
+  const api = yield* CommandPlatformApi;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v1DeleteAProject, { ref })
+    .pipe(Effect.mapError(apiFailure("delete project")));
+  if (response.status === 404) return false;
+  yield* okText("delete project", response);
+  return true;
+});
+
+/** `GET /v1/organizations`: the slugs of the organizations the token can see. */
+export const listSparkOrganizations = Effect.fn("SparkApi.listOrganizations")(function* () {
+  const api = yield* CommandPlatformApi;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v1ListAllOrganizations, {})
+    .pipe(Effect.mapError(apiFailure("list organizations")));
+  const orgs = yield* decodeJson(
+    "organizations",
+    Organizations,
+    yield* okText("list organizations", response),
+  );
+  return orgs.flatMap((org) => (org.slug === undefined ? [] : [org.slug]));
+});
+
+/** `GET .../api-keys`: the project's legacy anon and service_role keys. */
+export const getSparkApiKeys = Effect.fn("SparkApi.getApiKeys")(function* (ref: string) {
+  const api = yield* CommandPlatformApi;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v1GetProjectApiKeys, { ref })
+    .pipe(Effect.mapError(apiFailure("get api keys")));
+  const keys = yield* decodeJson("api keys", ApiKeys, yield* okText("get api keys", response));
+  const key = (name: string) => keys.find((k) => k.name === name)?.api_key ?? undefined;
+  const anonKey = key("anon");
+  const serviceRoleKey = key("service_role");
+  if (anonKey === undefined || serviceRoleKey === undefined)
+    return yield* new SparkApiError({
+      message: `the project ${ref} has no anon or service_role key`,
+    });
+  return { anonKey, serviceRoleKey };
+});
+
+/** `POST .../database/reset`: empties a Spark project's database and its migration history. */
+export const resetSparkDatabase = Effect.fn("SparkApi.resetDatabase")(function* (ref: string) {
+  yield* rawRequest(
+    "reset database",
+    HttpClientRequest.post(projectPath(ref, "/database/reset")).pipe(
+      HttpClientRequest.bodyJsonUnsafe({}),
+    ),
+  );
 });
 
 /** `GET .../database/migrations`: the versions the project has applied. */
