@@ -192,7 +192,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
       },
       {
         name: "to",
@@ -200,7 +200,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
       },
       {
         name: "attributes",
@@ -281,7 +281,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
       },
       {
         name: "to",
@@ -289,7 +289,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
       },
       {
         name: "attributes",
@@ -486,7 +486,7 @@ export const apiCommands = [
         type: "string",
         repeatable: false,
         required: true,
-        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+        description: "Literal source PostgreSQL schema of the table.",
       },
       {
         name: "table",

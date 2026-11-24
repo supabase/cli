@@ -20417,7 +20417,7 @@ export const V2ResyncWarehouseReplicationInput = Schema.Struct({
     }),
     attributes: Schema.Struct({
       schema: Schema.String.annotate({
-        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+        description: "Literal source PostgreSQL schema of the table.",
       }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       table: Schema.String.annotate({
         description: "Literal name of the single source table to reset and recopy.",
