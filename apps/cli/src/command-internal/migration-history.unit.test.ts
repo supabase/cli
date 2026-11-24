@@ -67,6 +67,30 @@ describe("reconcileMigrations", () => {
     ).toEqual({ kind: "in-sync" });
   });
 
+  it("suggests repairing only the local-only version among mixed widths (#7775)", () => {
+    expect(
+      reconcileMigrations(
+        ["20260420", "20260420010000"],
+        ["20260101000000", "20260420", "20260420010000"],
+        "--remote",
+      ),
+    ).toEqual({
+      kind: "conflict",
+      suggestion: suggestMigrationRepair([], ["20260101000000"], "--remote"),
+    });
+  });
+
+  it("does not pair versions that differ only in leading zeros", () => {
+    expect(reconcileMigrations(["1"], ["01"], "--remote")).toEqual({
+      kind: "conflict",
+      suggestion: suggestMigrationRepair(["1"], ["01"], "--remote"),
+    });
+  });
+
+  it("pairs remote versions returned in numeric order", () => {
+    expect(reconcileMigrations(["2", "10"], ["2", "10"], "--remote")).toEqual({ kind: "in-sync" });
+  });
+
   it("skips versions that do not parse as integers", () => {
     expect(
       reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"], "--remote"),
@@ -85,6 +109,7 @@ describe("reconcileMigrations", () => {
 
   it("treats a version within the int64 range as a real conflict", () => {
     expect(reconcileMigrations(["9999999999999999"], [], "--remote").kind).toBe("conflict");
+    expect(reconcileMigrations(["9223372036854775807"], [], "--remote").kind).toBe("conflict");
   });
 
   it("skips a version beyond the int64 range instead of hanging the scan", () => {

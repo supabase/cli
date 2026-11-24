@@ -3,6 +3,7 @@ import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
 import { Effect, Exit, FileSystem, Layer, Path, Ref, Schema } from "effect";
+import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
 import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -219,7 +220,9 @@ max_rows = 250
 
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
     Effect.gen(function* () {
-      const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
+      const root = yield* project(
+        convertCliConfigJsoncToToml(renderCliConfigTemplate("stack-config-init", false, true)).text,
+      );
       const config = yield* load(root);
       const services = byService(yield* config.creations("stack-config-init"));
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });

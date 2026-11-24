@@ -1,6 +1,17 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import {
   type Observation,
   type PlannedInstance,
@@ -16,7 +27,12 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { StackApi, StackTargetResolver } from "../../../../command-internal/stack-target.ts";
+import {
+  StackApi,
+  stackApiLayer,
+  StackTargetResolver,
+  stackTargetResolverLayer,
+} from "../../../../command-internal/stack-target.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { stackStatus } from "./status.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
@@ -24,6 +40,7 @@ import { seedLock } from "../../../../../tests/helpers/stack-lock.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const stackId = "a".repeat(64);
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
 type StatusOutputFormat = "text" | "json" | "stream-json";
 type OpenedStack = Effect.Success<ReturnType<(typeof StackApi.Service)["open"]>>;
 type StackInstance = Effect.Success<OpenedStack["services"]["list"]>[number];
@@ -778,6 +795,70 @@ it.effect("reports unavailable owner and does not query service status", () =>
     expect(run.out.stdoutText).toMatch(/database +│ unavailable · lazy +│/u);
     expect(statusCalls.value).toBe(0);
   }),
+);
+
+it.live("names the stacks a project had before `git init` and selects one by the hinted ID", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const api = yield* StackApi;
+    const home = yield* fs
+      .makeTempDirectoryScoped({ prefix: "stack-status-" })
+      .pipe(Effect.flatMap(fs.realPath));
+    const app = path.join(home, "app");
+    const elsewhere = path.join(home, "elsewhere");
+    yield* fs.makeDirectory(app);
+    yield* fs.makeDirectory(elsewhere);
+    const create = (projectRoot: string, name?: string) =>
+      api.create({
+        stateRoot: path.join(home, "stacks"),
+        cacheRoot: path.join(home, "cache", "stack"),
+        projectRoot,
+        runtime: "native",
+        ...(name === undefined ? {} : { name }),
+      });
+    const hexName = "c0ffee".repeat(4);
+    const before = yield* create(app);
+    const hexNamed = yield* create(app, hexName);
+    yield* create(elsewhere);
+    for (const dir of ["objects", "refs"])
+      yield* fs.makeDirectory(path.join(app, ".git", dir), { recursive: true });
+    yield* fs.writeFileString(path.join(app, ".git", "HEAD"), "ref: refs/heads/main\n");
+
+    const status = (stack?: string) => {
+      const out = mockOutput({ format: "text" });
+      const layer = Layer.mergeAll(
+        stackTargetResolverLayer,
+        out.layer,
+        mockTelemetryStateTracked().layer,
+        cliConfigValuesTestLayer,
+        runtimeInfoLayer,
+      ).pipe(
+        Layer.provideMerge(mockCommandSettings({ workdir: app, supabaseHome: home })),
+        Layer.provideMerge(live),
+      );
+      return stackStatus(flags(stack === undefined ? {} : { stack: Option.some(stack) })).pipe(
+        Effect.provide(layer),
+        Effect.as(out),
+      );
+    };
+    const hint = (id: string) => `--stack ${id.slice(0, 8)} (ordinary-workspace)`;
+
+    expect(yield* Effect.flip(status())).toMatchObject({
+      reason: "not-found",
+      message: "No managed stack exists for the selected project.",
+      suggestion: `This project has stacks on other branches: ${hint(before.id)}. Rerun with one of them, or run supabase stack start to create one for this branch.`,
+    });
+    const hexError = yield* Effect.flip(status(hexName));
+    expect(hexError).toMatchObject({
+      reason: "not-found",
+      message: `No managed stack named "${hexName}" exists for this project.`,
+    });
+    expect(hexError.suggestion).toContain(`stacks on other branches: ${hint(hexNamed.id)}.`);
+
+    const selected = yield* status(before.id.slice(0, 8));
+    expect(selected.stdoutText).toMatch(/^Stack default · unavailable · /u);
+  }).pipe(Effect.provide(live)),
 );
 
 it.effect("rejects environment export when the owner is unavailable", () =>

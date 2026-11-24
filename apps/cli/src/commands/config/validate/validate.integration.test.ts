@@ -3,6 +3,7 @@ import { inspect } from "node:util";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Predicate } from "effect";
+import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
 
 import { pinnedConfigProvider } from "../../../../tests/helpers/config-env-pins.ts";
 import {
@@ -10,9 +11,15 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockProcessControl,
+  mockStdin,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { CliEnvNameSource } from "../../../shared/config/cli-config-provider.layer.ts";
+import { initProject } from "../../../shared/init/project-init.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { configValidate } from "./validate.handler.ts";
@@ -125,7 +132,9 @@ const payloadOf = (result: { readonly successes: ReadonlyArray<{ readonly data?:
 describe("config validate integration", () => {
   it.effect("accepts the init template with no warnings", () =>
     Effect.gen(function* () {
-      const text = yield* validate(tomlFile(renderCliConfigTemplate("demo", false)));
+      const text = yield* validate(
+        tomlFile(convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text),
+      );
       expect(text.failure).toBeUndefined();
       expect(text.stdout).toBe(
         "✓ supabase/config.toml is valid\n  7 values come from env(); run with --resolve-env to check them\n",
@@ -134,9 +143,12 @@ describe("config validate integration", () => {
       expect(text.exitCode).toBeUndefined();
       expect(text.flushed).toBe(true);
 
-      const json = yield* validate(tomlFile(renderCliConfigTemplate("demo", false)), {
-        format: "json",
-      });
+      const json = yield* validate(
+        tomlFile(convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text),
+        {
+          format: "json",
+        },
+      );
       expect(payloadOf(json)).toEqual({
         schema_version: 1,
         valid: true,
@@ -146,6 +158,39 @@ describe("config validate integration", () => {
         remotes: [],
         unknown_values: 7,
         deferred: [],
+        errors: [],
+        warnings: [],
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("validates the config.jsonc written by init with no warnings", () =>
+    Effect.gen(function* () {
+      yield* initProject({
+        cwd: tempRoot.current,
+        force: false,
+        useOrioledb: false,
+        interactive: false,
+        yes: false,
+        withVscodeSettings: false,
+        withIntellijSettings: false,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockOutput({ format: "text", interactive: false }).layer,
+            mockTty(),
+            mockStdin(false),
+          ),
+        ),
+      );
+
+      const result = yield* validate({}, { format: "json" });
+
+      expect(result.failure).toBeUndefined();
+      expect(payloadOf(result)).toMatchObject({
+        valid: true,
+        file: "supabase/config.jsonc",
+        format: "jsonc",
         errors: [],
         warnings: [],
       });
@@ -1232,10 +1277,13 @@ describe("config validate integration", () => {
 
     it.effect("passes a fresh init project with warnings only", () =>
       Effect.gen(function* () {
-        const result = yield* validate(tomlFile(renderCliConfigTemplate("demo", false)), {
-          resolveEnv: true,
-          format: "json",
-        });
+        const result = yield* validate(
+          tomlFile(convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text),
+          {
+            resolveEnv: true,
+            format: "json",
+          },
+        );
 
         expect(result.exitCode).toBeUndefined();
         expect(payloadOf(result)).toMatchObject({ valid: true, errors: [], deferred: [] });

@@ -6,6 +6,7 @@ import {
   requireCliSuccess,
   runSupabaseEffect,
 } from "./cli.ts";
+import { readConfigValue, setConfigValues } from "./jsonc-config.ts";
 
 const CLI_COMMAND_TIMEOUT_MS = 60_000;
 const STACK_START_TIMEOUT_MS = 280_000;
@@ -91,19 +92,17 @@ export const setUpProject = (projectDir: string) =>
         new SyncE2eSetupError({ message: `failed to override ports in ${projectDir}`, cause }),
     });
 
-    const configPath = path.join(projectDir, "supabase", "config.toml");
+    const configPath = path.join(projectDir, "supabase", "config.jsonc");
     const config = yield* fs.readFileString(configPath);
-    if (!config.includes("[experimental.pgdelta]\nenabled = true")) {
+    if (readConfigValue(config, ["experimental", "pgdelta", "enabled"]) !== true) {
       return yield* new SyncE2eSetupError({
-        message: "init setup did not enable experimental pg-delta in config.toml",
+        message: "init setup did not enable experimental pg-delta in config.jsonc",
       });
     }
+    const declarativeSchemaPath = ["experimental", "pgdelta", "declarative_schema_path"];
     yield* fs.writeFileString(
       configPath,
-      config.replace(
-        '# declarative_schema_path = "./schemas"',
-        'declarative_schema_path = "./schemas"',
-      ),
+      setConfigValues(config, [{ path: declarativeSchemaPath, value: "./schemas" }]),
     );
 
     const schemasDir = path.join(projectDir, "supabase", "schemas");

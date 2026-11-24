@@ -7,7 +7,7 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // Golden path only: the one thing mocks can't prove is a real
 // `GET /v2/projects/{ref}/config` response decoding, planning, and writing cleanly against a
-// real (freshly-initialized) config.toml, and that a second run against the same project leaves
+// real (freshly-initialized) config.jsonc, and that a second run against the same project leaves
 // nothing to write. Branch coverage lives in pull.integration.test.ts.
 test("pulls remote config into a fresh project, leaving nothing to write on a second run", ({
   cliEffect,

@@ -67,6 +67,19 @@ export class DeclarativeDiffError extends Data.TaggedError("DeclarativeDiffError
   }
 }
 
+/** `sync --fail-on-destructive` rejects destructive changes before writing migrations. */
+export class DeclarativeDestructiveChangesError extends Data.TaggedError(
+  "DeclarativeDestructiveChangesError",
+)<{
+  readonly message: string;
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
+
 /** Sync stopped because a manifest-less legacy schema needs an explicit migration choice. */
 export class DeclarativeCompatibilityError extends Data.TaggedError(
   "DeclarativeCompatibilityError",
