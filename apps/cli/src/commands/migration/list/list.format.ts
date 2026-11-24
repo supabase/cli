@@ -13,8 +13,8 @@ export interface MigrationListRow {
 }
 
 /**
- * Two-pointer merge of remote + local migration versions into chronological
- * rows: non-numeric versions are skipped, and the time column uses
+ * Two-pointer merge of remote + local migration versions into rows in version
+ * order: non-numeric versions are skipped, and the time column uses
  * `formatTimestampVersion`.
  */
 export function makeMigrationListRows(

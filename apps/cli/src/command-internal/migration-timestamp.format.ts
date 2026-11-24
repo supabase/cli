@@ -57,8 +57,8 @@ export const compareMigrationVersions = (a: string, b: string): number =>
   a < b ? -1 : a > b ? 1 : 0;
 
 /**
- * Orders bare version strings the way Postgres's `ORDER BY version` does: lexically, so a
- * version string's extension always sorts after its prefix.
+ * Orders bare version strings lexically, so a version string's extension always sorts after its
+ * prefix. Callers sort both sides with it rather than trusting the database's collation.
  */
 export function sortMigrationVersions(versions: ReadonlyArray<string>): ReadonlyArray<string> {
   return [...versions].sort(compareMigrationVersions);
