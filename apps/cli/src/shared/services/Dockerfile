@@ -19,7 +19,7 @@ FROM axllent/mailpit:v1.31.3 AS mailpit
 
 FROM postgrest/postgrest:v16.6 AS postgrest
 
-FROM supabase/postgres-meta:v1.0.0 AS pgmeta
+FROM supabase/postgres-meta:v1.1.0 AS pgmeta
 
 FROM supabase/studio:2026.11.23-sha-4a73166 AS studio
 
