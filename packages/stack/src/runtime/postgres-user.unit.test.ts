@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  isTrustedOwner,
   NATIVE_POSTGRES_USER_ENV,
   parsePasswd,
   resolvePostgresUser,
@@ -108,5 +109,26 @@ describe("resolvePostgresUser", () => {
 
   it("does not detect a sandbox from MODAL_TASK_ID alone", () => {
     expect(userOf({ MODAL_TASK_ID: "ta-01" }, [root, entry("node", 1000)])).toBe("Unavailable");
+  });
+});
+
+describe("isTrustedOwner", () => {
+  /* Padded /proc/self/uid_map: a plain host, and rootless podman, which leaves host root unmapped. */
+  const identityMap = "         0          0 4294967295\n";
+  const namespacedMap = "         0       1000          1\n         1     100000      65536\n";
+  const trustedForBase = (owner: number, uidMap: string | undefined) =>
+    isTrustedOwner({ owner, uid: 1000, allowRootOwner: true, uidMap });
+
+  it("trusts the overflow uid only inside a user namespace", () => {
+    expect(trustedForBase(65_534, namespacedMap)).toBe(true);
+    expect(trustedForBase(65_534, identityMap)).toBe(false);
+    expect(trustedForBase(65_534, undefined)).toBe(false);
+  });
+
+  it("refuses other foreign owners, and the overflow uid where root may not own", () => {
+    expect(trustedForBase(1001, namespacedMap)).toBe(false);
+    expect(
+      isTrustedOwner({ owner: 65_534, uid: 1000, allowRootOwner: false, uidMap: namespacedMap }),
+    ).toBe(false);
   });
 });
