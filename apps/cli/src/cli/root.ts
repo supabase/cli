@@ -27,9 +27,14 @@ import { computeCommand } from "../commands/experimental/compute/compute.command
 import {
   sparkCommands,
   sparkDevInstanceCommands,
+  withSparkDevInstanceProject,
 } from "../commands/experimental/spark/spark.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
+import { functionsDeleteCommand } from "../commands/functions/delete/delete.command.ts";
+import { functionsDeployCommand } from "../commands/functions/deploy/deploy.command.ts";
+import { functionsListCommand } from "../commands/functions/list/list.command.ts";
+import { functionsNewCommand } from "../commands/functions/new/new.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
@@ -47,6 +52,9 @@ import { postgresConfigCommand } from "../commands/postgres-config/postgres-conf
 import { projectsCommand } from "../commands/projects/projects.command.ts";
 import { pullCommand } from "../commands/pull/pull.command.ts";
 import { secretsCommand } from "../commands/secrets/secrets.command.ts";
+import { secretsListCommand } from "../commands/secrets/list/list.command.ts";
+import { secretsSetCommand } from "../commands/secrets/set/set.command.ts";
+import { secretsUnsetCommand } from "../commands/secrets/unset/unset.command.ts";
 import { seedCommand } from "../commands/seed/seed.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
 import { snippetsCommand } from "../commands/snippets/snippets.command.ts";
@@ -164,12 +172,37 @@ const sparkOrgsCommand = Command.make("orgs").pipe(
   Command.withSubcommands([orgsListCommand]),
 );
 
-/** The account commands a Spark dev-instance tree adds to its own `start`, `status` and `stop`. */
+/** `functions` in a Spark dev-instance tree: no `serve` or `download`, and the dev instance by default. */
+const sparkFunctionsCommand = Command.make("functions").pipe(
+  Command.withDescription("Manage Supabase Edge functions."),
+  Command.withShortDescription("Manage Supabase Edge functions"),
+  Command.withSubcommands([
+    withSparkDevInstanceProject(functionsListCommand),
+    withSparkDevInstanceProject(functionsDeleteCommand),
+    withSparkDevInstanceProject(functionsDeployCommand),
+    functionsNewCommand,
+  ]),
+);
+
+/** `secrets` in a Spark dev-instance tree, on the dev instance by default. */
+const sparkSecretsCommand = Command.make("secrets").pipe(
+  Command.withDescription("Manage Supabase secrets."),
+  Command.withShortDescription("Manage Supabase secrets"),
+  Command.withSubcommands([
+    withSparkDevInstanceProject(secretsListCommand),
+    withSparkDevInstanceProject(secretsSetCommand),
+    withSparkDevInstanceProject(secretsUnsetCommand),
+  ]),
+);
+
+/** The mainline commands a Spark dev-instance tree adds to its own `start`, `status` and `stop`. */
 const sparkDevInstanceAccountCommands = [
   loginCommand,
   logoutCommand,
   sparkOrgsCommand,
   projectsCommand,
+  sparkFunctionsCommand,
+  sparkSecretsCommand,
 ] as const;
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */

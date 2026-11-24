@@ -10,12 +10,17 @@ When `[experimental.spark] enabled` is set (or `SUPABASE_EXPERIMENTAL_SPARK_ENAB
 stubbed, and never fall back to Postgres.
 
 With `[experimental.spark] dev_instance` also set (or `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`), `root.ts` mounts
-`sparkDevInstanceCommands` instead, plus the mainline `login`, `logout`, `orgs list` and `projects`: `start`, `status`
+`sparkDevInstanceCommands` instead, plus the mainline `login`, `logout`, `orgs list`, `projects`, `functions` (no
+`serve` or `download`) and `secrets`: `start`, `status`
 and `stop` (`start/`, `status/`, `stop/`) manage a remote dev instance through the Management API, and the groups are
 provided `SparkDevInstanceMode`, so `withSparkTarget` sends a command with no target flag to that instance
 (`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). `start`, `stop --delete` and `db reset` change the
 instance only under `withDevInstanceLock`, and write the state file only through `writeDevInstanceState`. New
-dev-instance groups go in that list the same way.
+dev-instance groups go in that list the same way. The mainline `functions` and `secrets` leaves are mounted by `root.ts`
+(this folder may not import them) through `withSparkDevInstanceProject`, which provides `DefaultProjectRef`
+(`config/project-ref.service.ts`) so a leaf with no `--project-ref` or `--remote` resolves the dev instance, and
+`FunctionsApiDeployMode` (`shared/functions/deploy.ts`) so `functions deploy` uploads through the API and prints each
+function's URL; with neither provided, the mainline tree is unchanged.
 
 ## Layout
 

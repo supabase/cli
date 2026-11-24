@@ -2,7 +2,7 @@
 // test serves the Management API stand-in with its own Spark processes (one per project, in temp
 // directories on free ports), and the CLI creates, uses, resets and deletes its dev instance
 // through it. No local stack runs. Needs SUPABASE_SPARK_BIN; without it the suite is skipped.
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { holdLock } from "@supabase/stack/effect";
@@ -32,6 +32,7 @@ import {
 } from "../../../../tests/helpers/cli.ts";
 import {
   type ManagementApiFaults,
+  type ManagementApiLog,
   type SparkConnection,
   SparkInstanceError,
   type SparkInstances,
@@ -105,6 +106,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   let failedStep: string | undefined;
   const running = new Map<string, RunningInstance>();
   const faults: ManagementApiFaults = { apiKeysFailures: 0, nullApiUrl: false };
+  const received: ManagementApiLog = { deploys: [], bulkUpdates: [] };
   let firstRef = "";
   let secondRef = "";
   let projectDir = "";
@@ -351,6 +353,7 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
         instances,
         organizations: ORGANIZATIONS,
         faults,
+        log: received,
       }).pipe(Scope.provide(scope));
       profilePath = join(workDir, "profile.yaml");
       yield* writeText(
@@ -506,6 +509,61 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
           .stdout,
       ).toContain(SEEDED_TITLE);
       expect((yield* readState(projectDir)).seeded).toBe(true);
+    }),
+  );
+
+  step(
+    "functions new, deploy through the API (one, then two in one bulk update), list and delete on the dev instance",
+    Effect.gen(function* () {
+      const report = yield* status(projectDir);
+      yield* run(["functions", "new", "hello"], projectDir);
+      expect(yield* exists(join(projectDir, "supabase", "functions", "hello", "index.ts"))).toBe(
+        true,
+      );
+      const deployed = yield* run(["functions", "deploy", "hello", "--yes"], projectDir);
+      expect(deployed.log).not.toContain("Docker");
+      expect(deployed.stdout).toContain(`${report.api_url}/functions/v1/hello`);
+      const upload = received.deploys.find((deploy) => deploy.slug === "hello");
+      expect(upload?.ref).toBe(firstRef);
+      expect(upload?.metadata.entrypoint_path).toContain("hello/index.ts");
+      expect(upload?.files.some((file) => file.endsWith("hello/index.ts"))).toBe(true);
+      expect(received.bulkUpdates).toEqual([]);
+
+      yield* run(["functions", "new", "bye"], projectDir);
+      yield* run(["functions", "deploy", "--yes"], projectDir);
+      expect(received.bulkUpdates.map((update) => update.slugs.toSorted())).toEqual([
+        ["bye", "hello"],
+      ]);
+      const listed = (yield* run(["functions", "list", "-o", "json"], projectDir)).stdout;
+      expect(listed).toContain('"hello"');
+      expect(listed).toContain('"bye"');
+
+      const docker = yield* runFails(
+        ["functions", "deploy", "hello", "--use-docker", "--yes"],
+        projectDir,
+      );
+      expect(docker.log).toContain("--use-docker");
+
+      yield* run(["functions", "delete", "bye", "--yes"], projectDir);
+      const left = (yield* run(["functions", "list", "-o", "json"], projectDir)).stdout;
+      expect(left).toContain('"hello"');
+      expect(left).not.toContain('"bye"');
+    }),
+  );
+
+  step(
+    "secrets set, list (a digest, not the value) and unset on the dev instance",
+    Effect.gen(function* () {
+      const value = "a-secret-value";
+      yield* run(["secrets", "set", `A=${value}`, "--yes"], projectDir);
+      const listed = (yield* run(["secrets", "list"], projectDir)).stdout;
+      expect(listed).toContain("A");
+      expect(listed).toContain(createHash("sha256").update(value).digest("hex"));
+      expect(listed).not.toContain(value);
+      yield* run(["secrets", "unset", "A", "--yes"], projectDir);
+      expect((yield* run(["secrets", "list"], projectDir)).stdout).not.toContain(
+        createHash("sha256").update(value).digest("hex"),
+      );
     }),
   );
 

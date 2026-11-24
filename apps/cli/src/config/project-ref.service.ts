@@ -1,15 +1,16 @@
-import type { Effect, Option } from "effect";
-import { Context } from "effect";
+import type { Effect, FileSystem, Path } from "effect";
+import { Context, Option } from "effect";
 
 import { BRANCH_PROJECT_REF_PATTERN } from "../command-internal/ref-patterns.ts";
 import type { LinkedProjectRefReadError } from "../shared/config/project-link.ts";
+import type { CommandSettings } from "./command-settings.service.ts";
 import type {
   InvalidProjectRefError,
   ProjectRefNotLinkedError,
   ProjectRefRequiredError,
 } from "./project-ref.errors.ts";
 
-export type ProjectRefSource = "flag" | "env" | "file" | "picker";
+export type ProjectRefSource = "flag" | "default" | "env" | "file" | "picker";
 
 export interface ResolvedProjectRef {
   readonly ref: string;
@@ -73,6 +74,27 @@ interface ProjectRefResolverShape {
     title: string,
   ) => Effect.Effect<string, ProjectRefNotLinkedError, never>;
 }
+
+/** A project a command tree's mode chooses by default, with its name for the target banner. */
+export interface DefaultProject {
+  readonly ref: string;
+  readonly name?: string;
+}
+
+/**
+ * The default project of a command tree's mode (the Spark dev instance): `resolveRef` uses it after
+ * `--project-ref` and before `SUPABASE_PROJECT_ID`, the link and the picker. Unset in the mainline
+ * tree.
+ */
+export const DefaultProjectRef = Context.Reference<
+  Option.Option<
+    Effect.Effect<
+      DefaultProject,
+      ProjectRefNotLinkedError,
+      CommandSettings | FileSystem.FileSystem | Path.Path
+    >
+  >
+>("supabase/cli/DefaultProjectRef", { defaultValue: () => Option.none() });
 
 export class ProjectRefResolver extends Context.Service<
   ProjectRefResolver,

@@ -11,6 +11,7 @@ import {
   ProjectRefRequiredError,
 } from "./project-ref.errors.ts";
 import {
+  DefaultProjectRef,
   INVALID_PROJECT_REF_MESSAGE,
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
@@ -142,8 +143,20 @@ export const projectRefLayer = Layer.effect(
         readonly name?: string;
       };
       let snapshot: LinkSnapshot | undefined;
+      const modeDefault = yield* DefaultProjectRef;
       if (Option.isSome(flagValue) && flagValue.value.length > 0) {
         resolved = { ref: yield* assertValid(flagValue.value), source: "flag" };
+      } else if (Option.isSome(modeDefault)) {
+        const project = yield* modeDefault.value.pipe(
+          Effect.provideService(CommandSettings, cliSettings),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        resolved = {
+          ref: yield* assertValid(project.ref),
+          source: "default",
+          ...(project.name === undefined ? {} : { name: project.name }),
+        };
       } else if (Option.isSome(cliSettings.projectId)) {
         resolved = { ref: yield* assertValid(cliSettings.projectId.value), source: "env" };
       } else {

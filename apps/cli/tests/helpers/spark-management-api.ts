@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { BunHttpServer } from "@effect/platform-bun";
 import { makeSparkAdmin, sparkDryRun, sparkTypescriptTypes } from "@supabase/stack/spark";
-import { Data, DateTime, Effect, Option, Random, Schema } from "effect";
+import { Clock, Data, DateTime, Effect, Option, Random, Schema, Stream } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -30,6 +31,32 @@ const CreateProjectBody = Schema.Struct({
   postgres_engine: Schema.optionalKey(Schema.String),
   db_pass: Schema.optionalKey(Schema.String),
 });
+
+const BulkUpdateBody = Schema.Array(
+  Schema.Struct({
+    id: Schema.String,
+    slug: Schema.String,
+    name: Schema.String,
+    version: Schema.Finite,
+    verify_jwt: Schema.optionalKey(Schema.Boolean),
+    entrypoint_path: Schema.optionalKey(Schema.String),
+    import_map_path: Schema.optionalKey(Schema.String),
+  }),
+);
+
+const DeployMetadata = Schema.fromJsonString(
+  Schema.Struct({
+    entrypoint_path: Schema.String,
+    import_map_path: Schema.optionalKey(Schema.String),
+    verify_jwt: Schema.optionalKey(Schema.Boolean),
+    name: Schema.optionalKey(Schema.String),
+  }),
+);
+
+const CreateSecretsBody = Schema.Array(
+  Schema.Struct({ name: Schema.String, value: Schema.String }),
+);
+const DeleteSecretsBody = Schema.Array(Schema.String);
 
 class BadRequest extends Data.TaggedError("BadRequest")<{ readonly message: string }> {}
 
@@ -61,6 +88,33 @@ export interface ManagementApiFaults {
   nullApiUrl: boolean;
 }
 
+/** What the multi-project stand-in received, for a test to assert on. */
+export interface ManagementApiLog {
+  /** Each `POST .../functions/deploy`: its `metadata` part and the names of its file parts. */
+  readonly deploys: Array<{
+    readonly ref: string;
+    readonly slug: string;
+    readonly metadata: typeof DeployMetadata.Type;
+    readonly files: ReadonlyArray<string>;
+  }>;
+  /** Each `PUT .../functions`: the slugs it carried. */
+  readonly bulkUpdates: Array<{ readonly ref: string; readonly slugs: ReadonlyArray<string> }>;
+}
+
+/** A deployed function as the platform describes it; the stand-in does not run it. */
+interface HostedFunction {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly status: "ACTIVE";
+  readonly version: number;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly verify_jwt: boolean;
+  readonly entrypoint_path: string;
+  readonly import_map_path?: string;
+}
+
 type StandInOptions =
   /** One Spark answers for every ref; `/rest/v1` and `/auth/v1` pass through to it. */
   | { readonly sparkUrl: string; readonly serviceRoleKey: string; readonly anonKey: string }
@@ -73,6 +127,7 @@ type StandInOptions =
         readonly name: string;
       }>;
       readonly faults?: ManagementApiFaults;
+      readonly log?: ManagementApiLog;
     };
 
 interface HostedProject {
@@ -83,7 +138,12 @@ interface HostedProject {
   connection: SparkConnection;
   /** The first `GET` after create answers `COMING_UP`, so the CLI's wait is exercised. */
   reportedHealthy: boolean;
+  readonly functions: Map<string, HostedFunction>;
+  /** Secret values by name. */
+  readonly secrets: Map<string, string>;
 }
+
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 const json = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -113,7 +173,8 @@ const randomRef = Effect.gen(function* () {
  * Spark's admin routes, on its own port. Any access token is accepted. With one `sparkUrl`, every
  * project ref is that Spark, and `/rest/v1` and `/auth/v1` pass through to it, so the project URL
  * the MCP server returns serves the project's Data API. With `instances`, `POST /v1/projects`
- * creates a project on its own instance, and `GET /v1/projects/{ref}` carries its `api_url`.
+ * creates a project on its own instance, `GET /v1/projects/{ref}` carries its `api_url`, and the
+ * project's functions and secrets routes keep their state in memory (no function runs).
  */
 export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(function* (
   options: StandInOptions,
@@ -122,6 +183,7 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
   const hosted = new Map<string, HostedProject>();
   const single = "sparkUrl" in options ? options : undefined;
   const faults = "instances" in options ? options.faults : undefined;
+  const log = "instances" in options ? options.log : undefined;
   const organizations =
     "instances" in options
       ? options.organizations
@@ -177,10 +239,113 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
       createdAt: DateTime.formatIso(yield* DateTime.now),
       connection,
       reportedHealthy: false,
+      functions: new Map(),
+      secrets: new Map(),
     };
     hosted.set(ref, project);
     return json(hostedProject(project, "COMING_UP"), 201);
   });
+
+  const upsertFunction = Effect.fnUntraced(function* (
+    project: HostedProject,
+    fn: {
+      readonly slug: string;
+      readonly name?: string | undefined;
+      readonly verify_jwt?: boolean | undefined;
+      readonly entrypoint_path?: string | undefined;
+      readonly import_map_path?: string | undefined;
+    },
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const current = project.functions.get(fn.slug);
+    const importMap = fn.import_map_path ?? current?.import_map_path;
+    const next: HostedFunction = {
+      id: current?.id ?? `${project.ref}-${fn.slug}`,
+      slug: fn.slug,
+      name: fn.name ?? current?.name ?? fn.slug,
+      status: "ACTIVE",
+      version: (current?.version ?? 0) + 1,
+      created_at: current?.created_at ?? now,
+      updated_at: now,
+      verify_jwt: fn.verify_jwt ?? current?.verify_jwt ?? true,
+      entrypoint_path: fn.entrypoint_path ?? current?.entrypoint_path ?? "index.ts",
+      ...(importMap === undefined ? {} : { import_map_path: importMap }),
+    };
+    project.functions.set(fn.slug, next);
+    return next;
+  });
+
+  /** `.../functions[/{slug}]` and `.../functions/deploy?slug=`, kept in memory. */
+  const functionsRoute = Effect.fn("SparkManagementApi.functions")(function* (
+    project: HostedProject,
+    method: string,
+    rest: string,
+    search: URLSearchParams,
+  ) {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (rest === "" && method === "GET") return json([...project.functions.values()]);
+    if (rest === "/deploy" && method === "POST") {
+      const slug = search.get("slug");
+      if (slug === null) return json({ message: "slug is required" }, 400);
+      let metadataText: string | undefined;
+      const files: Array<string> = [];
+      yield* Stream.runForEach(request.multipartStream, (part) =>
+        Effect.gen(function* () {
+          if (part._tag === "Field" && part.key === "metadata") metadataText = part.value;
+          if (part._tag === "File") {
+            files.push(part.name);
+            yield* part.contentEffect;
+          }
+        }),
+      ).pipe(Effect.mapError(invalidBody));
+      if (metadataText === undefined) return json({ message: "no metadata part" }, 400);
+      const metadata = yield* Schema.decodeEffect(DeployMetadata)(metadataText).pipe(
+        Effect.mapError(invalidBody),
+      );
+      log?.deploys.push({ ref: project.ref, slug, metadata, files });
+      return json(yield* upsertFunction(project, { slug, ...metadata }), 201);
+    }
+    if (rest === "" && method === "PUT") {
+      const body = yield* HttpServerRequest.schemaBodyJson(BulkUpdateBody).pipe(
+        Effect.mapError(invalidBody),
+      );
+      log?.bulkUpdates.push({ ref: project.ref, slugs: body.map((fn) => fn.slug) });
+      return json({
+        functions: yield* Effect.forEach(body, (fn) => upsertFunction(project, fn)),
+      });
+    }
+    const slug = decodeURIComponent(rest.slice(1));
+    const found = project.functions.get(slug);
+    if (found === undefined) return json({ message: `Function ${slug} not found` }, 404);
+    if (method === "GET") return json(found);
+    if (method === "DELETE") {
+      project.functions.delete(slug);
+      return json({});
+    }
+    return json({ message: `not in the Spark stand-in: ${method} functions${rest}` }, 404);
+  });
+
+  /** `.../secrets`, kept in memory; a listed value is the SHA-256 of the secret, as the platform shows it. */
+  const secretsRoute = Effect.fn("SparkManagementApi.secrets")(function* (
+    project: HostedProject,
+    method: string,
+  ) {
+    if (method === "GET")
+      return json(
+        [...project.secrets.entries()].map(([name, value]) => ({ name, value: sha256(value) })),
+      );
+    if (method === "POST") {
+      const body = yield* HttpServerRequest.schemaBodyJson(CreateSecretsBody);
+      for (const secret of body) project.secrets.set(secret.name, secret.value);
+      return json({}, 201);
+    }
+    if (method === "DELETE") {
+      const body = yield* HttpServerRequest.schemaBodyJson(DeleteSecretsBody);
+      for (const name of body) project.secrets.delete(name);
+      return json({});
+    }
+    return json({ message: `not in the Spark stand-in: ${method} secrets` }, 404);
+  }, Effect.mapError(invalidBody));
 
   const projectRoute = Effect.fn("SparkManagementApi.project")(function* (
     method: string,
@@ -214,6 +379,9 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
       project.connection = yield* options.instances.reset(ref);
       return json({});
     }
+    if (project !== undefined && rest.startsWith("/functions"))
+      return yield* functionsRoute(project, method, rest.slice("/functions".length), search);
+    if (project !== undefined && rest === "/secrets") return yield* secretsRoute(project, method);
     const connection = Option.getOrUndefined(connectionOf(ref));
     if (connection === undefined) return json({ message: `Project ${ref} not found` }, 404);
     const admin = makeSparkAdmin(client, connection.url, connection.serviceRoleKey);

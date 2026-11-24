@@ -1,7 +1,8 @@
 import { holdLock, isLockBusy, publish } from "@supabase/stack/effect";
-import { Context, Data, Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Context, Data, Duration, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import {
   encodeEnv,
   encodeSortedJson,
@@ -9,6 +10,9 @@ import {
   encodeYaml,
 } from "../../../command-internal/output.encoders.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { DefaultProjectRef } from "../../../config/project-ref.service.ts";
+import { FunctionsApiDeployMode } from "../../../shared/functions/deploy.ts";
 import { ensureGitignore } from "../../../shared/config/project-link.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -234,6 +238,57 @@ const devInstanceReport = (state: ReadyDevInstanceState, status: string) => {
     service_role_key: state.service_role_key,
   };
 };
+
+/** The dev instance as the default project of the mainline `functions` and `secrets` commands. */
+const devInstanceDefaultProject = requireReadyDevInstanceState().pipe(
+  Effect.map((state) => ({ ref: state.ref, name: state.name })),
+  Effect.mapError((error) => new ProjectRefNotLinkedError({ message: error.message })),
+);
+
+const API_ONLY_DEPLOY =
+  "A dev instance takes functions only through the API upload, so --use-docker and --legacy-bundle are not supported in dev-instance mode. Drop the flag: functions deploy uploads through the API by default.";
+
+/**
+ * What a mainline hosted command (`functions`, `secrets`) needs in dev-instance mode: with no
+ * `--project-ref` or `--remote` it acts on the dev instance, and `functions deploy` uploads
+ * through the API and prints each function's URL on the instance.
+ */
+export const devInstanceHostedLayer = (flags: ProjectTargetFlagValues) =>
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const functionUrl = (projectRef: string, slug: string) =>
+        Effect.gen(function* () {
+          const settings = yield* Effect.serviceOption(CommandSettings);
+          if (Option.isNone(settings)) return Option.none<string>();
+          const state = yield* readDevInstanceState().pipe(
+            Effect.provideService(CommandSettings, settings.value),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.orElseSucceed(() => Option.none<DevInstanceState>()),
+          );
+          return Option.flatMap(
+            Option.filter(state, isDevInstanceReady),
+            (ready): Option.Option<string> =>
+              ready.ref === projectRef
+                ? Option.some(`${devInstanceReport(ready, "").functions_url}/${slug}`)
+                : Option.none(),
+          );
+        });
+      const byDefault = Option.isNone(flags.remote) && Option.isNone(flags.projectRef);
+      return Layer.mergeAll(
+        Layer.succeed(
+          DefaultProjectRef,
+          byDefault ? Option.some(devInstanceDefaultProject) : Option.none(),
+        ),
+        Layer.succeed(
+          FunctionsApiDeployMode,
+          Option.some({ refusal: API_ONLY_DEPLOY, functionUrl }),
+        ),
+      );
+    }),
+  );
 
 /** Prints the dev instance as `status` does: text, `-o json|yaml|toml|env`, `--env`, or a result. */
 export const emitDevInstanceStatus = Effect.fn("SparkDevInstance.emitStatus")(function* (

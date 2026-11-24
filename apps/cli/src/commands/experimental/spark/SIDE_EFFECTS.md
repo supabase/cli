@@ -23,9 +23,24 @@ take the mainline target flags without `--db-url`, and the target decides how th
 ## Dev-instance mode (`[experimental.spark] dev_instance`)
 
 With `dev_instance = true` (or `SUPABASE_EXPERIMENTAL_SPARK_DEV_INSTANCE`) on a Spark project, the
-tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projects list|create|delete|api-keys`
-(the mainline commands, with their own side effects), `start`, `status`, `stop`, `link`, and the
-`db`, `migration` and `gen` groups above. No local stack is started or read.
+tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projects list|create|delete|api-keys`,
+`functions new|list|deploy|delete`, `secrets set|list|unset` (the mainline commands, with their own side
+effects), `start`, `status`, `stop`, `link`, and the `db`, `migration` and `gen` groups above. No local
+stack is started or read.
+
+- `functions list|deploy|delete` and `secrets set|list|unset` act on the dev instance when neither
+  `--project-ref` nor `--remote` is given: its ref comes from the state file (no file, or one
+  `start` has not finished, fails as the `db` commands do), and the target banner names the
+  instance. `--project-ref` and `--remote` resolve as in the mainline tree. Their API routes,
+  confirmations (`--yes` in JSON, piped and agent runs) and output are the mainline ones
+  (`commands/functions/*/SIDE_EFFECTS.md`, `commands/secrets/*/SIDE_EFFECTS.md`), including the
+  linked-project cache those commands write after resolving a ref. `functions new` is the mainline
+  command. There is no `functions serve` or `functions download`.
+- `functions deploy` uploads through the API (`POST /v1/projects/{ref}/functions/deploy?slug=`
+  multipart, then `PUT /v1/projects/{ref}/functions` when two or more functions changed), on any
+  target, so Docker is never used; an explicit `--use-docker` or `--legacy-bundle` fails before any
+  call. After a deploy to the dev instance it prints `Function <slug>: <api_url>/functions/v1/<slug>`
+  on stdout for each function (with `--output-format json`, `function_urls: {<slug>: <url>}`).
 
 - The default target of `db diff|pull|push|query`, `migration fetch|list` and `gen types` is the
   dev instance recorded in `supabase/.temp/dev-instance.json`, reached like a linked project
