@@ -1,9 +1,9 @@
 /**
  * A minimal USTAR writer for the `.tar.gz` build context `supabase compute push`
  * uploads, needed because shelling out to `tar` isn't portable (BSD tar, GNU tar, and no tar
- * at all on Windows produce different bytes for the same directory) and `Bun.Archive` builds
- * from path-to-contents pairs with no per-entry metadata, so symlinks and the executable bit
- * would be lost.
+ * at all on Windows produce different bytes for the same directory) and it gives control over
+ * per-entry metadata such as symlinks and the executable bit. It also serves the in-memory
+ * archives piped to `docker cp`.
  */
 
 import { Data, Effect } from "effect";

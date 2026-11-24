@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { CliOutput } from "effect/cli";
 import { withDeprecatedDescriptions } from "./subcommand-help.ts";
 import { supportsColor, type ColorStream } from "../../command-internal/colors.ts";
@@ -23,7 +24,7 @@ function stripSingleErrorHeader(text: string): string {
 function insertBeforeUsage(text: string, section: string): string {
   let at = 0;
   for (const line of text.split("\n")) {
-    if (Bun.stripANSI(line) === "USAGE") {
+    if (stripVTControlCharacters(line) === "USAGE") {
       return `${text.slice(0, at)}${section}\n\n${text.slice(at)}`;
     }
     at += line.length + 1;

@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   descriptionMarkdownViolations,
@@ -63,22 +64,26 @@ describe("description authoring contract", () => {
 
   it("does not duplicate the destination when a styled link label is the URL", () => {
     const source = "[**https://example.com**](https://example.com)";
-    expect(Bun.stripANSI(renderDescriptionMarkdown(source, true))).toBe("https://example.com");
+    expect(stripVTControlCharacters(renderDescriptionMarkdown(source, true))).toBe(
+      "https://example.com",
+    );
   });
 
   it.each([false, true])(
     "normalizes inline code newlines without changing block code (colors=%s)",
     (colors) => {
-      expect(Bun.stripANSI(renderDescriptionMarkdown("`a\nb`\n\n```\na\nb\n```", colors))).toBe(
-        "a b\n\n    a\n    b",
-      );
+      expect(
+        stripVTControlCharacters(renderDescriptionMarkdown("`a\nb`\n\n```\na\nb\n```", colors)),
+      ).toBe("a b\n\n    a\n    b");
     },
   );
 
   it.each([false, true])(
     "renders empty-destination links without parentheses (colors=%s)",
     (colors) => {
-      expect(Bun.stripANSI(renderDescriptionMarkdown("[**label**]()", colors))).toBe("label");
+      expect(stripVTControlCharacters(renderDescriptionMarkdown("[**label**]()", colors))).toBe(
+        "label",
+      );
     },
   );
 
