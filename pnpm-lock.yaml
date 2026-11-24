@@ -607,6 +607,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
+      '@supabase/typegen':
+        specifier: github:supabase/sdk#5a5db05b23a12f1cdea0406e082d465eacc1d6a7&path:/packages/typegen
+        version: https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen(oxfmt@0.66.0)
       effect:
         specifier: 'catalog:'
         version: 4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47)
@@ -2232,6 +2235,15 @@ packages:
     resolution: {integrity: sha512-uaubtPSeg2TR4wrtfQoQWgkTAe+a0qWX2KhmwvTfNl5mGN9+U7owiJt6abk3o/V6O899PSRD1yzxs5RlF4xTug==}
     engines: {node: '>=22.0.0'}
 
+  '@supabase/postgrest-typegen@0.7.0':
+    resolution: {integrity: sha512-B1Wh2arVChXsX9ACdOv6CuX7m1+5S7jYFjB0b+yhNWJq63RFkOTgRlz4Q1uGI/M9nSPXtM3XC03KxpvKzTknCg==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
+        optional: true
+
   '@supabase/postgrest-typegen@0.8.1':
     resolution: {integrity: sha512-PvD7+L7TznK+9lq3SrLv535vS7tkH/ydlqGe0g16gAXTW0qbYjkaFMAWwnqkfvRjtPgAjkQ3lLJLDhe74sizRg==}
     engines: {node: '>=22.12.0'}
@@ -2260,6 +2272,16 @@ packages:
 
   '@supabase/typegen@0.4.0':
     resolution: {integrity: sha512-p9KAR+61njmx7404iTjITigOMP2jFsI3RntLiANfXhjCeSY2uOa7TpoJn9Tp9O9eSIIJKyjglxPnWnJnBTnqsg==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      oxfmt: 0.66.0
+    peerDependenciesMeta:
+      oxfmt:
+        optional: true
+
+  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen':
+    resolution: {gitHosted: true, integrity: sha512-c4XphNBhHXkNxc1hf7z2NFg7tFprPdnF3oEZbe4OVcwZFVSndOND7P89s3hy7pA0OnRJ0E9Qd8ZyZkAWn9YVEg==, path: /packages/typegen, tarball: https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7}
+    version: 0.3.2
     engines: {node: '>=22.12.0'}
     peerDependencies:
       oxfmt: 0.66.0
@@ -6519,6 +6541,12 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
+  '@supabase/postgrest-typegen@0.7.0(oxfmt@0.66.0)':
+    dependencies:
+      arktype: 2.2.9
+    optionalDependencies:
+      oxfmt: 0.66.0
+
   '@supabase/postgrest-typegen@0.8.1(oxfmt@0.66.0)':
     dependencies:
       arktype: 2.2.9
@@ -6546,6 +6574,12 @@ snapshots:
   '@supabase/typegen@0.4.0(oxfmt@0.66.0)':
     dependencies:
       '@supabase/postgrest-typegen': 0.8.1(oxfmt@0.66.0)
+    optionalDependencies:
+      oxfmt: 0.66.0
+
+  '@supabase/typegen@https://codeload.github.com/supabase/sdk/tar.gz/5a5db05b23a12f1cdea0406e082d465eacc1d6a7#path:/packages/typegen(oxfmt@0.66.0)':
+    dependencies:
+      '@supabase/postgrest-typegen': 0.7.0(oxfmt@0.66.0)
     optionalDependencies:
       oxfmt: 0.66.0
 

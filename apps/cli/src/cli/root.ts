@@ -1,5 +1,6 @@
 import { Effect, type Exit, Layer } from "effect";
 import { Command } from "effect/cli";
+import { withRootSubcommands } from "./spark-root.ts";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";
@@ -24,6 +25,7 @@ import {
   projectStateModeLayer,
 } from "../shared/config/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
+import { sparkRemoteFlagDefault } from "../commands/experimental/spark/spark.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
@@ -147,6 +149,8 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
+  /** A Spark project gets its own reduced command tree, on its dev instance, instead of the mainline one. */
+  readonly sparkEnabled?: boolean;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -161,7 +165,7 @@ const agentDefaultOutputFormatFor = (
 export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
-    Command.withSubcommands([
+    withRootSubcommands(options, [
       backupsCommand,
       bootstrapCommand,
       branchesCommand,
@@ -258,6 +262,8 @@ export const cliEntrypointForFeatures = (
 ) => ({
   rootCommand: rootCommandForFeatures(features),
   agentDefaultOutputFormat: agentDefaultOutputFormatFor(features, args),
+  /** The `RemoteFlagDefault` the run provides; `undefined` keeps each flag's own. */
+  remoteFlagDefault: features.sparkEnabled ? sparkRemoteFlagDefault : undefined,
 });
 
 export const rootCommand = rootCommandForFeatures();
