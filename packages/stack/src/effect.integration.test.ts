@@ -990,7 +990,7 @@ it.live("reports the released lease and log tail of an owner lost during an acce
     const saved = yield* state.read(stack.id);
     if (saved === undefined) return yield* Effect.die("Expected a registered stack");
     // This process stands in for the owner so the test orders the lease release before the drop.
-    const ownership = yield* Scope.make();
+    const ownership = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(ownership));
     const control = yield* bindControl();
     const endpoint = {
@@ -1023,12 +1023,19 @@ it.live("reports the released lease and log tail of an owner lost during an acce
     });
     const log = state.ownerLog(stack.id);
     yield* fs.writeFileString(log, "owner started\npanic: owner lost mid-call\n");
-    const start = yield* Effect.forkScoped(Effect.flip(stack.composition.start));
-    yield* Deferred.await(callAccepted);
+    const start = yield* Effect.forkScoped(stack.composition.start);
+    yield* Effect.raceFirst(
+      Deferred.await(callAccepted),
+      Fiber.await(start).pipe(
+        Effect.flatMap((exit) =>
+          Effect.die(`The call settled before the owner accepted it: ${exit}`),
+        ),
+      ),
+    );
     yield* Scope.close(ownership, Exit.void);
     yield* control.closeConnections;
 
-    const lost = yield* Fiber.join(start);
+    const lost = yield* Effect.flip(Fiber.join(start));
 
     expect(lost.message).toContain("Owner response unavailable; the request outcome is uncertain");
     expect(lost.message).toContain(

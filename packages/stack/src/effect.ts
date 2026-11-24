@@ -383,7 +383,7 @@ const ownerGone = (cause: unknown) =>
       Predicate.hasProperty(cause.reason.cause.response, "status") &&
       cause.reason.cause.response.status === 401));
 
-/** A transport failure on an accepted connection, such as a reset, rather than a refusal or an HTTP status. */
+/** An HTTP transport failure, such as a reset, that `ownerGone` does not count as a missing owner. */
 const lostMidCall = (cause: unknown) =>
   Schema.is(RpcClientError)(cause) &&
   !ownerGone(cause) &&
@@ -554,7 +554,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     const lease: LostOwnerLease = yield* Effect.gen(function* () {
       if (!(yield* state.leased(saved.id))) return { _tag: "Released" } as const;
       const holder = yield* state.readHolder(saved.id);
-      if (holder === undefined) return { _tag: "Unknown", reason: "no holder record" } as const;
+      if (holder === undefined) return { _tag: "Unpublished" } as const;
       return holder.role === "owner" &&
         holder.pid === pid &&
         holder.port === access.endpoint.port &&
@@ -567,9 +567,10 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       ),
     );
     const log = state.ownerLog(saved.id);
-    // A replacement owner truncates and rewrites the log, so its tail would not be this owner's.
+    // A starting owner truncates the log before it publishes its holder record, so after a
+    // handoff to an owner, or to a holder not yet named, the tail may not be this owner's.
     const logTail =
-      lease._tag === "Replaced" && lease.role === "owner"
+      lease._tag === "Unpublished" || (lease._tag === "Replaced" && lease.role === "owner")
         ? ""
         : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
     yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });

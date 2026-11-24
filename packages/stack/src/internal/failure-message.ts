@@ -59,6 +59,8 @@ export const ownerLogReference = (log: string, tail: string): string =>
 export type LostOwnerLease =
   | { readonly _tag: "Held" }
   | { readonly _tag: "Released" }
+  /** Held by a process that has not published its holder record. */
+  | { readonly _tag: "Unpublished" }
   | { readonly _tag: "Replaced"; readonly role: "owner" | "sweeper"; readonly holderPid: number }
   | { readonly _tag: "Unknown"; readonly reason: string };
 
@@ -72,15 +74,17 @@ export interface LostOwnerObservation {
   readonly logTail: string;
 }
 
-/** Says whether the called owner still runs and adds its log tail, so a crash reads as one. */
+/** Formats the lease status observed after a lost call and the owner log tail, if any. */
 export const lostOwnerDetail = ({ pid, lease, log, logTail }: LostOwnerObservation): string => {
   const liveness =
     lease._tag === "Held"
       ? `owner ${pid} still holds the stack lease`
       : lease._tag === "Released"
         ? `owner ${pid} no longer holds the stack lease`
-        : lease._tag === "Replaced"
-          ? `owner ${pid} no longer holds the stack lease; ${lease.role === "owner" ? `owner ${lease.holderPid}` : `a sweeper (pid ${lease.holderPid})`} holds it now`
-          : `the stack lease of owner ${pid} could not be read: ${lease.reason}`;
+        : lease._tag === "Unpublished"
+          ? `the stack lease is held, but no holder record names owner ${pid}`
+          : lease._tag === "Replaced"
+            ? `owner ${pid} no longer holds the stack lease; ${lease.role === "owner" ? `owner ${lease.holderPid}` : `a sweeper (pid ${lease.holderPid})`} holds it now`
+            : `the stack lease of owner ${pid} could not be read: ${lease.reason}`;
   return `${liveness} ${ownerLogReference(log, logTail)}`;
 };
