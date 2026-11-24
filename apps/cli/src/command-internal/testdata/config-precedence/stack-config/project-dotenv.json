@@ -635,6 +635,7 @@
         "enabled": true
       },
       "spark": {
+        "dev_instance": false,
         "enabled": false
       },
       "webhooks": {

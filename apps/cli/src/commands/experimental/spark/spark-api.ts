@@ -56,7 +56,7 @@ const ProjectDetail = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   status: Schema.optionalKey(Schema.String),
   organization_slug: Schema.optionalKey(Schema.String),
-  api_url: Schema.optionalKey(Schema.String),
+  api_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 const CreatedProject = Schema.Struct({

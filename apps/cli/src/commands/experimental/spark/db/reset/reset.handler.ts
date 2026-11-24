@@ -8,7 +8,12 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { withChildTraceEnv, withProcessSpan } from "../../../../../shared/telemetry/spans.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { applyPendingMigrations, runSeedFiles } from "../../spark-apply.ts";
-import { SparkDevInstanceMode } from "../../spark-dev-instance.ts";
+import {
+  requireReadyDevInstanceState,
+  SparkDevInstanceMode,
+  withDevInstanceLock,
+  writeDevInstanceState,
+} from "../../spark-dev-instance.ts";
 import { SparkBackendError } from "../../spark-project.ts";
 import { SparkStack } from "../../spark-stack.ts";
 import { SparkTarget, withDevInstanceTarget } from "../../spark-target.ts";
@@ -70,13 +75,23 @@ const runSpark = (executable: string, args: ReadonlyArray<string>) =>
     ),
   );
 
-/** The dev instance's reset: Spark empties it, then the migrations and seed files run again. */
-const resetDevInstance = withDevInstanceTarget(
+/**
+ * The dev instance's reset: Spark empties it, then the migrations and seed files run again. The
+ * state file records the seed as not run until it succeeds, so a failed reset seeds on `start`.
+ */
+const resetDevInstance = withDevInstanceLock(
   Effect.gen(function* () {
-    const spark = yield* SparkTarget;
-    yield* spark.resetDatabase.pipe(Effect.withSpan("spark.db.reset.remote"));
-    yield* applyPendingMigrations;
-    yield* runSeedFiles();
+    const state = yield* requireReadyDevInstanceState();
+    yield* writeDevInstanceState({ ...state, seeded: false });
+    yield* withDevInstanceTarget(
+      Effect.gen(function* () {
+        const spark = yield* SparkTarget;
+        yield* spark.resetDatabase.pipe(Effect.withSpan("spark.db.reset.remote"));
+        yield* applyPendingMigrations;
+        yield* runSeedFiles();
+      }),
+    );
+    yield* writeDevInstanceState({ ...state, seeded: true });
   }),
 );
 

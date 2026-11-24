@@ -143,7 +143,7 @@ export const runSeedFiles = Effect.fn("Spark.runSeedFiles")(function* () {
     .get(CliConfigKeys.db.seed.sqlPaths)
     .pipe(Effect.mapError(configFailure));
   const { files, warnings } = yield* sqlFilesGlob(fs, path, patterns.value, workdir);
-  if (warnings.length > 0) yield* output.warn(warnings.join("\n"));
+  if (warnings.length > 0) yield* output.raw(`WARN: ${warnings.join("\n")}\n`, "stderr");
   for (const file of files) {
     yield* output.raw(`Seeding data from ${file}...\n`, "stderr");
     const sql = yield* fs.readFileString(resolveUnderWorkdir(path, workdir, file));

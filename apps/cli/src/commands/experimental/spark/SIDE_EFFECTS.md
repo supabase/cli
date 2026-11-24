@@ -30,34 +30,45 @@ tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projec
 - The default target of `db diff|pull|push|query`, `migration fetch|list` and `gen types` is the
   dev instance recorded in `supabase/.temp/dev-instance.json`, reached like a linked project
   through the Management API with its ref; its writes ask for no confirmation, as on the local
-  target. `--remote` still selects the linked project and `--local` the local stack. Without the
-  file they fail with `No dev instance for this project.` and name `supabase start`.
-  When the file's `management_api_url` is not the profile's `api_url`, they fail and name both.
+  target. `--remote` still selects the linked project. There is no local stack, so `--local`
+  fails (`... has no local stack ...`) before any call. Without the file they fail with
+  `No dev instance for this project.` and name `supabase start`; with a file `start` has not
+  finished, they fail with `... is not set up yet.` and name `supabase start`. When the file's
+  `management_api_url` is not the profile's `api_url`, they fail and name both.
+- `start`, `stop --delete` and `db reset` hold `supabase/.temp/dev-instance.lock` (an SQLite file
+  lock) for their whole run; while another command holds it they fail at once, naming the file,
+  and change nothing.
 - `start [--org <slug>]`: needs an access token. When the state file's project still answers
-  `GET /v1/projects/{ref}`, it is reused (`Using dev instance <name> (<ref>).`). Otherwise the
-  organization is `--org`, the linked project's (`supabase/.link.json`), or the account's only one
-  (several, or none, fail and say how to choose); it creates `dev-<folder>-<6 hex>` with
-  `POST /v1/projects` `{name, organization_slug, postgres_engine: "spark"}` (no `db_pass`, no
-  region), polls `GET /v1/projects/{ref}` every second until `status` is `ACTIVE_HEALTHY` (60 s,
-  then it fails naming the ref and its last status), reads `GET /v1/projects/{ref}/api-keys`
-  (`anon`, `service_role`) and writes the state file. The API URL is the project's `api_url`, or
-  `https://<ref>.<project_host>`. It then applies the pending migrations as `db push` does
-  (without its confirmation) and, on a new instance only, runs the `[db.seed] sql_paths` files,
-  each as one `POST /v1/projects/{ref}/database/query`. It prints what `status` prints.
+  `GET /v1/projects/{ref}`, it is reused (`Using dev instance <name> (<ref>).`), or, when an
+  earlier `start` stopped before recording the keys, finished
+  (`Finishing the setup of dev instance <name> (<ref>)...`). Otherwise the organization is
+  `--org`, the linked project's (`supabase/.link.json`), or the account's only one (several, or
+  none, fail and say how to choose); it creates `dev-<folder>-<6 hex>` with `POST /v1/projects`
+  `{name, organization_slug, postgres_engine: "spark"}` (no `db_pass`, no region) and writes the
+  state file at once with the ref. It then polls `GET /v1/projects/{ref}` every second until
+  `status` is `ACTIVE_HEALTHY` (60 s, then it fails naming the ref and its last status, and a
+  later `start` keeps waiting for the same project), reads `GET /v1/projects/{ref}/api-keys`
+  (`anon`, `service_role`) and adds the URL and keys to the state file. The API URL is the
+  project's `api_url`, or `https://<ref>.<project_host>` when it is absent or `null`. It then
+  applies the pending migrations as `db push` does (without its confirmation) and, unless the
+  state file records the seed as run, runs the `[db.seed] sql_paths` files, each as one
+  `POST /v1/projects/{ref}/database/query`, and records it. A seed pattern that matches no file
+  prints `WARN: no files matched pattern: <pattern>` on stderr. It prints what `status` prints.
 - `status [--env]`: one `GET /v1/projects/{ref}`; prints the name, ref, status, API, REST, Auth and
-  Functions URLs and the anon and service_role keys. With no state file, or a project that no
-  longer exists, it exits 1.
+  Functions URLs and the anon and service_role keys. With no state file, one `start` has not
+  finished, or a project that no longer exists, it exits 1.
 - `stop`: changes nothing and says how to delete the instance. `stop --delete`:
-  `DELETE /v1/projects/{ref}` (a 404 counts as deleted), then removes the state file.
-- `db reset`: `POST /v1/projects/{ref}/database/reset` with `{}`, then the pending migrations and
-  the seed files as `start` runs them.
+  `DELETE /v1/projects/{ref}` (a 404 counts as deleted), then removes the state file; it works on
+  an instance `start` has not finished.
+- `db reset`: records the seed as not run, `POST /v1/projects/{ref}/database/reset` with `{}`,
+  then the pending migrations and the seed files as `start` runs them, and records the seed as run.
 
 ## Files Read
 
 - `supabase/config.toml` and project `.env*` (the opt-in; the shadow Postgres image and settings).
 - `supabase/.link.json` (the linked ref; on the local target too, to hint that a linked project exists).
 - `supabase/.temp/dev-instance.json` (dev-instance mode: the default target's ref), and the
-  `[db.seed] sql_paths` files (`start` on a new instance, `db reset` in dev-instance mode).
+  `[db.seed] sql_paths` files (`start` until the seed has run, `db reset` in dev-instance mode).
 - `supabase/schemas/**/*.sql` and `supabase/schemas/.pgdelta-export.json` (`db diff`).
 - `supabase/migrations/<version>_<name>.sql` (`db push`, `migration list`), and the directory's
   entries (`migration fetch`, to decide whether to ask before overwriting).
@@ -74,9 +85,14 @@ tree is `init`, `stack` (stack backend), `login`, `logout`, `orgs list`, `projec
 - `supabase/migrations/<version>_<name>.sql`, mode 0644, one per row of the project's migration
   history (`migration fetch`); the directory is created after the history is read.
 - `db reset` rewrites the local Spark database through `spark --workdir <project> db reset`.
-- `supabase/.temp/dev-instance.json`, mode 0600 (`start` in dev-instance mode; removed by
-  `stop --delete`): `{ref, name, organization_slug, api_url, anon_key, service_role_key,
-management_api_url}`.
+- `supabase/.temp/dev-instance.json`, mode 0600, published atomically (staged as
+  `supabase/.temp/.dev-instance.json.<pid>-<n>.tmp`, then renamed) by `start` and `db reset` in
+  dev-instance mode, removed by `stop --delete`: `{ref, name, organization_slug,
+management_api_url, api_url?, anon_key?, service_role_key?, seeded?}`. `api_url` and the keys are
+  absent until `start` finishes; `seeded` is whether the seed files ran on the current database.
+  Before the first write, `.temp` is appended to `supabase/.gitignore` when that file (created if
+  missing, left alone when it is a symlink) does not list it.
+- `supabase/.temp/dev-instance.lock` (`start`, `stop --delete`, `db reset` in dev-instance mode).
 
 ## API Routes
 

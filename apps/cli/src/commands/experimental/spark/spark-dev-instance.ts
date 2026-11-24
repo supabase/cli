@@ -1,4 +1,5 @@
-import { Context, Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { holdLock, isLockBusy, publish } from "@supabase/stack/effect";
+import { Context, Data, Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import {
@@ -8,6 +9,7 @@ import {
   encodeYaml,
 } from "../../../command-internal/output.encoders.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ensureGitignore } from "../../../shared/config/project-link.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   actionability,
@@ -24,21 +26,46 @@ export const SparkDevInstanceMode = Context.Reference<boolean>(
   { defaultValue: () => false },
 );
 
-/** `supabase/.temp/dev-instance.json`: the checkout's dev instance. */
+/**
+ * `supabase/.temp/dev-instance.json`: the checkout's dev instance. `start` writes it as soon as
+ * the project exists, and adds the URL and keys once the instance is healthy.
+ */
 const DevInstanceState = Schema.Struct({
   ref: Schema.String,
   name: Schema.String,
   organization_slug: Schema.String,
-  api_url: Schema.String,
-  anon_key: Schema.String,
-  service_role_key: Schema.String,
   management_api_url: Schema.String,
+  api_url: Schema.optionalKey(Schema.String),
+  anon_key: Schema.optionalKey(Schema.String),
+  service_role_key: Schema.optionalKey(Schema.String),
+  /** Whether the seed files ran on the current database. */
+  seeded: Schema.optionalKey(Schema.Boolean),
 });
-interface DevInstanceState extends Schema.Schema.Type<typeof DevInstanceState> {}
+export interface DevInstanceState extends Schema.Schema.Type<typeof DevInstanceState> {}
 
-type DevInstanceErrorReason = "missing" | "organization" | "timeout" | "api-url" | "state";
+/** A dev instance whose URL and keys are recorded: `start` finished setting it up. */
+export interface ReadyDevInstanceState extends DevInstanceState {
+  readonly api_url: string;
+  readonly anon_key: string;
+  readonly service_role_key: string;
+}
 
-/** The dev instance is absent, unreadable, or could not be created or reached. */
+export const isDevInstanceReady = (state: DevInstanceState): state is ReadyDevInstanceState =>
+  state.api_url !== undefined &&
+  state.anon_key !== undefined &&
+  state.service_role_key !== undefined;
+
+type DevInstanceErrorReason =
+  | "missing"
+  | "incomplete"
+  | "organization"
+  | "timeout"
+  | "api-url"
+  | "state"
+  | "locked"
+  | "local-flag";
+
+/** The dev instance is absent, unreadable, busy, or could not be created or reached. */
 export class SparkDevInstanceError extends Data.TaggedError("SparkDevInstanceError")<{
   readonly reason: DevInstanceErrorReason;
   readonly message: string;
@@ -50,19 +77,30 @@ export class SparkDevInstanceError extends Data.TaggedError("SparkDevInstanceErr
         return actionability.provideFlags;
       case "timeout":
         return actionability.externalNetwork;
+      case "local-flag":
+        return actionability.invalidInput;
+      case "locked":
+        return { ...actionability.invalidInput, fingerprint_suffix: "lease_held" };
       default:
         return actionability.startStack;
     }
   }
 }
 
-const NO_DEV_INSTANCE =
-  "No dev instance for this project. Run `supabase start` to create one.";
+const NO_DEV_INSTANCE = "No dev instance for this project. Run `supabase start` to create one.";
 
-const statePath = Effect.fnUntraced(function* () {
+const STATE_FILE = "dev-instance.json";
+const LOCK_FILE = "dev-instance.lock";
+
+const tempDirectory = Effect.fnUntraced(function* () {
   const settings = yield* CommandSettings;
   const path = yield* Path.Path;
-  return path.join(path.resolve(settings.workdir), "supabase", ".temp", "dev-instance.json");
+  return path.join(path.resolve(settings.workdir), "supabase", ".temp");
+});
+
+const statePath = Effect.fnUntraced(function* () {
+  const path = yield* Path.Path;
+  return path.join(yield* tempDirectory(), STATE_FILE);
 });
 
 const decodeState = Schema.decodeEffect(Schema.fromJsonString(DevInstanceState));
@@ -81,7 +119,7 @@ export const readDevInstanceState = Effect.fn("SparkDevInstance.readState")(func
   if (!(yield* fs.exists(file).pipe(Effect.mapError(stateError))))
     return Option.none<DevInstanceState>();
   const text = yield* fs.readFileString(file).pipe(Effect.mapError(stateError));
-  return Option.some(yield* decodeState(text).pipe(Effect.mapError(stateError)));
+  return Option.some<DevInstanceState>(yield* decodeState(text).pipe(Effect.mapError(stateError)));
 });
 
 const sameApi = (left: string, right: string) =>
@@ -89,7 +127,7 @@ const sameApi = (left: string, right: string) =>
 
 /**
  * The recorded dev instance, which must exist and belong to the profile's Management API: a
- * different API would not know its ref.
+ * different API would not know its ref. It may still be setting up.
  */
 export const requireDevInstanceState = Effect.fn("SparkDevInstance.requireState")(function* () {
   const settings = yield* CommandSettings;
@@ -104,17 +142,44 @@ export const requireDevInstanceState = Effect.fn("SparkDevInstance.requireState"
   return state.value;
 });
 
-/** Writes the state file, readable by its owner only since it holds the service_role key. */
+/** The recorded dev instance, which `start` must have finished setting up. */
+export const requireReadyDevInstanceState = Effect.fn("SparkDevInstance.requireReadyState")(
+  function* () {
+    const state = yield* requireDevInstanceState();
+    if (!isDevInstanceReady(state))
+      return yield* new SparkDevInstanceError({
+        reason: "incomplete",
+        message: `The dev instance ${state.ref} is not set up yet. Run \`supabase start\` to finish setting it up.`,
+      });
+    return state;
+  },
+);
+
+/**
+ * Publishes the state file atomically with mode `0600`, since it holds the service_role key,
+ * after making sure `supabase/.gitignore` ignores `.temp`.
+ */
 export const writeDevInstanceState = Effect.fn("SparkDevInstance.writeState")(function* (
   state: DevInstanceState,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const settings = yield* CommandSettings;
   const file = yield* statePath();
-  yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-  yield* fs.writeFileString(file, `${yield* encodeState(state)}\n`, { mode: 0o600 });
-  // `mode` applies only when the file is created.
-  yield* fs.chmod(file, 0o600);
+  yield* Effect.gen(function* () {
+    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+    yield* ensureGitignore(fs, path, path.resolve(settings.workdir), [".temp"]);
+    yield* publish(fs, path, { target: file, content: `${yield* encodeState(state)}\n` });
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SparkDevInstanceError({
+          reason: "state",
+          message: `failed to write ${file}: ${cause.message}`,
+          cause,
+        }),
+    ),
+  );
 });
 
 export const removeDevInstanceState = Effect.fn("SparkDevInstance.removeState")(function* () {
@@ -122,8 +187,40 @@ export const removeDevInstanceState = Effect.fn("SparkDevInstance.removeState")(
   yield* fs.remove(yield* statePath(), { force: true });
 });
 
+/**
+ * Runs `effect` holding the checkout's dev-instance lock (`supabase/.temp/dev-instance.lock`),
+ * so two commands cannot create or change the instance at once; a second holder fails at once.
+ */
+export const withDevInstanceLock = Effect.fn("SparkDevInstance.lock")(function* <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* tempDirectory();
+  const file = path.join(directory, LOCK_FILE);
+  const lockError = (cause: { readonly message: string }) =>
+    new SparkDevInstanceError({
+      reason: "state",
+      message: `failed to take ${file}: ${cause.message}`,
+      cause,
+    });
+  yield* fs.makeDirectory(directory, { recursive: true }).pipe(Effect.mapError(lockError));
+  yield* holdLock(file, Duration.zero, `supabase/.temp/${LOCK_FILE}`).pipe(
+    Effect.mapError((cause) =>
+      isLockBusy(cause)
+        ? new SparkDevInstanceError({
+            reason: "locked",
+            message: `Another supabase command is changing this project's dev instance (it holds supabase/.temp/${LOCK_FILE}). Wait for it to finish, then run this command again.`,
+            cause,
+          })
+        : lockError(cause),
+    ),
+  );
+  return yield* effect;
+}, Effect.scoped);
+
 /** The URLs and keys `status` reports and `start` prints. */
-const devInstanceReport = (state: DevInstanceState, status: string) => {
+const devInstanceReport = (state: ReadyDevInstanceState, status: string) => {
   const base = state.api_url.replace(/\/+$/u, "");
   return {
     name: state.name,
@@ -140,7 +237,7 @@ const devInstanceReport = (state: DevInstanceState, status: string) => {
 
 /** Prints the dev instance as `status` does: text, `-o json|yaml|toml|env`, `--env`, or a result. */
 export const emitDevInstanceStatus = Effect.fn("SparkDevInstance.emitStatus")(function* (
-  state: DevInstanceState,
+  state: ReadyDevInstanceState,
   status: string,
   options: { readonly env: boolean },
 ) {

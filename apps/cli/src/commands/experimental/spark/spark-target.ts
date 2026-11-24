@@ -34,7 +34,11 @@ import {
   runSparkQuery,
   sparkTypescriptTypes as remoteTypescriptTypes,
 } from "./spark-api.ts";
-import { requireDevInstanceState, SparkDevInstanceMode } from "./spark-dev-instance.ts";
+import {
+  requireReadyDevInstanceState,
+  SparkDevInstanceError,
+  SparkDevInstanceMode,
+} from "./spark-dev-instance.ts";
 import { SparkApiError, SparkBackendError } from "./spark-project.ts";
 import { isSparkRunning, openSpark } from "./spark-stack.ts";
 
@@ -175,7 +179,7 @@ const localSparkTarget = Effect.fn("SparkTarget.local")(function* () {
 
 /** The checkout's dev instance, reached through the Management API like a linked project. */
 const devInstanceSparkTarget = Effect.fn("SparkTarget.devInstance")(function* () {
-  const state = yield* requireDevInstanceState();
+  const state = yield* requireReadyDevInstanceState();
   return yield* remoteSparkTarget(state.ref);
 });
 
@@ -183,12 +187,15 @@ const devInstanceSparkTarget = Effect.fn("SparkTarget.devInstance")(function* ()
 export const withDevInstanceTarget = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   body.pipe(Effect.provideServiceEffect(SparkTarget, devInstanceSparkTarget()));
 
-/** Whether no target flag was given, so the mode's default target applies. */
-const selectsDefaultTarget = Effect.fnUntraced(function* (flags: TargetFlagValues) {
+/** The selector the target flags name, `undefined` when they do not parse (`resolveTarget` reports it). */
+const selectedTarget = Effect.fnUntraced(function* (flags: TargetFlagValues) {
   const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
   const parsed = parseTargetSelector(flags, { remoteConflict: cliArgs?.remoteConflict === true });
-  return Result.isSuccess(parsed) && parsed.success.selection._tag === "Default";
+  return Result.isSuccess(parsed) ? parsed.success.selection._tag : undefined;
 });
+
+const NO_LOCAL_STACK =
+  "This project develops against a dev instance and has no local stack, so --local selects nothing: the dev instance is the default target. Drop --local, or select the linked project with --remote.";
 
 /**
  * Resolves the command's target and runs `body` with its {@link SparkTarget}: the local Spark
@@ -203,8 +210,15 @@ export const withSparkTarget = <A, E, R>(
     const telemetryState = yield* TelemetryState;
     const run = Effect.gen(function* () {
       // A personal dev instance is treated like the local stack: its writes need no consent.
-      if ((yield* SparkDevInstanceMode) && (yield* selectsDefaultTarget(flags)))
-        return yield* withDevInstanceTarget(body({ kind: "local" }));
+      if (yield* SparkDevInstanceMode) {
+        const selected = yield* selectedTarget(flags);
+        if (selected === "Default") return yield* withDevInstanceTarget(body({ kind: "local" }));
+        if (selected === "Local")
+          return yield* new SparkDevInstanceError({
+            reason: "local-flag",
+            message: NO_LOCAL_STACK,
+          });
+      }
       const target = yield* resolveTarget(flags);
       switch (target.kind) {
         case "linked": {

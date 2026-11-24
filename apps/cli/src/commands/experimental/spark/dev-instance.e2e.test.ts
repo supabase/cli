@@ -4,6 +4,8 @@
 // through it. No local stack runs. Needs SUPABASE_SPARK_BIN; without it the suite is skipped.
 import { createHmac } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
 import {
   Config,
   Effect,
@@ -20,16 +22,16 @@ import {
 import { HttpClient } from "effect/http";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll } from "vitest";
 import {
   createTempHome,
   pickFreePort,
-  requireCliSuccess,
-  runSupabase,
+  runSupabaseEffect,
   stripAnsi,
   type TempHome,
 } from "../../../../tests/helpers/cli.ts";
 import {
+  type ManagementApiFaults,
   type SparkConnection,
   SparkInstanceError,
   type SparkInstances,
@@ -45,6 +47,8 @@ const ORGANIZATIONS = [
   { id: "org-b-id", slug: "org-b", name: "Org B" },
 ];
 const SEEDED_TITLE = "seeded todo";
+const REFUSED_MIGRATION =
+  "create function public.add(a int, b int) returns int\n  language plpgsql as $$ begin return a + b; end $$;\n";
 
 const envValue = (name: string) => Effect.runSync(Config.String(name).pipe(Config.withDefault("")));
 const sparkBin = envValue("SUPABASE_SPARK_BIN");
@@ -54,11 +58,6 @@ const hostLayer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 const hostRuntime = ManagedRuntime.make(hostLayer);
 afterAll(() => hostRuntime.dispose());
 const { join } = hostRuntime.runSync(Path.Path);
-const fsOp = <A>(operation: (fs: FileSystem.FileSystem) => Effect.Effect<A, unknown>) =>
-  hostRuntime.runPromise(Effect.flatMap(FileSystem.FileSystem, operation));
-const readText = (path: string) => fsOp((fs) => fs.readFileString(path));
-const writeText = (path: string, text: string) => fsOp((fs) => fs.writeFileString(path, text));
-const exists = (path: string) => fsOp((fs) => fs.exists(path));
 
 const base64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
 /** An HS256 JWT with the given role, as Spark's keys are. */
@@ -87,7 +86,13 @@ const DevInstanceStatus = Schema.fromJsonString(
 );
 const Projects = Schema.fromJsonString(Schema.Array(Schema.Struct({ ref: Schema.String })));
 const StateFile = Schema.fromJsonString(
-  Schema.Struct({ ref: Schema.String, management_api_url: Schema.String }),
+  Schema.Struct({
+    ref: Schema.String,
+    management_api_url: Schema.String,
+    api_url: Schema.optionalKey(Schema.String),
+    service_role_key: Schema.optionalKey(Schema.String),
+    seeded: Schema.optionalKey(Schema.Boolean),
+  }),
 );
 
 describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => {
@@ -99,8 +104,11 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
   let profilePath = "";
   let failedStep: string | undefined;
   const running = new Map<string, RunningInstance>();
+  const faults: ManagementApiFaults = { apiKeysFailures: 0, nullApiUrl: false };
   let firstRef = "";
   let secondRef = "";
+  let projectDir = "";
+  let otherProjectDir = "";
 
   const instanceError = (what: string) => (cause: unknown) =>
     new SparkInstanceError({ message: `${what}: ${String(cause)}` });
@@ -196,243 +204,363 @@ describe.skipIf(sparkBin === "")("experimental spark dev instance (e2e)", () => 
       }).pipe(Effect.mapError(instanceError(`reset ${ref}`)), Effect.provide(hostLayer)),
   };
 
-  const sb = async (args: ReadonlyArray<string>, cwd: string) => {
-    if (home === undefined) throw new Error("no CLI home");
-    const result = await runSupabase([...args], {
-      cwd,
-      home: home.dir,
-      exitTimeoutMs: CLI_EXIT_TIMEOUT_MS,
-      env: {
-        SUPABASE_PROFILE: profilePath,
-        SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN,
-        SUPABASE_PROJECT_ID: undefined,
-        SUPABASE_YES: undefined,
-        NODE_PATH: undefined,
-        DO_NOT_TRACK: "1",
-      },
+  const sb = (args: ReadonlyArray<string>, cwd: string) =>
+    Effect.gen(function* () {
+      if (home === undefined) return yield* Effect.die("no CLI home");
+      const result = yield* runSupabaseEffect([...args], {
+        cwd,
+        home: home.dir,
+        exitTimeoutMs: CLI_EXIT_TIMEOUT_MS,
+        env: {
+          SUPABASE_PROFILE: profilePath,
+          SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN,
+          SUPABASE_PROJECT_ID: undefined,
+          SUPABASE_YES: undefined,
+          NODE_PATH: undefined,
+          DO_NOT_TRACK: "1",
+        },
+      });
+      const stdout = stripAnsi(result.stdout);
+      return { ...result, stdout, log: `${stdout}${stripAnsi(result.stderr)}` };
     });
-    const stdout = stripAnsi(result.stdout);
-    return { ...result, stdout, log: `${stdout}${stripAnsi(result.stderr)}` };
-  };
-  const run = async (args: ReadonlyArray<string>, cwd: string) => {
-    const result = await sb(args, cwd);
-    requireCliSuccess(result, `supabase ${args.join(" ")}`);
-    return result;
-  };
-  const runFails = async (args: ReadonlyArray<string>, cwd: string) => {
-    const result = await sb(args, cwd);
-    expect(result.exitCode, `supabase ${args.join(" ")} succeeded:\n${result.log}`).not.toBe(0);
-    return result;
-  };
-  const projectRefs = async (cwd: string) =>
-    Schema.decodeSync(Projects)((await run(["projects", "list", "-o", "json"], cwd)).stdout).map(
-      (project) => project.ref,
-    );
-  const status = async (cwd: string) =>
-    Schema.decodeSync(DevInstanceStatus)((await run(["status", "-o", "json"], cwd)).stdout);
-  const stateFile = (cwd: string) => join(cwd, "supabase", ".temp", "dev-instance.json");
-
-  const makeProject = async (name: string) => {
-    const dir = join(workDir, name);
-    await fsOp((fs) => fs.makeDirectory(join(dir, "supabase", "migrations"), { recursive: true }));
-    await run(["init"], dir);
-    const configPath = join(dir, "supabase", "config.toml");
-    await writeText(
-      configPath,
-      `${await readText(configPath)}\n[experimental.spark]\nenabled = true\ndev_instance = true\n`,
-    );
-    await writeText(
-      join(dir, "supabase", "migrations", "20260101000000_todos.sql"),
-      await readText(join(exampleDir, "todos.sql")),
-    );
-    await writeText(
-      join(dir, "supabase", "seed.sql"),
-      `insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000001', 'seed@example.com');\ninsert into public.todos (user_id, title) values ('00000000-0000-0000-0000-000000000001', '${SEEDED_TITLE}');\n`,
-    );
-    return dir;
-  };
-
-  const sparkProcesses = async () => {
-    const listed = await hostRuntime.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const child = yield* spawner.spawn(
-            ChildProcess.make("ps", ["-ww", "-Ao", "pid=,command="], {
-              stdin: "ignore",
-              stdout: "pipe",
-              stderr: "ignore",
-            }),
-          );
-          return yield* Stream.mkString(Stream.decodeText(child.stdout));
-        }),
+  const run = (args: ReadonlyArray<string>, cwd: string) =>
+    Effect.tap(sb(args, cwd), (result) =>
+      Effect.sync(() =>
+        expect(result.exitCode, `supabase ${args.join(" ")} failed:\n${result.log}`).toBe(0),
       ),
     );
+  const runFails = (args: ReadonlyArray<string>, cwd: string) =>
+    Effect.tap(sb(args, cwd), (result) =>
+      Effect.sync(() =>
+        expect(result.exitCode, `supabase ${args.join(" ")} succeeded:\n${result.log}`).not.toBe(0),
+      ),
+    );
+  const projectRefs = (cwd: string) =>
+    Effect.map(run(["projects", "list", "-o", "json"], cwd), (result) =>
+      Schema.decodeSync(Projects)(result.stdout).map((project) => project.ref),
+    );
+  const status = (cwd: string) =>
+    Effect.map(run(["status", "-o", "json"], cwd), (result) =>
+      Schema.decodeSync(DevInstanceStatus)(result.stdout),
+    );
+  const stateFile = (cwd: string) => join(cwd, "supabase", ".temp", "dev-instance.json");
+  const readState = (cwd: string) =>
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(stateFile(cwd))).pipe(
+      Effect.map(Schema.decodeSync(StateFile)),
+    );
+  const writeText = (path: string, text: string) =>
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.writeFileString(path, text));
+  const readText = (path: string) =>
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(path));
+  const exists = (path: string) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.exists(path));
+
+  /** A `supabase init` project in dev-instance mode, with the example migration and a seed file unless `bare`. */
+  const makeProject = (name: string, options: { readonly bare?: boolean } = {}) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = join(workDir, name);
+      yield* fs.makeDirectory(join(dir, "supabase", "migrations"), { recursive: true });
+      yield* run(["init"], dir);
+      const configPath = join(dir, "supabase", "config.toml");
+      yield* writeText(
+        configPath,
+        `${yield* readText(configPath)}\n[experimental.spark]\nenabled = true\ndev_instance = true\n`,
+      );
+      if (options.bare === true) return dir;
+      yield* writeText(
+        join(dir, "supabase", "migrations", "20260101000000_todos.sql"),
+        yield* readText(join(exampleDir, "todos.sql")),
+      );
+      yield* writeText(
+        join(dir, "supabase", "seed.sql"),
+        `insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000001', 'seed@example.com');\ninsert into public.todos (user_id, title) values ('00000000-0000-0000-0000-000000000001', '${SEEDED_TITLE}');\n`,
+      );
+      return dir;
+    });
+
+  const sparkProcesses = Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("ps", ["-ww", "-Ao", "pid=,command="], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      }),
+    );
+    const listed = yield* Stream.mkString(Stream.decodeText(child.stdout));
     return listed
       .split("\n")
       .filter((line) => line.includes(sparkBin) && ownedPaths.some((path) => line.includes(path)));
-  };
+  }).pipe(Effect.scoped);
 
-  const step = (name: string, body: () => Promise<void>) =>
-    test(name, { timeout: STEP_TIMEOUT_MS }, async () => {
-      if (failedStep !== undefined) throw new Error(`skipped: step "${failedStep}" failed`);
-      failedStep = name;
-      await body();
-      failedStep = undefined;
-    });
+  const step = <E>(
+    name: string,
+    body: Effect.Effect<
+      void,
+      E,
+      | FileSystem.FileSystem
+      | Path.Path
+      | HttpClient.HttpClient
+      | ChildProcessSpawner.ChildProcessSpawner
+    >,
+  ) =>
+    it.live(
+      name,
+      () =>
+        Effect.gen(function* () {
+          if (failedStep !== undefined)
+            return yield* Effect.die(`skipped: step "${failedStep}" failed`);
+          failedStep = name;
+          yield* body;
+          failedStep = undefined;
+        }).pipe(Effect.provide(hostLayer)),
+      STEP_TIMEOUT_MS,
+    );
 
-  let projectDir = "";
-  let otherProjectDir = "";
-
-  afterAll(async () => {
-    for (const instance of running.values())
-      await hostRuntime.runPromise(Scope.close(instance.scope, Exit.void));
+  const cleanup = Effect.gen(function* () {
+    for (const instance of running.values()) yield* Scope.close(instance.scope, Exit.void);
     running.clear();
-    if (managementApiScope !== undefined)
-      await hostRuntime.runPromise(Scope.close(managementApiScope, Exit.void));
-    const left = workDir === "" ? [] : await sparkProcesses();
-    if (home !== undefined) await Effect.runPromise(home.dispose);
-    if (left.length > 0) {
-      for (const line of left) process.kill(Number(line.trim().split(/\s+/u)[0]), "SIGKILL");
-      throw new Error(`Spark processes of this run were still running:\n${left.join("\n")}`);
+    if (managementApiScope !== undefined) yield* Scope.close(managementApiScope, Exit.void);
+    const left = workDir === "" ? [] : yield* sparkProcesses;
+    if (home !== undefined) yield* home.dispose;
+    for (const line of left)
+      yield* Effect.sync(() => process.kill(Number(line.trim().split(/\s+/u)[0]), "SIGKILL"));
+    if (workDir !== "") {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(workDir, { recursive: true, force: true });
     }
-    if (workDir !== "") await fsOp((fs) => fs.remove(workDir, { recursive: true, force: true }));
-  }, STEP_TIMEOUT_MS);
-
-  step("setup: the Management API stand-in with its own Spark instances", async () => {
-    expect(await exists(sparkBin), `no spark binary at ${sparkBin}`).toBe(true);
-    expect(exampleDir, "set SPARK_EXAMPLE_DIR to the PoC example apps").not.toBe("");
-    home = await Effect.runPromise(createTempHome);
-    workDir = await fsOp((fs) =>
-      fs.makeTempDirectory({ directory: "/tmp", prefix: "spark-dev-e2e-" }),
-    );
-    ownedPaths = [workDir, await fsOp((fs) => fs.realPath(workDir))];
-    const scope = await hostRuntime.runPromise(Scope.make());
-    managementApiScope = scope;
-    managementApi = await hostRuntime.runPromise(
-      serveSparkManagementApi({ instances, organizations: ORGANIZATIONS }).pipe(
-        Scope.provide(scope),
-      ),
-    );
-    profilePath = join(workDir, "profile.yaml");
-    await writeText(
-      profilePath,
-      `name: spark-dev\napi_url: ${managementApi}\ndashboard_url: http://127.0.0.1:9\nproject_host: localhost\n`,
-    );
-    projectDir = await makeProject("my-app");
+    if (left.length > 0)
+      return yield* Effect.die(
+        `Spark processes of this run were still running:\n${left.join("\n")}`,
+      );
   });
-
-  step("before start: a command that needs the dev instance names supabase start", async () => {
-    expect((await runFails(["db", "query", "select 1"], projectDir)).log).toContain(
-      "Run `supabase start`",
-    );
-    const missing = await runFails(["status"], projectDir);
-    expect(missing.exitCode).toBe(1);
-    expect(missing.log).toContain("No dev instance for this project");
-  });
+  afterAll(() => hostRuntime.runPromise(cleanup), STEP_TIMEOUT_MS);
 
   step(
-    "start: refuses to pick between organizations, then creates the instance, applies the migration and the seed",
-    async () => {
-      const ambiguous = await runFails(["start"], projectDir);
+    "setup: the Management API stand-in with its own Spark instances",
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* exists(sparkBin), `no spark binary at ${sparkBin}`).toBe(true);
+      expect(exampleDir, "set SPARK_EXAMPLE_DIR to the PoC example apps").not.toBe("");
+      home = yield* createTempHome;
+      workDir = yield* fs.makeTempDirectory({ directory: "/tmp", prefix: "spark-dev-e2e-" });
+      ownedPaths = [workDir, yield* fs.realPath(workDir)];
+      const scope = yield* Scope.make();
+      managementApiScope = scope;
+      managementApi = yield* serveSparkManagementApi({
+        instances,
+        organizations: ORGANIZATIONS,
+        faults,
+      }).pipe(Scope.provide(scope));
+      profilePath = join(workDir, "profile.yaml");
+      yield* writeText(
+        profilePath,
+        `name: spark-dev\napi_url: ${managementApi}\ndashboard_url: http://127.0.0.1:9\nproject_host: localhost\n`,
+      );
+      projectDir = yield* makeProject("my-app");
+    }),
+  );
+
+  step(
+    "before start: a command that needs the dev instance names supabase start",
+    Effect.gen(function* () {
+      expect((yield* runFails(["db", "query", "select 1"], projectDir)).log).toContain(
+        "Run `supabase start`",
+      );
+      const missing = yield* runFails(["status"], projectDir);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.log).toContain("No dev instance for this project");
+    }),
+  );
+
+  step(
+    "start fails at once, creating nothing, while another command holds the dev-instance lock",
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const temp = join(projectDir, "supabase", ".temp");
+      yield* fs.makeDirectory(temp, { recursive: true });
+      const locked = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* holdLock(join(temp, "dev-instance.lock"), "5 seconds", "the e2e test");
+          return yield* runFails(["start", "--org", "org-a"], projectDir);
+        }),
+      );
+      expect(locked.log).toContain("supabase/.temp/dev-instance.lock");
+      expect(yield* projectRefs(projectDir)).toEqual([]);
+      expect(yield* exists(stateFile(projectDir))).toBe(false);
+    }),
+  );
+
+  step(
+    "start: refuses to pick between organizations; a start that fails after the create is resumed by the next one",
+    Effect.gen(function* () {
+      const ambiguous = yield* runFails(["start"], projectDir);
       expect(ambiguous.log).toContain("org-a, org-b");
       expect(ambiguous.log).toContain("--org");
 
-      const started = await run(["start", "--org", "org-a"], projectDir);
-      expect(started.log).toMatch(
+      const gitignore = join(projectDir, "supabase", ".gitignore");
+      yield* writeText(gitignore, "# the user's own rules, without .temp\n.env\n");
+
+      faults.apiKeysFailures = 1;
+      const failed = yield* runFails(["start", "--org", "org-a"], projectDir);
+      expect(failed.log).toMatch(
         /Creating dev instance dev-my-app-[0-9a-f]{6} in organization org-a/,
       );
+      const partial = yield* readState(projectDir);
+      expect(partial.service_role_key, "keys recorded before they were read").toBeUndefined();
+      firstRef = partial.ref;
+      expect(yield* projectRefs(projectDir)).toEqual([firstRef]);
+      expect((yield* readText(gitignore)).split("\n")).toContain(".temp");
+      expect((yield* runFails(["status"], projectDir)).log).toContain("not set up yet");
+
+      const started = yield* run(["start"], projectDir);
+      expect(started.log).toContain(`Finishing the setup of dev instance`);
+      expect(started.log).not.toContain("Creating dev instance");
       expect(started.log).toContain("Applying migration 20260101000000_todos.sql");
       expect(started.log).toContain("Seeding data from supabase/seed.sql");
       expect(started.log).toContain("ACTIVE_HEALTHY");
-      const mode = await fsOp((fs) => fs.stat(stateFile(projectDir)));
+      expect(yield* projectRefs(projectDir)).toEqual([firstRef]);
+      const mode = yield* Effect.flatMap(FileSystem.FileSystem, (fs) =>
+        fs.stat(stateFile(projectDir)),
+      );
       expect(mode.mode & 0o777, "the state file's mode").toBe(0o600);
-      const state = Schema.decodeSync(StateFile)(await readText(stateFile(projectDir)));
+      const state = yield* readState(projectDir);
+      expect(state.ref).toBe(firstRef);
       expect(state.management_api_url).toBe(managementApi);
-      firstRef = state.ref;
-      expect(await exists(join(home?.dir ?? "", "stacks")), "a local stack was created").toBe(
+      expect(state.seeded).toBe(true);
+      expect(yield* exists(join(home?.dir ?? "", "stacks")), "a local stack was created").toBe(
         false,
       );
-    },
+    }),
   );
 
-  step("status -o json: the URL and keys serve the instance's REST API", async () => {
-    const report = await status(projectDir);
-    expect(report.ref).toBe(firstRef);
-    expect(report.status).toBe("ACTIVE_HEALTHY");
-    expect(report.rest_url).toBe(`${report.api_url}/rest/v1`);
-    const asService = await fetch(`${report.rest_url}/todos?select=title`, {
-      headers: {
-        apikey: report.service_role_key,
-        authorization: `Bearer ${report.service_role_key}`,
-      },
-    });
-    expect(await asService.text()).toContain(SEEDED_TITLE);
-    const asAnon = await fetch(`${report.rest_url}/todos?select=title`, {
-      headers: { apikey: report.anon_key },
-    });
-    expect(asAnon.status, "the anon key is refused").toBe(200);
-    expect(await asAnon.text(), "RLS hides the seeded row from anon").toBe("[]");
-  });
+  step(
+    "status -o json: the URL and keys serve the instance's REST API",
+    Effect.gen(function* () {
+      const report = yield* status(projectDir);
+      expect(report.ref).toBe(firstRef);
+      expect(report.status).toBe("ACTIVE_HEALTHY");
+      expect(report.rest_url).toBe(`${report.api_url}/rest/v1`);
+      const client = yield* HttpClient.HttpClient;
+      const asService = yield* client.get(`${report.rest_url}/todos?select=title`, {
+        headers: {
+          apikey: report.service_role_key,
+          authorization: `Bearer ${report.service_role_key}`,
+        },
+      });
+      expect(yield* asService.text).toContain(SEEDED_TITLE);
+      const asAnon = yield* client.get(`${report.rest_url}/todos?select=title`, {
+        headers: { apikey: report.anon_key },
+      });
+      expect(asAnon.status, "the anon key is refused").toBe(200);
+      expect(yield* asAnon.text, "RLS hides the seeded row from anon").toBe("[]");
+    }),
+  );
 
-  step("db query reads the seeded row; a second start reuses the instance", async () => {
-    expect(
-      (await run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
-        .stdout,
-    ).toContain(SEEDED_TITLE);
-    const again = await run(["start"], projectDir);
-    expect(again.log).toContain(`Using dev instance`);
-    expect(again.log).not.toContain("Seeding data");
-    expect(await projectRefs(projectDir)).toEqual([firstRef]);
-  });
+  step(
+    "db query reads the seeded row; a second start reuses the instance; --local is refused",
+    Effect.gen(function* () {
+      expect(
+        (yield* run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
+          .stdout,
+      ).toContain(SEEDED_TITLE);
+      const again = yield* run(["start"], projectDir);
+      expect(again.log).toContain(`Using dev instance`);
+      expect(again.log).not.toContain("Seeding data");
+      expect(yield* projectRefs(projectDir)).toEqual([firstRef]);
+      const local = yield* runFails(["db", "query", "--local", "select 1"], projectDir);
+      expect(local.log).toContain("has no local stack");
+      expect(local.log).not.toContain("isn't needed");
+    }),
+  );
 
-  step("a new migration: db push, migration list, gen types typescript", async () => {
-    await writeText(
-      join(projectDir, "supabase", "migrations", "20260102000000_labels.sql"),
-      "create table public.labels (id bigint primary key, name text not null);\ngrant all on public.labels to anon, authenticated, service_role;\n",
-    );
-    expect((await run(["db", "push"], projectDir)).log).toContain("Finished supabase db push");
-    const listed = (await run(["migration", "list"], projectDir)).log;
-    expect(listed).toContain("20260101000000");
-    expect(listed).toContain("20260102000000");
-    expect((await run(["gen", "types", "typescript"], projectDir)).stdout).toMatch(
-      /"?labels"?: \{/,
-    );
-  });
+  step(
+    "a new migration: db push, migration list, gen types typescript",
+    Effect.gen(function* () {
+      yield* writeText(
+        join(projectDir, "supabase", "migrations", "20260102000000_labels.sql"),
+        "create table public.labels (id bigint primary key, name text not null);\ngrant all on public.labels to anon, authenticated, service_role;\n",
+      );
+      expect((yield* run(["db", "push"], projectDir)).log).toContain("Finished supabase db push");
+      const listed = (yield* run(["migration", "list"], projectDir)).log;
+      expect(listed).toContain("20260101000000");
+      expect(listed).toContain("20260102000000");
+      expect((yield* run(["gen", "types", "typescript"], projectDir)).stdout).toMatch(
+        /"?labels"?: \{/,
+      );
+    }),
+  );
 
-  step("db reset: drops what db query made, replays migrations and seed", async () => {
-    await run(["db", "query", "create table public.scratch (id int)"], projectDir);
-    await run(["db", "query", "select count(*) from public.scratch"], projectDir);
-    const reset = await run(["db", "reset"], projectDir);
-    expect(reset.log).toContain("Seeding data from supabase/seed.sql");
-    expect(reset.log).toContain("Finished supabase db reset");
-    await runFails(["db", "query", "select count(*) from public.scratch"], projectDir);
-    await run(["db", "query", "select count(*) from public.labels"], projectDir);
-    expect(
-      (await run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
-        .stdout,
-    ).toContain(SEEDED_TITLE);
-  });
+  step(
+    "db reset: drops what db query made, replays migrations and seed",
+    Effect.gen(function* () {
+      yield* run(["db", "query", "create table public.scratch (id int)"], projectDir);
+      yield* run(["db", "query", "select count(*) from public.scratch"], projectDir);
+      const reset = yield* run(["db", "reset"], projectDir);
+      expect(reset.log).toContain("Seeding data from supabase/seed.sql");
+      expect(reset.log).toContain("Finished supabase db reset");
+      yield* runFails(["db", "query", "select count(*) from public.scratch"], projectDir);
+      yield* run(["db", "query", "select count(*) from public.labels"], projectDir);
+      expect(
+        (yield* run(["db", "query", "select title from public.todos", "-o", "json"], projectDir))
+          .stdout,
+      ).toContain(SEEDED_TITLE);
+      expect((yield* readState(projectDir)).seeded).toBe(true);
+    }),
+  );
 
-  step("a second project directory gets its own instance; projects list shows both", async () => {
-    otherProjectDir = await makeProject("other-app");
-    await run(["start", "--org", "org-b"], otherProjectDir);
-    secondRef = (await status(otherProjectDir)).ref;
-    expect(secondRef).not.toBe(firstRef);
-    expect((await projectRefs(projectDir)).toSorted()).toEqual([firstRef, secondRef].toSorted());
-  });
+  step(
+    "a second project: a refused migration leaves it unseeded, and start seeds it once the migration is fixed",
+    Effect.gen(function* () {
+      otherProjectDir = yield* makeProject("other-app");
+      const fixable = join(otherProjectDir, "supabase", "migrations", "20260101000001_add.sql");
+      yield* writeText(fixable, REFUSED_MIGRATION);
+      const refused = yield* runFails(["start", "--org", "org-b"], otherProjectDir);
+      expect(refused.log).toContain("supabase/migrations/20260101000001_add.sql");
+      expect(refused.log).not.toContain("Seeding data");
+      expect((yield* readState(otherProjectDir)).seeded).toBe(false);
 
-  step("stop keeps the instance; stop --delete removes it and the state file", async () => {
-    expect((await run(["stop"], projectDir)).log).toContain("supabase stop --delete");
-    expect(await projectRefs(projectDir)).toContain(firstRef);
-    expect((await run(["stop", "--delete"], projectDir)).log).toContain("Deleted the dev instance");
-    expect(await exists(stateFile(projectDir))).toBe(false);
-    expect(await projectRefs(projectDir)).toEqual([secondRef]);
-    expect((await runFails(["db", "query", "select 1"], projectDir)).log).toContain(
-      "Run `supabase start`",
-    );
-    await run(["stop", "--delete"], otherProjectDir);
-    expect(running.size, "Spark instances left after both deletes").toBe(0);
-    expect(await sparkProcesses(), "Spark processes left after both deletes").toEqual([]);
-  });
+      yield* writeText(fixable, "create table public.numbers (n int);\n");
+      const fixed = yield* run(["start"], otherProjectDir);
+      expect(fixed.log).toContain("Using dev instance");
+      expect(fixed.log).toContain("Seeding data from supabase/seed.sql");
+      secondRef = (yield* status(otherProjectDir)).ref;
+      expect(secondRef).not.toBe(firstRef);
+      expect((yield* projectRefs(projectDir)).toSorted()).toEqual([firstRef, secondRef].toSorted());
+    }),
+  );
+
+  step(
+    "start -o json prints one JSON document when the seed file is missing, and falls back from a null api_url",
+    Effect.gen(function* () {
+      const bareDir = yield* makeProject("bare-app", { bare: true });
+      faults.nullApiUrl = true;
+      const started = yield* run(["start", "--org", "org-a", "-o", "json"], bareDir).pipe(
+        Effect.ensuring(Effect.sync(() => (faults.nullApiUrl = false))),
+      );
+      const report = yield* Schema.decodeEffect(DevInstanceStatus)(started.stdout);
+      expect(report.api_url).toBe(`https://${report.ref}.localhost`);
+      expect(started.stderr).toContain("no files matched pattern");
+      yield* run(["stop", "--delete"], bareDir);
+    }),
+  );
+
+  step(
+    "stop keeps the instance; stop --delete removes it and the state file",
+    Effect.gen(function* () {
+      expect((yield* run(["stop"], projectDir)).log).toContain("supabase stop --delete");
+      expect(yield* projectRefs(projectDir)).toContain(firstRef);
+      expect((yield* run(["stop", "--delete"], projectDir)).log).toContain(
+        "Deleted the dev instance",
+      );
+      expect(yield* exists(stateFile(projectDir))).toBe(false);
+      expect(yield* projectRefs(projectDir)).toEqual([secondRef]);
+      expect((yield* runFails(["db", "query", "select 1"], projectDir)).log).toContain(
+        "Run `supabase start`",
+      );
+      yield* run(["stop", "--delete"], otherProjectDir);
+      expect(running.size, "Spark instances left after the deletes").toBe(0);
+      expect(yield* sparkProcesses, "Spark processes left after the deletes").toEqual([]);
+    }),
+  );
 });

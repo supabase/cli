@@ -13,7 +13,9 @@ With `[experimental.spark] dev_instance` also set (or `SUPABASE_EXPERIMENTAL_SPA
 `sparkDevInstanceCommands` instead, plus the mainline `login`, `logout`, `orgs list` and `projects`: `start`, `status`
 and `stop` (`start/`, `status/`, `stop/`) manage a remote dev instance through the Management API, and the groups are
 provided `SparkDevInstanceMode`, so `withSparkTarget` sends a command with no target flag to that instance
-(`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). New dev-instance groups go in that list the same way.
+(`supabase/.temp/dev-instance.json`, `spark-dev-instance.ts`). `start`, `stop --delete` and `db reset` change the
+instance only under `withDevInstanceLock`, and write the state file only through `writeDevInstanceState`. New
+dev-instance groups go in that list the same way.
 
 ## Layout
 

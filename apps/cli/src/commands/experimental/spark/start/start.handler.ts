@@ -13,10 +13,14 @@ import {
 } from "../spark-api.ts";
 import { applyPendingMigrations, runSeedFiles } from "../spark-apply.ts";
 import {
+  type DevInstanceState,
   emitDevInstanceStatus,
+  isDevInstanceReady,
   readDevInstanceState,
+  type ReadyDevInstanceState,
   requireDevInstanceState,
   SparkDevInstanceError,
+  withDevInstanceLock,
   writeDevInstanceState,
 } from "../spark-dev-instance.ts";
 import { SparkApiError } from "../spark-project.ts";
@@ -64,10 +68,10 @@ const pickOrganization = Effect.fn("spark.start.organization")(function* (
   });
 });
 
-/** Polls the project until it is `ACTIVE_HEALTHY`, for at most a minute. */
+/** Polls the project until it is `ACTIVE_HEALTHY`, for at most a minute; resolves to its `api_url`. */
 const waitForHealthy = Effect.fn("spark.start.waitForHealthy")(function* (ref: string) {
   const last = yield* Ref.make("UNKNOWN");
-  const project = yield* Ref.make(Option.none<{ readonly api_url?: string }>());
+  const apiUrl = yield* Ref.make(Option.none<string>());
   const check = Effect.gen(function* () {
     const found = yield* findSparkProject(ref);
     if (Option.isNone(found))
@@ -76,7 +80,7 @@ const waitForHealthy = Effect.fn("spark.start.waitForHealthy")(function* (ref: s
         status: 404,
       });
     yield* Ref.set(last, found.value.status ?? "UNKNOWN");
-    yield* Ref.set(project, found);
+    yield* Ref.set(apiUrl, Option.fromNullishOr(found.value.api_url));
     return found.value.status === HEALTHY;
   });
   yield* check.pipe(
@@ -89,15 +93,34 @@ const waitForHealthy = Effect.fn("spark.start.waitForHealthy")(function* (ref: s
           (status) =>
             new SparkDevInstanceError({
               reason: "timeout",
-              message: `The dev instance ${ref} is not ${HEALTHY} after ${HEALTHY_TIMEOUT_SECONDS} seconds (status ${status}). Run \`supabase start\` again to wait for it, or delete it with \`supabase projects delete ${ref}\`.`,
+              message: `The dev instance ${ref} is not ${HEALTHY} after ${HEALTHY_TIMEOUT_SECONDS} seconds (status ${status}). Run \`supabase start\` again to keep waiting for it, or delete it with \`supabase stop --delete\`.`,
             }),
         ),
     }),
   );
-  return Option.getOrUndefined(yield* Ref.get(project))?.api_url;
+  return yield* Ref.get(apiUrl);
 });
 
-/** The recorded dev instance when the Management API still finds it, else a new one. */
+/** Waits for the instance to be healthy, then records its URL and keys when they are missing. */
+const completeDevInstance = Effect.fn("spark.start.complete")(function* (state: DevInstanceState) {
+  const settings = yield* CommandSettings;
+  const apiUrl = yield* waitForHealthy(state.ref);
+  if (isDevInstanceReady(state)) return state;
+  const keys = yield* getSparkApiKeys(state.ref);
+  const ready: ReadyDevInstanceState = {
+    ...state,
+    api_url: Option.getOrElse(apiUrl, () => `https://${state.ref}.${settings.projectHost}`),
+    anon_key: keys.anonKey,
+    service_role_key: keys.serviceRoleKey,
+  };
+  yield* writeDevInstanceState(ready);
+  return ready;
+});
+
+/**
+ * The recorded dev instance when the Management API still finds it, finished when an earlier
+ * `start` stopped partway; otherwise a new one, recorded as soon as the project exists.
+ */
 const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option.Option<string>) {
   const output = yield* Output;
   const settings = yield* CommandSettings;
@@ -105,9 +128,13 @@ const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option
   if (Option.isSome(yield* readDevInstanceState())) {
     const state = yield* requireDevInstanceState();
     if (Option.isSome(yield* findSparkProject(state.ref))) {
-      yield* waitForHealthy(state.ref);
-      yield* output.raw(`Using dev instance ${state.name} (${state.ref}).\n`, "stderr");
-      return { state, created: false };
+      yield* output.raw(
+        isDevInstanceReady(state)
+          ? `Using dev instance ${state.name} (${state.ref}).\n`
+          : `Finishing the setup of dev instance ${state.name} (${state.ref})...\n`,
+        "stderr",
+      );
+      return { state: yield* completeDevInstance(state), created: false };
     }
     yield* output.raw(
       `The dev instance ${state.ref} no longer exists; creating a new one.\n`,
@@ -118,38 +145,40 @@ const ensureDevInstance = Effect.fn("spark.start.ensure")(function* (org: Option
   const name = yield* devInstanceName(path.resolve(settings.workdir));
   yield* output.raw(`Creating dev instance ${name} in organization ${organization}...\n`, "stderr");
   const ref = yield* createSparkProject({ name, organizationSlug: organization });
-  const apiUrl = yield* waitForHealthy(ref);
-  const keys = yield* getSparkApiKeys(ref);
-  const state = {
+  const created: DevInstanceState = {
     ref,
     name,
     organization_slug: organization,
-    api_url: apiUrl ?? `https://${ref}.${settings.projectHost}`,
-    anon_key: keys.anonKey,
-    service_role_key: keys.serviceRoleKey,
     management_api_url: settings.apiUrl,
+    seeded: false,
   };
-  yield* writeDevInstanceState(state);
-  return { state, created: true };
+  yield* writeDevInstanceState(created);
+  return { state: yield* completeDevInstance(created), created: true };
 });
 
 /**
- * `supabase start` in dev-instance mode: creates or reuses the checkout's dev instance, applies
- * the pending migrations, seeds a new instance, and prints what `status` prints.
+ * `supabase start` in dev-instance mode: creates, finishes or reuses the checkout's dev instance,
+ * applies the pending migrations, runs the seed files unless they ran on the current database,
+ * and prints what `status` prints.
  */
 export const sparkDevStart = Effect.fn("spark.start")(function* (flags: {
   readonly org: Option.Option<string>;
 }) {
   const telemetryState = yield* TelemetryState;
-  yield* Effect.gen(function* () {
-    const { state, created } = yield* withPlatformApi(ensureDevInstance(flags.org));
-    yield* Effect.annotateCurrentSpan({ "spark.dev_instance.created": created });
-    yield* withDevInstanceTarget(
-      Effect.gen(function* () {
-        yield* applyPendingMigrations;
-        if (created) yield* runSeedFiles();
-      }),
-    );
-    yield* emitDevInstanceStatus(state, HEALTHY, { env: false });
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  yield* withDevInstanceLock(
+    Effect.gen(function* () {
+      const { state, created } = yield* withPlatformApi(ensureDevInstance(flags.org));
+      const seed = state.seeded !== true;
+      yield* Effect.annotateCurrentSpan({
+        "spark.dev_instance.created": created,
+        "spark.dev_instance.seed": seed,
+      });
+      yield* withDevInstanceTarget(applyPendingMigrations);
+      if (seed) {
+        yield* withDevInstanceTarget(runSeedFiles());
+        yield* writeDevInstanceState({ ...state, seeded: true });
+      }
+      yield* emitDevInstanceStatus(state, HEALTHY, { env: false });
+    }),
+  ).pipe(Effect.ensuring(telemetryState.flush));
 });

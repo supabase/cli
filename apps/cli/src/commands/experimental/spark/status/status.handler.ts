@@ -4,7 +4,7 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import { findSparkProject, withPlatformApi } from "../spark-api.ts";
 import {
   emitDevInstanceStatus,
-  requireDevInstanceState,
+  requireReadyDevInstanceState,
   SparkDevInstanceError,
 } from "../spark-dev-instance.ts";
 
@@ -14,7 +14,7 @@ export const sparkDevStatus = Effect.fn("spark.status")(function* (flags: {
 }) {
   const telemetryState = yield* TelemetryState;
   yield* Effect.gen(function* () {
-    const state = yield* requireDevInstanceState();
+    const state = yield* requireReadyDevInstanceState();
     const project = yield* withPlatformApi(findSparkProject(state.ref));
     if (Option.isNone(project))
       return yield* new SparkDevInstanceError({

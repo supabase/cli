@@ -53,6 +53,14 @@ export interface SparkInstances {
   readonly reset: (ref: string) => Effect.Effect<SparkConnection, SparkInstanceError>;
 }
 
+/** Failures a test injects into the multi-project stand-in; it reads them on every request. */
+export interface ManagementApiFaults {
+  /** How many of the next `GET /v1/projects/{ref}/api-keys` calls answer 400, a status the CLI does not retry. */
+  apiKeysFailures: number;
+  /** `GET /v1/projects/{ref}` answers `api_url: null`. */
+  nullApiUrl: boolean;
+}
+
 type StandInOptions =
   /** One Spark answers for every ref; `/rest/v1` and `/auth/v1` pass through to it. */
   | { readonly sparkUrl: string; readonly serviceRoleKey: string; readonly anonKey: string }
@@ -64,6 +72,7 @@ type StandInOptions =
         readonly slug: string;
         readonly name: string;
       }>;
+      readonly faults?: ManagementApiFaults;
     };
 
 interface HostedProject {
@@ -112,6 +121,7 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
   const client = yield* HttpClient.HttpClient;
   const hosted = new Map<string, HostedProject>();
   const single = "sparkUrl" in options ? options : undefined;
+  const faults = "instances" in options ? options.faults : undefined;
   const organizations =
     "instances" in options
       ? options.organizations
@@ -185,7 +195,10 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
       if (project === undefined) return json(singleProject(ref));
       const status = project.reportedHealthy ? "ACTIVE_HEALTHY" : "COMING_UP";
       project.reportedHealthy = true;
-      return json({ ...hostedProject(project, status), api_url: project.connection.url });
+      return json({
+        ...hostedProject(project, status),
+        api_url: faults?.nullApiUrl === true ? null : project.connection.url,
+      });
     }
     if (rest === "" && method === "DELETE" && project !== undefined && "instances" in options) {
       yield* options.instances.delete(ref);
@@ -237,6 +250,15 @@ export const serveSparkManagementApi = Effect.fn("SparkManagementApi.serve")(fun
         types: yield* sparkTypescriptTypes(admin, schemaList(search.get("included_schemas"))),
       });
     if (rest === "/api-keys/legacy" && method === "GET") return json({ enabled: true });
+    if (
+      rest === "/api-keys" &&
+      method === "GET" &&
+      faults !== undefined &&
+      faults.apiKeysFailures > 0
+    ) {
+      faults.apiKeysFailures -= 1;
+      return json({ message: "the api-keys call failed (injected)" }, 400);
+    }
     if (rest === "/api-keys" && method === "GET")
       return json([
         { name: "anon", api_key: connection.anonKey, type: "legacy", id: "anon" },
