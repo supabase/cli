@@ -26,6 +26,7 @@
   "scripts": {
     "build": "pnpm build:binary && pnpm build:shim",
     "build:binary": "bun scripts/build-binary.ts",
+    "build:node": "bun scripts/build-node.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",
     "docs:sidebar": "bun scripts/generate-docs-sidebar.ts",
@@ -52,6 +53,7 @@
     "@anthropic-ai/sdk": "^0.120.0",
     "@clack/prompts": "^1.7.0",
     "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -72,6 +74,7 @@
     "dotenv": "^17.4.2",
     "effect": "catalog:",
     "esbuild": "^0.28.2",
+    "marked": "^15.0.12",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
     "posthog-node": "^5.51.2",
@@ -80,6 +83,7 @@
     "smol-toml": "^1.8.0",
     "tldts": "catalog:",
     "typescript": "catalog:",
+    "undici": "8.12.4",
     "vite": "^8.2.2",
     "vitest": "catalog:",
     "yaml": "^2.9.0"

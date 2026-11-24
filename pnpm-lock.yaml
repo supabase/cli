@@ -328,6 +328,9 @@ importers:
       '@effect/platform-bun':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))(redis@6.2.1)
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
@@ -388,6 +391,9 @@ importers:
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+      marked:
+        specifier: ^15.0.12
+        version: 15.0.12
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -412,6 +418,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      undici:
+        specifier: 8.12.4
+        version: 8.12.4
       vite:
         specifier: ^8.2.2
         version: 8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
@@ -517,9 +526,9 @@ importers:
 
   packages/cli-test-helpers:
     dependencies:
-      '@effect/platform-bun':
+      '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
+        version: 4.1.4(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))(redis@6.2.1)
       effect:
         specifier: 'catalog:'
         version: 4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47)

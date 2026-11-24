@@ -49,8 +49,9 @@
         // The CLI under test in apps/cli/tests/smoke-test-{macos,windows}.ts.
         "supabase",
       ],
-      // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
-      "ignoreDependencies": ["prettier"],
+      // prettier: TODO(CLI-2424) spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
+      // undici: imported by src/command-internal/fetch-tls.ts; Knip treats the name as a Bun built-in.
+      "ignoreDependencies": ["prettier", "undici"],
     },
     "packages/config": {
       // Run from workflow steps; declared for the same cross-workspace reason as apps/cli.
