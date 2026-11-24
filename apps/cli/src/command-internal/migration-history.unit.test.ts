@@ -87,6 +87,13 @@ describe("reconcileMigrations", () => {
     });
   });
 
+  it("pairs remote versions returned in numeric order", () => {
+    expect(reconcileMigrations(["2", "10"], ["10"], "--remote")).toEqual({
+      kind: "conflict",
+      suggestion: suggestMigrationRepair(["2"], [], "--remote"),
+    });
+  });
+
   it("skips versions that do not parse as integers", () => {
     expect(
       reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"], "--remote"),

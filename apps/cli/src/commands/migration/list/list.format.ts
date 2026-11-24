@@ -25,11 +25,12 @@ export function makeMigrationListRows(
   // order when one version is a prefix of another (supabase/cli#6036); sorted here
   // to keep the merge in sync.
   const sortedLocal = sortMigrationVersions(local);
+  const sortedRemote = sortMigrationVersions(remote);
   const rows: Array<MigrationListRow> = [];
   let i = 0;
   let j = 0;
-  while (i < remote.length || j < sortedLocal.length) {
-    const remoteVersion = remote[i];
+  while (i < sortedRemote.length || j < sortedLocal.length) {
+    const remoteVersion = sortedRemote[i];
     const localVersion = sortedLocal[j];
     if (remoteVersion !== undefined && parseMigrationVersion(remoteVersion) === undefined) {
       i++;
@@ -39,7 +40,7 @@ export function makeMigrationListRows(
       j++;
       continue;
     }
-    /* Compare as text, the order both sides are sorted in, so mixed widths stay paired (#7775). */
+    /* Compare as text, the order both sides are sorted in, so mixed widths stay paired. */
     if (
       localVersion !== undefined &&
       (remoteVersion === undefined || compareMigrationVersions(localVersion, remoteVersion) < 0)

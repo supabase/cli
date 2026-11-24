@@ -172,14 +172,15 @@ export function reconcileMigrations(
   local: ReadonlyArray<string>,
   targetFlags: string,
 ): MigrationSync {
-  /* Compare as text, the order both sides are sorted in, so mixed widths stay paired (#7775). */
+  /* Compare as text, the order both sides are sorted in, so mixed widths stay paired. */
   const sortedLocal = sortMigrationVersions(local);
+  const sortedRemote = sortMigrationVersions(remote);
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remote.length || j < sortedLocal.length) {
-    const remoteVersion = remote[i];
+  while (i < sortedRemote.length || j < sortedLocal.length) {
+    const remoteVersion = sortedRemote[i];
     const localVersion = sortedLocal[j];
     if (remoteVersion !== undefined && parseMigrationVersion(remoteVersion) === undefined) {
       i++;

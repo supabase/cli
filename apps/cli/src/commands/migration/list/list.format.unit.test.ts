@@ -50,6 +50,13 @@ describe("makeMigrationListRows", () => {
     ]);
   });
 
+  it("pairs remote versions returned in numeric order", () => {
+    expect(makeMigrationListRows(["2", "10"], ["10"])).toEqual([
+      { local: "10", remote: "10", time: "10" },
+      { local: "", remote: "2", time: "2" },
+    ]);
+  });
+
   it("skips non-numeric versions on both sides", () => {
     expect(makeMigrationListRows(["a", "c"], ["a", "b"])).toEqual([]);
   });
