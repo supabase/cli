@@ -74,6 +74,8 @@ export type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Why no exit code was reported, such as the signal that killed the process. */
+  exitFailure?: string;
   /** Set when the harness exit bound fired and SIGKILLed the process group. */
   timedOutAfterMs?: number;
 };
@@ -779,19 +781,19 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
   /* "close" in Node terms: the root exited and every holder of its stdout/stderr let go. */
   yield* Effect.forkScoped(
     Effect.gen(function* () {
-      const [exitCode] = yield* Effect.all(
+      const [exit] = yield* Effect.all(
         [
           /* A signal death has no code and reports exit code 1. */
           handle.exitCode.pipe(
-            Effect.map((code): number => code),
-            Effect.orElseSucceed(() => 1),
+            Effect.map((code): Pick<RunResult, "exitCode" | "exitFailure"> => ({ exitCode: code })),
+            Effect.catch((error) => Effect.succeed({ exitCode: 1, exitFailure: error.message })),
           ),
           Fiber.join(stdoutDrained),
           Fiber.join(stderrDrained),
         ],
         { concurrency: "unbounded" },
       );
-      const result: RunResult = { stdout, stderr, exitCode };
+      const result: RunResult = { stdout, stderr, ...exit };
       closeResult = result;
       yield* PubSub.publish(stdoutChanged, undefined);
       yield* Deferred.succeed(closed, result);
@@ -996,6 +998,7 @@ export function runSupabase(
 export function requireCliSuccess(
   result: {
     readonly exitCode: number;
+    readonly exitFailure?: string;
     readonly stdout: string;
     readonly stderr: string;
     readonly timedOutAfterMs?: number;
@@ -1003,10 +1006,13 @@ export function requireCliSuccess(
   command: string,
 ): void {
   if (result.exitCode !== 0) {
-    const reason =
-      result.timedOutAfterMs === undefined
-        ? `exit ${result.exitCode}`
-        : `exit ${result.exitCode}; harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`;
+    const reason = [
+      `exit ${result.exitCode}`,
+      ...(result.exitFailure === undefined ? [] : [result.exitFailure]),
+      ...(result.timedOutAfterMs === undefined
+        ? []
+        : [`harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`]),
+    ].join("; ");
     throw new Error(
       `${command} failed (${reason})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );

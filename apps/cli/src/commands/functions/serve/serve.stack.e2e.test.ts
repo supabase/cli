@@ -189,7 +189,10 @@ const serve = Effect.fn("FunctionsServeE2e.serve")(function* (
 const interrupt = Effect.fn("FunctionsServeE2e.interrupt")(function* (child: SpawnedSupabase) {
   yield* child.kill("SIGINT");
   const exit = yield* child.waitForExit(120_000);
-  expect(exit.exitCode, `stdout:\n${child.stdout()}\nstderr:\n${child.stderr()}`).toBe(0);
+  expect(
+    exit.exitCode,
+    `${exit.exitFailure ?? ""}\nstdout:\n${child.stdout()}\nstderr:\n${child.stderr()}`,
+  ).toBe(0);
 });
 
 const invoke = Effect.fn("FunctionsServeE2e.invoke")(function* (
