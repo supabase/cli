@@ -671,7 +671,8 @@ describe("init", () => {
     {
       env: {},
       interactive: true,
-      expected: "set SUPABASE_EXPERIMENTAL_STACK=1 before your next `supabase init`",
+      expected:
+        "run `SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force`.\nThat replaces supabase/config.jsonc, so only run it before you edit the file.",
     },
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
@@ -718,6 +719,49 @@ describe("init", () => {
       });
     },
   );
+
+  it.effect.each([
+    {
+      name: "keeps --use-orioledb",
+      flags: { useOrioledb: true },
+      platform: undefined,
+      expected: "`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force --use-orioledb`",
+    },
+    {
+      name: "uses PowerShell syntax on Windows",
+      flags: {},
+      platform: "win32" as const,
+      expected: "`$env:SUPABASE_EXPERIMENTAL_STACK=1; supabase init --force`",
+    },
+  ])("stack note rerun command $name", ({ flags, platform, expected }) => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const { layer, out } = setup(tempDir, { interactive: true, platform });
+
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false, ...flags }).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain(expected);
+    });
+  });
+
+  it.effect("stack note rerun command keeps --workdir as the resolved, quoted path", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { layer, out } = setup(tempDir, {
+        interactive: true,
+        workdir: Option.some("my project"),
+      });
+
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain(
+        `\`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force --workdir '${path.join(tempDir, "my project")}'\``,
+      );
+    }).pipe(Effect.provide(NodeServices.layer));
+  });
 
   it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;

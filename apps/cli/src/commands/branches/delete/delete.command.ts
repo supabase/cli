@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -7,9 +8,8 @@ import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { branchPrompt } from "../branches.prompt.ts";
 import { branchRef } from "../../../command-internal/branch-ref.resolver.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
-import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { withManagedHandler } from "../../../command-internal/command-executor.ts";
+import { managementApiRuntime } from "../../../command-internal/management-api-runtime.layer.ts";
 import { branchesDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
@@ -24,6 +24,11 @@ const config = {
 } as const;
 export type BranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+export const BranchesDeleteResult = Schema.Struct({
+  project_ref: Schema.String,
+  message: Schema.Literal("Deleted preview branch"),
+});
+
 export const branchesDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription("Delete a preview branch by its name or ID."),
   Command.withShortDescription("Delete a preview branch"),
@@ -37,9 +42,10 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
       linkedProjectCache,
     ),
   ),
-  Command.withHandler((flags) =>
-    branchesDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
-  ),
-  Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
+  withManagedHandler({
+    output: BranchesDeleteResult,
+    handler: branchesDelete,
+    runtime: managementApiRuntime(["branches", "delete"]),
+  }),
   withTargetPolicy({ group: "hosted", consent: "no" }),
 );

@@ -37,6 +37,26 @@ describe("makeMigrationListRows", () => {
     ]);
   });
 
+  it("pairs mixed-width versions after an earlier local-only version (#7775)", () => {
+    expect(
+      makeMigrationListRows(
+        ["20260420", "20260420010000"],
+        ["20260101000000", "20260420", "20260420010000"],
+      ),
+    ).toEqual([
+      { local: "20260101000000", remote: "", time: "2026-01-01 00:00:00" },
+      { local: "20260420", remote: "20260420", time: "20260420" },
+      { local: "20260420010000", remote: "20260420010000", time: "2026-04-20 01:00:00" },
+    ]);
+  });
+
+  it("pairs remote versions returned in numeric order", () => {
+    expect(makeMigrationListRows(["2", "10"], ["2", "10"])).toEqual([
+      { local: "10", remote: "10", time: "10" },
+      { local: "2", remote: "2", time: "2" },
+    ]);
+  });
+
   it("skips non-numeric versions on both sides", () => {
     expect(makeMigrationListRows(["a", "c"], ["a", "b"])).toEqual([]);
   });
@@ -47,6 +67,9 @@ describe("makeMigrationListRows", () => {
     ]);
     expect(makeMigrationListRows(["20240101000000"], [])).toEqual([
       { local: "", remote: "20240101000000", time: "2024-01-01 00:00:00" },
+    ]);
+    expect(makeMigrationListRows(["9223372036854775807"], [])).toEqual([
+      { local: "", remote: "9223372036854775807", time: "9223372036854775807" },
     ]);
   });
 });

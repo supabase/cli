@@ -120,6 +120,8 @@ jobs:
           exit 1
       # The stable tag is pushed by main's publish job, so a prerelease planned before that job
       # finishes misses it. The rest of the run (brew, scoop, smoke tests) does not affect the plan.
+      # Only a run past the stable sign-off can push a stable tag, so runs waiting at the sign-off
+      # or queued behind one do not count.
       - name: Wait for an in-flight stable release
         if: ${{ (github.ref_name == 'develop' || github.ref_name == 'next') && (github.event_name == 'push' || inputs.version == '') }}
         env:
@@ -132,8 +134,10 @@ jobs:
             pending=0
             if run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"; then
               for run_id in $run_ids; do
-                publish_status="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish") | .status')" || publish_status=unknown
-                if [[ "$publish_status" != completed ]]; then
+                job_states="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish" or .name == "Approve stable release") | "\(.name)=\(.status)/\(.conclusion)"')" || job_states=unknown
+                if [[ "$job_states" == unknown ]]; then
+                  pending=$((pending + 1))
+                elif grep -qxF 'Approve stable release=completed/success' <<<"$job_states" && ! grep -q '^Release / publish=completed/' <<<"$job_states"; then
                   pending=$((pending + 1))
                 fi
               done
@@ -331,11 +335,65 @@ jobs:
             echo "dry_run=$dry_run"
             echo "channel=$channel"
           } >> "$GITHUB_OUTPUT"
+      # GitHub creates a missing environment without protection rules, so the approval job would
+      # pass unreviewed if the `cli-stable-release` required-reviewers rule (repo config, not
+      # code) goes missing. Fail closed before a real stable release can reach it.
+      - name: Assert the stable approval gate is armed
+        if: ${{ steps.compute.outputs.should_release == 'true' && steps.compute.outputs.channel == 'stable' && steps.compute.outputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Only a 404 (environment never created) counts as unarmed; any other failure is an
+          # API/token error and is reported as such.
+          if response="$(gh api "repos/${REPO}/environments/cli-stable-release" 2>&1)"; then
+            rules="$(jq -r '[.protection_rules[]?.type] | join(",")' <<<"$response")"
+          elif [[ "$response" == *"HTTP 404"* ]]; then
+            rules=""
+          else
+            echo "Failed to read the cli-stable-release environment (this is an API/token failure, not a missing rule):" >&2
+            echo "$response" >&2
+            exit 1
+          fi
+          case "$rules" in
+            *required_reviewers*) echo "cli-stable-release gate armed: ${rules}" ;;
+            *)
+              echo "The cli-stable-release environment has no required_reviewers rule (found: '${rules:-none}')." >&2
+              echo "Configure required reviewers in repo settings before releasing a stable version." >&2
+              exit 1
+              ;;
+          esac
+      - name: Summarize the stable sign-off
+        if: ${{ steps.compute.outputs.should_release == 'true' && steps.compute.outputs.channel == 'stable' && steps.compute.outputs.dry_run != 'true' }}
+        env:
+          VERSION: ${{ steps.compute.outputs.version }}
+        run: |
+          {
+            echo "### Stable release ${VERSION}"
+            echo "Publishing waits for a \`cli\` team sign-off under **Review deployments**. Reject the deployment to stop it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Stable only. Rejecting the deployment fails this job, which stops the release.
+  stable-approval:
+    name: Approve stable release
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.channel == 'stable' && needs.plan.outputs.dry_run != 'true' && needs.plan.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    environment:
+      name: cli-stable-release
+      url: https://www.npmjs.com/package/supabase/v/${{ needs.plan.outputs.version }}
+    steps:
+      - env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: echo "Approved stable release ${VERSION}"
 
   release:
     name: Release
-    needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.should_release == 'true' }}
+    needs: [plan, stable-approval]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.should_release == 'true' && contains(fromJSON('["success","skipped"]'), needs.stable-approval.result) }}
     # pull-requests: write is required by the nested propose-release-notes workflow
     # (release-shared.yml -> propose-release-notes.yml): a called job's permissions can't exceed
     # those granted to the calling job, so this must be declared here too.
@@ -495,11 +553,12 @@ jobs:
   # reusable release-shared workflow) fails. Skipped jobs don't count as failures. Dry runs are
   # excluded via the dispatch input directly, so even a plan job that dies before recording its
   # `dry_run` output stays quiet. A failed `next-ahead` or `test-next` skips `plan`, so the
-  # channel falls back to the ref.
+  # channel falls back to the ref. A rejected stable sign-off fails `stable-approval` and is an
+  # intentional stop, so it does not alert.
   notify-slack-failure:
     name: Notify Slack (failure)
-    needs: [next-ahead, test-next, plan, release]
-    if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    needs: [next-ahead, test-next, plan, stable-approval, release]
+    if: ${{ failure() && needs.stable-approval.result != 'failure' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     uses: ./.github/workflows/slack-notify.yml
     with:
       package: Supabase CLI

@@ -124,7 +124,17 @@ describe("apiLintsToAdvisorLints", () => {
     const [mapped] = apiLintsToAdvisorLints([
       {
         ...apiLint,
-        metadata: { type: "table", schema: "public", fkey_columns: [1, 2], entity: "public.users" },
+        metadata: {
+          type: "table",
+          schema: "public",
+          fkey_columns: [1, 2],
+          entity: "public.users",
+          extension_name: "pg_graphql",
+          installed_version: "1.5.11",
+          default_version: "1.5.12",
+          foreign_key: "users_email_fkey",
+          arguments: "integer",
+        },
       },
     ]);
     expect(Object.keys(mapped?.metadata as Record<string, unknown>)).toEqual([

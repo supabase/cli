@@ -168,7 +168,7 @@ describe("buildStudioContainerSpec", () => {
         expect(spec.healthcheck).toEqual({
           test: [
             "CMD-SHELL",
-            `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
+            `exec node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
           ],
           intervalSeconds: 10,
           timeoutSeconds: 2,

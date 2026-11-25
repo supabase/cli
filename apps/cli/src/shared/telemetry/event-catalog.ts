@@ -123,3 +123,6 @@ export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "TERM_PROGRAM_VERSION",
   "TERM_COLOR_MODE",
 ];
+
+// Env vars recorded as "true", "false" or "invalid", parsed the way config booleans are.
+export const EnvSignalBooleanKeys: ReadonlyArray<string> = ["SUPABASE_EXPERIMENTAL_STACK"];

@@ -4529,6 +4529,11 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
           ),
+          extension_name: Schema.optionalKey(Schema.String),
+          installed_version: Schema.optionalKey(Schema.String),
+          default_version: Schema.optionalKey(Schema.String),
+          foreign_key: Schema.optionalKey(Schema.String),
+          arguments: Schema.optionalKey(Schema.String),
         }),
       ),
       cache_key: Schema.String,
@@ -6050,6 +6055,11 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
           ),
+          extension_name: Schema.optionalKey(Schema.String),
+          installed_version: Schema.optionalKey(Schema.String),
+          default_version: Schema.optionalKey(Schema.String),
+          foreign_key: Schema.optionalKey(Schema.String),
+          arguments: Schema.optionalKey(Schema.String),
         }),
       ),
       cache_key: Schema.String,
@@ -12612,6 +12622,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "compute_not_enabled",
           "compute_request_rejected",
           "compute_unavailable",
+          "environment_secret_not_found",
+          "environment_variable_already_exists",
+          "environment_variable_limit_reached",
+          "environment_variable_not_found",
           "notebook_cell_duplicate",
           "notebook_cell_unknown",
           "notebook_disabled",
@@ -14573,106 +14587,23 @@ export const V2GetWarehouseCapacityOutput = Schema.Struct({
       type: Schema.Literal("warehouse_metric").annotate({ description: "Resource type." }),
       id: Schema.Union([
         Schema.Literals([
-          "query_rate",
-          "query_error_rate",
-          "query_timeout_rate",
-          "query_canceled_rate",
-          "query_duration_mean",
-          "query_duration_p50",
-          "query_duration_p95",
-          "query_duration_p99",
-          "duckdb_duration_mean",
-          "assignment_wait_mean",
-          "assignment_wait_p95",
           "query_in_flight",
-          "admission_rejection_rate",
           "worker_admission_limit",
           "worker_admission_active",
           "worker_admission_pending",
           "worker_admission_occupied",
+          "admission_rejection_rate",
+          "assignment_wait_mean",
+          "assignment_wait_p95",
           "activation_rate",
           "activation_duration_mean",
           "activation_duration_p95",
-          "rpc_rate",
-          "rpc_duration_mean",
-          "rpc_duration_p95",
         ]),
         OpenString,
       ]),
       attributes: Schema.Struct({
         project_ref: Schema.String,
-        metric: Schema.Union([
-          Schema.Literals([
-            "query_rate",
-            "query_error_rate",
-            "query_timeout_rate",
-            "query_canceled_rate",
-            "query_duration_mean",
-            "query_duration_p50",
-            "query_duration_p95",
-            "query_duration_p99",
-            "duckdb_duration_mean",
-            "assignment_wait_mean",
-            "assignment_wait_p95",
-            "query_in_flight",
-            "admission_rejection_rate",
-            "worker_admission_limit",
-            "worker_admission_active",
-            "worker_admission_pending",
-            "worker_admission_occupied",
-            "activation_rate",
-            "activation_duration_mean",
-            "activation_duration_p95",
-            "rpc_rate",
-            "rpc_duration_mean",
-            "rpc_duration_p95",
-          ]),
-          OpenString,
-        ]),
-        unit: Schema.Union([
-          Schema.Literals(["per_second", "seconds", "queries", "grants"]),
-          OpenString,
-        ]),
-        aggregation: Schema.Union([
-          Schema.Literals(["rate", "sum", "mean", "p50", "p95", "p99", "occupied"]),
-          OpenString,
-        ]),
         definition: Schema.String,
-        requested: Schema.Struct({
-          metric: Schema.Union([
-            Schema.Literals([
-              "query_rate",
-              "query_error_rate",
-              "query_timeout_rate",
-              "query_canceled_rate",
-              "query_duration_mean",
-              "query_duration_p50",
-              "query_duration_p95",
-              "query_duration_p99",
-              "duckdb_duration_mean",
-              "assignment_wait_mean",
-              "assignment_wait_p95",
-              "query_in_flight",
-              "admission_rejection_rate",
-              "worker_admission_limit",
-              "worker_admission_active",
-              "worker_admission_pending",
-              "worker_admission_occupied",
-              "activation_rate",
-              "activation_duration_mean",
-              "activation_duration_p95",
-              "rpc_rate",
-              "rpc_duration_mean",
-              "rpc_duration_p95",
-            ]),
-            OpenString,
-          ]),
-          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          step: Schema.optionalKey(
-            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          ),
-        }),
         effective: Schema.Struct({
           start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -14700,7 +14631,7 @@ export const V2GetWarehouseCapacityOutput = Schema.Struct({
         last_sample_at: Schema.Union([
           Schema.Number.annotate({
             description:
-              "Latest observed source sample timestamp in Unix seconds; not the query evaluation timestamp.",
+              "Latest scraped sample timestamp in Unix seconds; not the query evaluation timestamp or proof of a successful recent health observation.",
           }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
           Schema.Null,
         ]),
@@ -14730,6 +14661,53 @@ export const V2GetWarehouseCapacityOutput = Schema.Struct({
             }),
           }),
         ),
+        metric: Schema.Union([
+          Schema.Literals([
+            "query_in_flight",
+            "worker_admission_limit",
+            "worker_admission_active",
+            "worker_admission_pending",
+            "worker_admission_occupied",
+            "admission_rejection_rate",
+            "assignment_wait_mean",
+            "assignment_wait_p95",
+            "activation_rate",
+            "activation_duration_mean",
+            "activation_duration_p95",
+          ]),
+          OpenString,
+        ]),
+        unit: Schema.Union([
+          Schema.Literals(["queries", "grants", "per_second", "seconds"]),
+          OpenString,
+        ]),
+        aggregation: Schema.Union([
+          Schema.Literals(["sum", "occupied", "rate", "mean", "p95"]),
+          OpenString,
+        ]),
+        requested: Schema.Struct({
+          metric: Schema.Union([
+            Schema.Literals([
+              "query_in_flight",
+              "worker_admission_limit",
+              "worker_admission_active",
+              "worker_admission_pending",
+              "worker_admission_occupied",
+              "admission_rejection_rate",
+              "assignment_wait_mean",
+              "assignment_wait_p95",
+              "activation_rate",
+              "activation_duration_mean",
+              "activation_duration_p95",
+            ]),
+            OpenString,
+          ]),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
+        }),
       }),
     }),
   ),
@@ -14877,6 +14855,143 @@ export const V2GetWarehouseConnectionOutput = Schema.Struct({
     }),
   }),
 });
+export const V2GetWarehouseIngestionStatsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  since: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[1-9]\\d*(s|m|h|d)$", "u")).annotate({
+        expected: "a string matching the RegExp ^[1-9]\\d*(s|m|h|d)$",
+      }),
+    ),
+  ),
+  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  to: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  attributes: Schema.optionalKey(Schema.String),
+  interval: Schema.optionalKey(Schema.Literals(["1m", "5m", "10m", "30m", "1h", "1d"])),
+});
+export const V2GetWarehouseIngestionStatsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("warehouse_metric").annotate({ description: "Resource type." }),
+      id: Schema.Union([
+        Schema.Literals([
+          "ingestion_events_received_rate",
+          "ingestion_events_processed_rate",
+          "ingestion_bytes_received_rate",
+          "ingestion_bytes_processed_rate",
+          "replication_wal_lag_bytes",
+          "replication_receive_wal_lag_bytes",
+        ]),
+        OpenString,
+      ]),
+      attributes: Schema.Struct({
+        project_ref: Schema.String,
+        definition: Schema.String,
+        effective: Schema.Struct({
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          rate_window_seconds: Schema.Number.check(
+            Schema.isFinite().annotate({ expected: "a finite number" }),
+          ),
+        }),
+        scrape_interval_seconds: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        availability: Schema.Union([
+          Schema.Literals([
+            "ok",
+            "partial",
+            "stale",
+            "no_data",
+            "insufficient_data",
+            "not_provisioned",
+            "disabled",
+            "unavailable",
+          ]),
+          OpenString,
+        ]),
+        last_sample_at: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "Latest scraped sample timestamp in Unix seconds; not the query evaluation timestamp or proof of a successful recent health observation.",
+          }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          Schema.Null,
+        ]),
+        series: Schema.Array(
+          Schema.Struct({
+            labels: Schema.Record(Schema.String, Schema.String),
+            points: Schema.Array(
+              Schema.Struct({
+                timestamp: Schema.Number.check(
+                  Schema.isFinite().annotate({ expected: "a finite number" }),
+                ),
+                value: Schema.Union([
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                  Schema.Null,
+                ]),
+              }),
+            ),
+            coverage: Schema.Struct({
+              returned_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+              expected_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+            }).annotate({
+              description: "Grid point coverage, not proof that every worker was scraped.",
+            }),
+          }),
+        ),
+        metric: Schema.Union([
+          Schema.Literals([
+            "ingestion_events_received_rate",
+            "ingestion_events_processed_rate",
+            "ingestion_bytes_received_rate",
+            "ingestion_bytes_processed_rate",
+            "replication_wal_lag_bytes",
+            "replication_receive_wal_lag_bytes",
+          ]),
+          OpenString,
+        ]),
+        unit: Schema.Union([
+          Schema.Literals(["per_second", "bytes_per_second", "bytes"]),
+          OpenString,
+        ]),
+        aggregation: Schema.Union([Schema.Literals(["rate", "max"]), OpenString]),
+        requested: Schema.Struct({
+          metric: Schema.Union([
+            Schema.Literals([
+              "ingestion_events_received_rate",
+              "ingestion_events_processed_rate",
+              "ingestion_bytes_received_rate",
+              "ingestion_bytes_processed_rate",
+              "replication_wal_lag_bytes",
+              "replication_receive_wal_lag_bytes",
+            ]),
+            OpenString,
+          ]),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
+        }),
+      }),
+    }),
+  ),
+});
 export const V2GetWarehouseQueryStatsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -14916,17 +15031,6 @@ export const V2GetWarehouseQueryStatsOutput = Schema.Struct({
           "query_duration_p95",
           "query_duration_p99",
           "duckdb_duration_mean",
-          "assignment_wait_mean",
-          "assignment_wait_p95",
-          "query_in_flight",
-          "admission_rejection_rate",
-          "worker_admission_limit",
-          "worker_admission_active",
-          "worker_admission_pending",
-          "worker_admission_occupied",
-          "activation_rate",
-          "activation_duration_mean",
-          "activation_duration_p95",
           "rpc_rate",
           "rpc_duration_mean",
           "rpc_duration_p95",
@@ -14935,78 +15039,7 @@ export const V2GetWarehouseQueryStatsOutput = Schema.Struct({
       ]),
       attributes: Schema.Struct({
         project_ref: Schema.String,
-        metric: Schema.Union([
-          Schema.Literals([
-            "query_rate",
-            "query_error_rate",
-            "query_timeout_rate",
-            "query_canceled_rate",
-            "query_duration_mean",
-            "query_duration_p50",
-            "query_duration_p95",
-            "query_duration_p99",
-            "duckdb_duration_mean",
-            "assignment_wait_mean",
-            "assignment_wait_p95",
-            "query_in_flight",
-            "admission_rejection_rate",
-            "worker_admission_limit",
-            "worker_admission_active",
-            "worker_admission_pending",
-            "worker_admission_occupied",
-            "activation_rate",
-            "activation_duration_mean",
-            "activation_duration_p95",
-            "rpc_rate",
-            "rpc_duration_mean",
-            "rpc_duration_p95",
-          ]),
-          OpenString,
-        ]),
-        unit: Schema.Union([
-          Schema.Literals(["per_second", "seconds", "queries", "grants"]),
-          OpenString,
-        ]),
-        aggregation: Schema.Union([
-          Schema.Literals(["rate", "sum", "mean", "p50", "p95", "p99", "occupied"]),
-          OpenString,
-        ]),
         definition: Schema.String,
-        requested: Schema.Struct({
-          metric: Schema.Union([
-            Schema.Literals([
-              "query_rate",
-              "query_error_rate",
-              "query_timeout_rate",
-              "query_canceled_rate",
-              "query_duration_mean",
-              "query_duration_p50",
-              "query_duration_p95",
-              "query_duration_p99",
-              "duckdb_duration_mean",
-              "assignment_wait_mean",
-              "assignment_wait_p95",
-              "query_in_flight",
-              "admission_rejection_rate",
-              "worker_admission_limit",
-              "worker_admission_active",
-              "worker_admission_pending",
-              "worker_admission_occupied",
-              "activation_rate",
-              "activation_duration_mean",
-              "activation_duration_p95",
-              "rpc_rate",
-              "rpc_duration_mean",
-              "rpc_duration_p95",
-            ]),
-            OpenString,
-          ]),
-          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          step: Schema.optionalKey(
-            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-          ),
-        }),
         effective: Schema.Struct({
           start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -15034,7 +15067,7 @@ export const V2GetWarehouseQueryStatsOutput = Schema.Struct({
         last_sample_at: Schema.Union([
           Schema.Number.annotate({
             description:
-              "Latest observed source sample timestamp in Unix seconds; not the query evaluation timestamp.",
+              "Latest scraped sample timestamp in Unix seconds; not the query evaluation timestamp or proof of a successful recent health observation.",
           }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
           Schema.Null,
         ]),
@@ -15064,6 +15097,52 @@ export const V2GetWarehouseQueryStatsOutput = Schema.Struct({
             }),
           }),
         ),
+        metric: Schema.Union([
+          Schema.Literals([
+            "query_rate",
+            "query_error_rate",
+            "query_timeout_rate",
+            "query_canceled_rate",
+            "query_duration_mean",
+            "query_duration_p50",
+            "query_duration_p95",
+            "query_duration_p99",
+            "duckdb_duration_mean",
+            "rpc_rate",
+            "rpc_duration_mean",
+            "rpc_duration_p95",
+          ]),
+          OpenString,
+        ]),
+        unit: Schema.Union([Schema.Literals(["per_second", "seconds"]), OpenString]),
+        aggregation: Schema.Union([
+          Schema.Literals(["rate", "mean", "p50", "p95", "p99"]),
+          OpenString,
+        ]),
+        requested: Schema.Struct({
+          metric: Schema.Union([
+            Schema.Literals([
+              "query_rate",
+              "query_error_rate",
+              "query_timeout_rate",
+              "query_canceled_rate",
+              "query_duration_mean",
+              "query_duration_p50",
+              "query_duration_p95",
+              "query_duration_p99",
+              "duckdb_duration_mean",
+              "rpc_rate",
+              "rpc_duration_mean",
+              "rpc_duration_p95",
+            ]),
+            OpenString,
+          ]),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
+        }),
       }),
     }),
   ),
@@ -15396,6 +15475,27 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
           id: Schema.String.check(
             Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
           ),
+          diagnostic: Schema.Union([
+            Schema.Struct({
+              code: Schema.Union([
+                Schema.Literals([
+                  "out_of_memory",
+                  "process_exited",
+                  "crash_loop",
+                  "image_unavailable",
+                  "configuration_error",
+                  "startup_failed",
+                  "runtime_failed",
+                ]),
+                OpenString,
+              ]),
+              message: Schema.String,
+            }).annotate({
+              description:
+                "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are omitted.",
+            }),
+            Schema.Null,
+          ]),
           status: Schema.Union([
             Schema.Literals([
               "stopped",
@@ -15507,7 +15607,7 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
             ]),
           }).annotate({
             description:
-              "Postgres replication feedback. Null means Postgres reported no value; lag times also become null shortly after a caught-up slot sees no new WAL, while flush_lag_bytes, the WAL not yet confirmed flushed, reads 0. Feedback age measures time since the last response and does not establish how current query results are.",
+              "Slot health can remain visible during runtime recovery. Lag measurements and feedback age are unavailable unless the pipeline is started.",
           }),
           Schema.Null,
         ]),
@@ -15551,6 +15651,95 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
           ]),
           OpenString,
         ]),
+        progress: Schema.Union([
+          Schema.Struct({
+            observation: Schema.Union([
+              Schema.Literals(["current", "last_known", "unavailable"]),
+              OpenString,
+            ]),
+            selected: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            queued: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            copying_table: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            copied_table: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            following_wal: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            error: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            unknown: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }).annotate({
+            description:
+              "Observed states of the selected tables, not completion or percentage of a specific mutation. Last-known states may predate a restart or resync. Null when the selection is unavailable.",
+          }),
+          Schema.Null,
+        ]),
         items: Schema.Array(
           Schema.Struct({
             id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -15574,6 +15763,28 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
                 Schema.Null,
               ]),
               OpenString,
+            ]),
+            state_observation: Schema.Union([
+              Schema.Literals(["current", "last_known", "unavailable"]),
+              OpenString,
+            ]),
+            error: Schema.Union([
+              Schema.Struct({
+                reason: Schema.String,
+                solution: Schema.Union([Schema.String, Schema.Null]),
+                retry_policy: Schema.Union(
+                  [
+                    Schema.Struct({ policy: Schema.Literal("no_retry") }),
+                    Schema.Struct({ policy: Schema.Literal("manual_retry") }),
+                    Schema.Struct({
+                      policy: Schema.Literal("timed_retry"),
+                      next_retry: Schema.String,
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+              }),
+              Schema.Null,
             ]),
             sync_lag: Schema.Union([
               Schema.Struct({
@@ -15640,19 +15851,238 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
       }),
       capabilities: Schema.Struct({
         context: Schema.Boolean,
-        workload_metrics: Schema.Boolean,
-        query_explain: Schema.Boolean,
+        workload_metrics: Schema.Boolean.annotate({
+          description:
+            "Query statistics and capacity inspection are supported by the Management API. Metric availability is reported separately.",
+        }),
+        query_explain: Schema.Boolean.annotate({
+          description:
+            "Whether the Management API supports a query-explain operation. SQL EXPLAIN through the Warehouse connection is independent of this flag.",
+        }),
         table_layout_read: Schema.Boolean,
         table_layout_update: Schema.Boolean,
         replication_add: Schema.Boolean,
         replication_remove: Schema.Boolean,
         table_resync: Schema.Boolean,
+        replication_restart: Schema.Boolean,
       }).annotate({
         description:
           "Complete operations supported by this API, not caller authorization. Each operation still requires its feature, entitlement and project permission checks.",
       }),
     }),
   }),
+});
+export const V2GetWarehouseStorageStatsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  since: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^[1-9]\\d*(s|m|h|d)$", "u")).annotate({
+        expected: "a string matching the RegExp ^[1-9]\\d*(s|m|h|d)$",
+      }),
+    ),
+  ),
+  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  to: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  attributes: Schema.optionalKey(Schema.String),
+  interval: Schema.optionalKey(Schema.Literals(["1m", "5m", "10m", "30m", "1h", "1d"])),
+});
+export const V2GetWarehouseStorageStatsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("warehouse_metric").annotate({ description: "Resource type." }),
+      id: Schema.Union([
+        Schema.Literals([
+          "maintenance_request_rate",
+          "maintenance_pause_active",
+          "maintenance_pause_duration_mean",
+          "maintenance_run_rate",
+          "maintenance_results_available",
+          "maintenance_merge_adjacent_files_created_rate",
+          "maintenance_rewrite_data_files_created_rate",
+          "maintenance_expired_snapshots_rate",
+          "maintenance_cleaned_up_files_rate",
+          "inline_flush_rows_rate",
+          "inline_flush_rows_mean",
+          "inline_flush_duration_mean",
+          "table_active_data_files_mean",
+          "table_active_data_bytes_mean",
+          "table_active_data_file_avg_size_bytes_mean",
+          "table_small_file_ratio_mean",
+          "table_active_delete_files_mean",
+          "table_active_delete_bytes_mean",
+          "table_deleted_row_ratio_mean",
+          "table_inlined_data_bytes",
+          "catalog_active_data_files",
+          "catalog_snapshots",
+          "catalog_oldest_snapshot_age",
+          "catalog_deletion_backlog_files",
+          "catalog_deletion_backlog_bytes",
+          "catalog_oldest_deletion_age",
+        ]),
+        OpenString,
+      ]),
+      attributes: Schema.Struct({
+        project_ref: Schema.String,
+        definition: Schema.String,
+        effective: Schema.Struct({
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          rate_window_seconds: Schema.Number.check(
+            Schema.isFinite().annotate({ expected: "a finite number" }),
+          ),
+        }),
+        scrape_interval_seconds: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        availability: Schema.Union([
+          Schema.Literals([
+            "ok",
+            "partial",
+            "stale",
+            "no_data",
+            "insufficient_data",
+            "not_provisioned",
+            "disabled",
+            "unavailable",
+          ]),
+          OpenString,
+        ]),
+        last_sample_at: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "Latest scraped sample timestamp in Unix seconds; not the query evaluation timestamp or proof of a successful recent health observation.",
+          }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          Schema.Null,
+        ]),
+        series: Schema.Array(
+          Schema.Struct({
+            labels: Schema.Record(Schema.String, Schema.String),
+            points: Schema.Array(
+              Schema.Struct({
+                timestamp: Schema.Number.check(
+                  Schema.isFinite().annotate({ expected: "a finite number" }),
+                ),
+                value: Schema.Union([
+                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                  Schema.Null,
+                ]),
+              }),
+            ),
+            coverage: Schema.Struct({
+              returned_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+              expected_points: Schema.Number.check(
+                Schema.isFinite().annotate({ expected: "a finite number" }),
+              ),
+            }).annotate({
+              description: "Grid point coverage, not proof that every worker was scraped.",
+            }),
+          }),
+        ),
+        metric: Schema.Union([
+          Schema.Literals([
+            "maintenance_request_rate",
+            "maintenance_pause_active",
+            "maintenance_pause_duration_mean",
+            "maintenance_run_rate",
+            "maintenance_results_available",
+            "maintenance_merge_adjacent_files_created_rate",
+            "maintenance_rewrite_data_files_created_rate",
+            "maintenance_expired_snapshots_rate",
+            "maintenance_cleaned_up_files_rate",
+            "inline_flush_rows_rate",
+            "inline_flush_rows_mean",
+            "inline_flush_duration_mean",
+            "table_active_data_files_mean",
+            "table_active_data_bytes_mean",
+            "table_active_data_file_avg_size_bytes_mean",
+            "table_small_file_ratio_mean",
+            "table_active_delete_files_mean",
+            "table_active_delete_bytes_mean",
+            "table_deleted_row_ratio_mean",
+            "table_inlined_data_bytes",
+            "catalog_active_data_files",
+            "catalog_snapshots",
+            "catalog_oldest_snapshot_age",
+            "catalog_deletion_backlog_files",
+            "catalog_deletion_backlog_bytes",
+            "catalog_oldest_deletion_age",
+          ]),
+          OpenString,
+        ]),
+        unit: Schema.Union([
+          Schema.Literals([
+            "per_second",
+            "boolean",
+            "seconds",
+            "rows",
+            "files",
+            "bytes",
+            "ratio",
+            "snapshots",
+          ]),
+          OpenString,
+        ]),
+        aggregation: Schema.Union([Schema.Literals(["rate", "max", "mean"]), OpenString]),
+        requested: Schema.Struct({
+          metric: Schema.Union([
+            Schema.Literals([
+              "maintenance_request_rate",
+              "maintenance_pause_active",
+              "maintenance_pause_duration_mean",
+              "maintenance_run_rate",
+              "maintenance_results_available",
+              "maintenance_merge_adjacent_files_created_rate",
+              "maintenance_rewrite_data_files_created_rate",
+              "maintenance_expired_snapshots_rate",
+              "maintenance_cleaned_up_files_rate",
+              "inline_flush_rows_rate",
+              "inline_flush_rows_mean",
+              "inline_flush_duration_mean",
+              "table_active_data_files_mean",
+              "table_active_data_bytes_mean",
+              "table_active_data_file_avg_size_bytes_mean",
+              "table_small_file_ratio_mean",
+              "table_active_delete_files_mean",
+              "table_active_delete_bytes_mean",
+              "table_deleted_row_ratio_mean",
+              "table_inlined_data_bytes",
+              "catalog_active_data_files",
+              "catalog_snapshots",
+              "catalog_oldest_snapshot_age",
+              "catalog_deletion_backlog_files",
+              "catalog_deletion_backlog_bytes",
+              "catalog_oldest_deletion_age",
+            ]),
+            OpenString,
+          ]),
+          start: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          end: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          step: Schema.optionalKey(
+            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ),
+        }),
+        observation_freshness: Schema.optionalKey(
+          Schema.Literal("unknown").annotate({
+            description:
+              "Present for sampled ETL health: successful source-observation freshness is unknown. last_sample_at reports scrape receipt only, not a successful catalog or table sample.",
+          }),
+        ),
+      }),
+    }),
+  ),
 });
 export const V2GetWarehouseTableInput = Schema.Struct({
   ref: Schema.String.check(
@@ -20230,6 +20660,36 @@ export const V2RemoveWarehouseReplicationOutput = Schema.Struct({
     }),
   }),
 });
+export const V2RestartWarehouseReplicationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2RestartWarehouseReplicationOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("warehouse_replication_restart").annotate({
+      description: "Resource type.",
+    }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      pipeline_id: Schema.String,
+      action: Schema.Union([Schema.Literals(["start", "restart"]), OpenString]),
+      application_status: Schema.Literal("accepted").annotate({
+        description:
+          "The runtime request was accepted. This does not establish resumed replication or completed initial copies.",
+      }),
+      pipeline_status_before: Schema.String,
+    }),
+  }),
+});
 export const V2ResyncWarehouseReplicationInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -20500,6 +20960,11 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
                   Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
                 ),
               ),
+              extension_name: Schema.optionalKey(Schema.String),
+              installed_version: Schema.optionalKey(Schema.String),
+              default_version: Schema.optionalKey(Schema.String),
+              foreign_key: Schema.optionalKey(Schema.String),
+              arguments: Schema.optionalKey(Schema.String),
             }),
           ),
           cache_key: Schema.String,
@@ -21210,7 +21675,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
           Schema.Null,
         ]).annotate({
           description:
-            "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+            'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
         }),
         partition_by: Schema.optionalKey(
           Schema.Union([
@@ -21247,7 +21712,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
               }),
             ).annotate({
               description:
-                "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+                'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
             }),
             Schema.Null,
           ]),
@@ -21294,7 +21759,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
             Schema.Null,
           ]).annotate({
             description:
-              "Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector.",
+              'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
           }),
         ),
         partition_by: Schema.Union([
@@ -21329,7 +21794,7 @@ export const V2UpdateWarehouseTableLayoutInput = Schema.Struct({
             }),
           ).annotate({
             description:
-              "Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys.",
+              'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
           }),
           Schema.Null,
         ]),
@@ -21718,9 +22183,11 @@ export const openApiOperationIdMap = {
   "v2-get-project-config": "v2GetProjectConfig",
   "v2-get-warehouse-capacity": "v2GetWarehouseCapacity",
   "v2-get-warehouse-connection": "v2GetWarehouseConnection",
+  "v2-get-warehouse-ingestion-stats": "v2GetWarehouseIngestionStats",
   "v2-get-warehouse-query-stats": "v2GetWarehouseQueryStats",
   "v2-get-warehouse-setup": "v2GetWarehouseSetup",
   "v2-get-warehouse-status": "v2GetWarehouseStatus",
+  "v2-get-warehouse-storage-stats": "v2GetWarehouseStorageStats",
   "v2-get-warehouse-table": "v2GetWarehouseTable",
   "v2-get-warehouse-table-layout": "v2GetWarehouseTableLayout",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
@@ -21763,6 +22230,7 @@ export const openApiOperationIdMap = {
   "v2-projects-ref-webhooks-endpoints-post": "v2ProjectsRefWebhooksEndpointsPost",
   "v2-remove-organization-members": "v2RemoveOrganizationMembers",
   "v2-remove-warehouse-replication": "v2RemoveWarehouseReplication",
+  "v2-restart-warehouse-replication": "v2RestartWarehouseReplication",
   "v2-resync-warehouse-replication": "v2ResyncWarehouseReplication",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
@@ -24987,6 +25455,20 @@ export const operationDefinitions = {
     inputSchema: V2GetWarehouseConnectionInput,
     outputSchema: V2GetWarehouseConnectionOutput,
   },
+  v2GetWarehouseIngestionStats: {
+    id: "v2GetWarehouseIngestionStats",
+    description:
+      "Returns DuckLake ingestion throughput and WAL lag from the authorized pipelines and their independently resolved ETL regions. Select from six measurements: events received/processed per second, bytes received/processed per second, replication WAL lag and receive WAL lag. All six are selected by default. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and worker, replication-path or event-type dimensions are retained. WAL lag is bytes; negative sentinels become null. Processed throughput acknowledges destination acceptance, not guaranteed durability. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Maintenance, inline-flush and sampled storage-health measurements are available from storage-stats.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/ingestion-stats",
+    pathParams: ["ref"],
+    queryParams: ["since", "from", "to", "attributes", "interval"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseIngestionStatsInput,
+    outputSchema: V2GetWarehouseIngestionStatsOutput,
+  },
   v2GetWarehouseQueryStats: {
     id: "v2GetWarehouseQueryStats",
     description:
@@ -25018,7 +25500,7 @@ export const operationDefinitions = {
   v2GetWarehouseStatus: {
     id: "v2GetWarehouseStatus",
     description:
-      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Returns provisioning, configured compute, replication, cleanup lifecycle and supported capabilities, including when individual dependencies are unavailable. Enabled Warehouse state is independent of the selected table count. Readiness is inferred from configuration and replication; query connectivity is not checked. Does not inspect the FDW. Observation timestamps are retrieval times, separate from table sync lag, pipeline apply lag and feedback age. Read access remains available without a replication entitlement; mutation endpoints enforce their own entitlements and permissions. Runtime diagnostics classify current failures. Table errors and progress are explicitly current, last-known or unavailable; they do not establish completion of a particular restart or resync. Capabilities describe Management API operations: workload_metrics includes query-stats and capacity; query_explain does not describe SQL EXPLAIN through the Warehouse connection.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/status",
     pathParams: ["ref"],
@@ -25028,6 +25510,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetWarehouseStatusInput,
     outputSchema: V2GetWarehouseStatusOutput,
+  },
+  v2GetWarehouseStorageStats: {
+    id: "v2GetWarehouseStorageStats",
+    description:
+      "Returns up to eight DuckLake maintenance, inline-flush or sampled storage-health measurements from the authorized pipelines and their independently resolved ETL regions. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and allowed operation, outcome, table or controller-process dimensions are retained. Table summary means are observations across tables and time, not current inventories. Sampled health has unknown observation freshness: last_sample_at is scrape receipt, not a successful recent health sample. Catalog-wide metrics require the collector exclusive-ownership gate; shared catalogs remain unavailable. Maintenance pause outcomes differ from run outcomes, and result availability is per controller process without global latest-run ordering. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Throughput and WAL lag are available from ingestion-stats.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/warehouse/storage-stats",
+    pathParams: ["ref"],
+    queryParams: ["since", "from", "to", "attributes", "interval"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetWarehouseStorageStatsInput,
+    outputSchema: V2GetWarehouseStorageStatsOutput,
   },
   v2GetWarehouseTable: {
     id: "v2GetWarehouseTable",
@@ -25519,6 +26015,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2RemoveWarehouseReplicationInput,
     outputSchema: V2RemoveWarehouseReplicationOutput,
+  },
+  v2RestartWarehouseReplication: {
+    id: "v2RestartWarehouseReplication",
+    description:
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/warehouse/replication/restart",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2RestartWarehouseReplicationInput,
+    outputSchema: V2RestartWarehouseReplicationOutput,
   },
   v2ResyncWarehouseReplication: {
     id: "v2ResyncWarehouseReplication",

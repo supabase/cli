@@ -337,6 +337,10 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     fga: [["organization_projects_read"]],
     oauthScope: "projects:read",
   },
+  "v2-restart-warehouse-replication": {
+    fga: [["project_admin_write", "database_write"]],
+    oauthScope: "database:write",
+  },
   "v2-add-warehouse-replication": {
     fga: [["project_admin_write", "database_write"]],
     oauthScope: "database:write",
@@ -350,6 +354,8 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "database:write",
   },
   "v2-get-warehouse-capacity": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-ingestion-stats": { fga: [["database_read"]], oauthScope: "database:read" },
+  "v2-get-warehouse-storage-stats": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-get-warehouse-query-stats": { fga: [["database_read"]], oauthScope: "database:read" },
   "v2-disable-warehouse": {
     fga: [["project_admin_write", "database_write"]],

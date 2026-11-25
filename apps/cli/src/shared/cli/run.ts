@@ -12,6 +12,7 @@ import {
   Path,
   PlatformError,
   Predicate,
+  Ref,
   Runtime,
   Scope,
   Stdio,
@@ -72,6 +73,7 @@ import {
   type RemoteArgvLeaf,
 } from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
+import { TerminalResponse } from "./terminal-response.service.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
@@ -811,7 +813,20 @@ export const runCli = Effect.fnUntraced(function* <
       const processControl = yield* ProcessControl;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
-      const exit = yield* program.pipe(Effect.exit);
+      const terminalResponse = yield* Ref.make<"pending" | "attempted" | "writer-defect">(
+        "pending",
+      );
+      const reportFailure = (cause: Cause.Cause<unknown>) =>
+        shouldReportFailure(exitCodeForFailure(cause))
+          ? ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)))
+          : Effect.void;
+      const exit = yield* program.pipe(
+        Effect.provideService(TerminalResponse, {
+          markAttempt: Ref.set(terminalResponse, "attempted"),
+          markWriterDefect: Ref.set(terminalResponse, "writer-defect"),
+        }),
+        Effect.exit,
+      );
       const afterSuccessHook = options.afterSuccess;
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
         code === 0
@@ -853,8 +868,13 @@ export const runCli = Effect.fnUntraced(function* <
         const exitCode = exitCodeForFailure(cause);
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
-        if (shouldReportFailure(exitCode)) {
-          yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
+        const response = yield* Ref.get(terminalResponse);
+        if (response === "pending") {
+          yield* reportFailure(cause);
+        } else if (response === "writer-defect" && shouldReportFailure(exitCode)) {
+          yield* Effect.suspend(() =>
+            output.raw("Failed to write command output.\n", "stderr"),
+          ).pipe(Effect.withSpan("cli.reportWriterDefect"), Effect.ignoreCause);
         }
         yield* afterSuccess(exitCode, true);
         return exitCode;
