@@ -10,7 +10,10 @@ usage: supabase migration new <migration name> [flags]
 stability: stable
 deprecated: false
 inherits_flags: global
-parameters: []
+parameters:
+  - name: migration name
+    location: positional
+    required: true
 examples:
   - id: basic-usage
     title: Basic usage

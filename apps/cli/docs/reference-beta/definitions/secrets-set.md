@@ -11,6 +11,10 @@ stability: stable
 deprecated: false
 inherits_flags: global
 parameters:
+  - name: NAME=VALUE
+    location: positional
+    required: true
+    variadic: true
   - name: --env-file
     location: flag
     type: string

@@ -11,6 +11,9 @@ stability: stable
 deprecated: false
 inherits_flags: global
 parameters:
+  - name: migration name
+    location: positional
+    required: false
   - name: --declarative
     location: flag
     type: boolean

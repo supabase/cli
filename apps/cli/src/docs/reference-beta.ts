@@ -83,7 +83,7 @@ function flagParameter(flag: DocsFlag): ReferenceParameter {
 
 /** Positionals as `docsArgumentUsage` renders them in the usage line: `<a>`, `[a]`, then `...` when variadic. */
 function positionalParameters(usage: string): ReadonlyArray<ReferenceParameter> {
-  return [...usage.matchAll(/([<[])([\w-]+)[>\]]( \.\.\.)?/g)]
+  return [...usage.matchAll(/([<[])([^<>[\]]+)[>\]]( \.\.\.)?/g)]
     .filter(([, , name]) => name !== "flags" && name !== "subcommand")
     .map(([, open, name, ellipsis]) => ({
       name: name ?? "",

@@ -11,6 +11,9 @@ stability: stable
 deprecated: false
 inherits_flags: global
 parameters:
+  - name: Notebook id
+    location: positional
+    required: false
   - name: --remote
     location: flag
     type: boolean | ref|branch

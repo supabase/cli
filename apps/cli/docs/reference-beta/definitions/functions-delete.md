@@ -11,6 +11,9 @@ stability: stable
 deprecated: false
 inherits_flags: global
 parameters:
+  - name: Function name
+    location: positional
+    required: true
   - name: --remote
     location: flag
     type: boolean | ref|branch

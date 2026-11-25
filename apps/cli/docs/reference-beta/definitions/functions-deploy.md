@@ -11,6 +11,10 @@ stability: stable
 deprecated: false
 inherits_flags: global
 parameters:
+  - name: Function name
+    location: positional
+    required: false
+    variadic: true
   - name: --import-map
     location: flag
     type: string
