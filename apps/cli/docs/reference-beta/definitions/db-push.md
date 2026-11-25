@@ -1,8 +1,7 @@
 ---
 id: db-push
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db push
 symbol: supabase db push
 summary: Push new migrations to a database

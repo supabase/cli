@@ -1,7 +1,7 @@
 ---
 id: logs-sources
 kind: command
-category: general
+category: General
 subcategory: logs
 title: logs sources
 symbol: supabase logs sources

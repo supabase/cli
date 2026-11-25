@@ -1,8 +1,7 @@
 ---
 id: inspect-db-collation-drift
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db collation-drift
 symbol: supabase inspect db collation-drift
 summary: Show indexes affected by collation version drift

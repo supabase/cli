@@ -1,7 +1,7 @@
 ---
 id: link
 kind: command
-category: general
+category: General
 title: link
 symbol: supabase link
 summary: Link to a hosted Supabase project

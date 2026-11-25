@@ -1,8 +1,7 @@
 ---
 id: test-new
 kind: command
-category: testing
-subcategory: test
+category: Testing
 title: test new
 symbol: supabase test new
 summary: Create a new test file

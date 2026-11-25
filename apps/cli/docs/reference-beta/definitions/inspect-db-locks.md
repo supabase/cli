@@ -1,8 +1,7 @@
 ---
 id: inspect-db-locks
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db locks
 symbol: supabase inspect db locks
 summary: Show exclusive locks

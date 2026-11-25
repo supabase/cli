@@ -1,8 +1,7 @@
 ---
 id: branches-update
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches update
 symbol: supabase branches update
 summary: Update a preview branch

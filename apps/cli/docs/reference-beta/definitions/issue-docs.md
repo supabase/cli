@@ -1,7 +1,7 @@
 ---
 id: issue-docs
 kind: command
-category: feedback
+category: Feedback and Support
 subcategory: issue
 title: issue docs
 symbol: supabase issue docs

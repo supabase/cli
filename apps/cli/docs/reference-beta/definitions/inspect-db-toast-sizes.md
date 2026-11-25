@@ -1,8 +1,7 @@
 ---
 id: inspect-db-toast-sizes
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db toast-sizes
 symbol: supabase inspect db toast-sizes
 summary: Show TOAST table sizes and dead chunk counts

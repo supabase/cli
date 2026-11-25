@@ -1,8 +1,7 @@
 ---
 id: inspect-db-replication-slots
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db replication-slots
 symbol: supabase inspect db replication-slots
 summary: Show replication slots

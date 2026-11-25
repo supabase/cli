@@ -1,8 +1,7 @@
 ---
 id: telemetry
 kind: command
-category: telemetry
-subcategory: telemetry
+category: Telemetry
 title: telemetry
 symbol: supabase telemetry
 summary: Manage CLI telemetry

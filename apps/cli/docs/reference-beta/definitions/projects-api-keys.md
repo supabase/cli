@@ -1,8 +1,7 @@
 ---
 id: projects-api-keys
 kind: command
-category: projects
-subcategory: projects
+category: Projects
 title: projects api-keys
 symbol: supabase projects api-keys
 summary: List API keys for a project

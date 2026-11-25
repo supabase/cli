@@ -1,8 +1,7 @@
 ---
 id: functions-deploy
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions deploy
 symbol: supabase functions deploy
 summary: Deploy Edge Functions to a project

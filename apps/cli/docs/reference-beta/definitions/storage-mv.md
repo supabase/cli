@@ -1,8 +1,7 @@
 ---
 id: storage-mv
 kind: command
-category: storage
-subcategory: storage
+category: Storage
 title: storage mv
 symbol: supabase storage mv
 summary: Move objects within a Storage bucket

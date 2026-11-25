@@ -1,8 +1,7 @@
 ---
 id: migration-repair
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration repair
 symbol: supabase migration repair
 summary: Repair the migration history

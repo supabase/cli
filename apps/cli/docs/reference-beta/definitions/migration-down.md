@@ -1,8 +1,7 @@
 ---
 id: migration-down
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration down
 symbol: supabase migration down
 summary: Revert the last applied migrations

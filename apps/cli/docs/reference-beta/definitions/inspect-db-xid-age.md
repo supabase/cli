@@ -1,8 +1,7 @@
 ---
 id: inspect-db-xid-age
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db xid-age
 symbol: supabase inspect db xid-age
 summary: Show XID age for user tables

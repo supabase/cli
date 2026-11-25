@@ -1,8 +1,7 @@
 ---
 id: domains-reverify
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains reverify
 symbol: supabase domains reverify
 summary: Re-verify the custom hostname config

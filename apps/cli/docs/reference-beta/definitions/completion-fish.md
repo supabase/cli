@@ -1,8 +1,7 @@
 ---
 id: completion-fish
 kind: command
-category: autocompletion-scripts
-subcategory: completion
+category: Autocompletion Scripts
 title: completion fish
 symbol: supabase completion fish
 summary: Generate the fish completion script

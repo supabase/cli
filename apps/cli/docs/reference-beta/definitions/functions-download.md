@@ -1,8 +1,7 @@
 ---
 id: functions-download
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions download
 symbol: supabase functions download
 summary: Download Edge Functions from a project

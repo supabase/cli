@@ -1,8 +1,7 @@
 ---
 id: ssl-enforcement-update
 kind: command
-category: ssl-enforcement
-subcategory: ssl-enforcement
+category: SSL Enforcement
 title: ssl-enforcement update
 symbol: supabase ssl-enforcement update
 summary: Update SSL enforcement configuration

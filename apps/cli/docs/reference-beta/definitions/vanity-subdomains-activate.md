@@ -1,8 +1,7 @@
 ---
 id: vanity-subdomains-activate
 kind: command
-category: vanity-subdomains
-subcategory: vanity-subdomains
+category: Vanity Subdomains
 title: vanity-subdomains activate
 symbol: supabase vanity-subdomains activate
 summary: Activate a vanity subdomain

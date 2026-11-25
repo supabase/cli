@@ -1,8 +1,7 @@
 ---
 id: migration-up
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration up
 symbol: supabase migration up
 summary: Apply pending migrations to a database

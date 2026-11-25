@@ -1,7 +1,7 @@
 ---
 id: status
 kind: command
-category: general
+category: General
 title: status
 symbol: supabase status
 summary: Show the local Supabase stack status

@@ -1,8 +1,7 @@
 ---
 id: projects-create
 kind: command
-category: projects
-subcategory: projects
+category: Projects
 title: projects create
 symbol: supabase projects create
 summary: Create a project

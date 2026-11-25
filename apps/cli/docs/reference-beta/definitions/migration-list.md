@@ -1,8 +1,7 @@
 ---
 id: migration-list
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration list
 symbol: supabase migration list
 summary: List local and applied migrations

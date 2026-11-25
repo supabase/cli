@@ -1,8 +1,7 @@
 ---
 id: domains
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains
 symbol: supabase domains
 summary: Manage custom domain names for Supabase projects

@@ -1,8 +1,7 @@
 ---
 id: migration-fetch
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration fetch
 symbol: supabase migration fetch
 summary: Fetch migration files from a database

@@ -1,8 +1,7 @@
 ---
 id: completion-powershell
 kind: command
-category: autocompletion-scripts
-subcategory: completion
+category: Autocompletion Scripts
 title: completion powershell
 symbol: supabase completion powershell
 summary: Generate the PowerShell completion script

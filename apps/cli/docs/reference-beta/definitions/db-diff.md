@@ -1,8 +1,7 @@
 ---
 id: db-diff
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db diff
 symbol: supabase db diff
 summary: Diff a database for schema changes

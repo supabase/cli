@@ -1,7 +1,7 @@
 ---
 id: feedback
 kind: command
-category: feedback
+category: Feedback and Support
 subcategory: feedback
 title: feedback
 symbol: supabase feedback

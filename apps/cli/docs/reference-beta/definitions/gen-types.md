@@ -1,8 +1,7 @@
 ---
 id: gen-types
 kind: command
-category: generate-types
-subcategory: gen
+category: Generate Types
 title: gen types
 symbol: supabase gen types
 summary: Generate types from Postgres schema

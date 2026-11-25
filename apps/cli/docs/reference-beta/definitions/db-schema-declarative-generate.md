@@ -1,8 +1,7 @@
 ---
 id: db-schema-declarative-generate
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db schema declarative generate
 symbol: supabase db schema declarative generate
 summary: Generate declarative schema from a database

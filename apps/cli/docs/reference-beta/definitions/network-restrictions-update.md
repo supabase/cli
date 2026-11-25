@@ -1,8 +1,7 @@
 ---
 id: network-restrictions-update
 kind: command
-category: network-restrictions
-subcategory: network-restrictions
+category: Network Restrictions
 title: network-restrictions update
 symbol: supabase network-restrictions update
 summary: Update network restrictions

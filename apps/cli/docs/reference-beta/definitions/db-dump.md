@@ -1,8 +1,7 @@
 ---
 id: db-dump
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db dump
 symbol: supabase db dump
 summary: Dump data or schemas from a database

@@ -1,8 +1,7 @@
 ---
 id: backups
 kind: command
-category: backups
-subcategory: backups
+category: Backups
 title: backups
 symbol: supabase backups
 summary: Manage physical backups

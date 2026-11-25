@@ -1,7 +1,7 @@
 ---
 id: unlink
 kind: command
-category: general
+category: General
 title: unlink
 symbol: supabase unlink
 summary: Unlink from the hosted Supabase project

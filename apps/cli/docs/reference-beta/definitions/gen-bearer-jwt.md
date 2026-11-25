@@ -1,8 +1,7 @@
 ---
 id: gen-bearer-jwt
 kind: command
-category: generate-types
-subcategory: gen
+category: Generate Types
 title: gen bearer-jwt
 symbol: supabase gen bearer-jwt
 summary: Generate a Bearer Auth JWT for the Data API

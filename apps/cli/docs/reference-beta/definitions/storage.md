@@ -1,8 +1,7 @@
 ---
 id: storage
 kind: command
-category: storage
-subcategory: storage
+category: Storage
 title: storage
 symbol: supabase storage
 summary: Manage Storage objects

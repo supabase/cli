@@ -1,8 +1,7 @@
 ---
 id: branches-list
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches list
 symbol: supabase branches list
 summary: List all preview branches

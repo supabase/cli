@@ -1,8 +1,7 @@
 ---
 id: orgs-list
 kind: command
-category: organizations
-subcategory: orgs
+category: Organizations
 title: orgs list
 symbol: supabase orgs list
 summary: List all organizations

@@ -1,8 +1,7 @@
 ---
 id: projects
 kind: command
-category: projects
-subcategory: projects
+category: Projects
 title: projects
 symbol: supabase projects
 summary: Manage projects

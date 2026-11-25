@@ -1,8 +1,7 @@
 ---
 id: sso-update
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso update
 symbol: supabase sso update
 summary: Update information about an SSO identity provider

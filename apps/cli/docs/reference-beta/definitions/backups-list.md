@@ -1,8 +1,7 @@
 ---
 id: backups-list
 kind: command
-category: backups
-subcategory: backups
+category: Backups
 title: backups list
 symbol: supabase backups list
 summary: List available physical backups

@@ -1,7 +1,7 @@
 ---
 id: feedback-add
 kind: command
-category: feedback
+category: Feedback and Support
 subcategory: feedback
 title: feedback add
 symbol: supabase feedback add

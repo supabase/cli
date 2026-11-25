@@ -1,8 +1,7 @@
 ---
 id: inspect-db-calls
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db calls
 symbol: supabase inspect db calls
 summary: Show queries by call count

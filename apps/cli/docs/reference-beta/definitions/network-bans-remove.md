@@ -1,8 +1,7 @@
 ---
 id: network-bans-remove
 kind: command
-category: network-bans
-subcategory: network-bans
+category: Network Bans
 title: network-bans remove
 symbol: supabase network-bans remove
 summary: Remove a network ban

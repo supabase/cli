@@ -1,8 +1,7 @@
 ---
 id: functions-list
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions list
 symbol: supabase functions list
 summary: List deployed Edge Functions

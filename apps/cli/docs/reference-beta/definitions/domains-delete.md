@@ -1,8 +1,7 @@
 ---
 id: domains-delete
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains delete
 symbol: supabase domains delete
 summary: Delete the custom hostname config

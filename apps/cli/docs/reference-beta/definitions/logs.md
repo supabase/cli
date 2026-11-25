@@ -1,7 +1,7 @@
 ---
 id: logs
 kind: command
-category: general
+category: General
 subcategory: logs
 title: logs
 symbol: supabase logs

@@ -1,8 +1,7 @@
 ---
 id: db
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db
 symbol: supabase db
 summary: Manage databases

@@ -1,8 +1,7 @@
 ---
 id: db-reset
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db reset
 symbol: supabase db reset
 summary: Reset a database to the current migrations

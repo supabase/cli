@@ -1,8 +1,7 @@
 ---
 id: inspect-db-index-stats
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db index-stats
 symbol: supabase inspect db index-stats
 summary: Show index stats

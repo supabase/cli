@@ -1,8 +1,7 @@
 ---
 id: inspect-db-long-running-queries
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db long-running-queries
 symbol: supabase inspect db long-running-queries
 summary: Show long-running queries

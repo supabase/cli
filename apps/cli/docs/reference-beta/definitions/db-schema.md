@@ -1,8 +1,7 @@
 ---
 id: db-schema
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db schema
 symbol: supabase db schema
 summary: Manage database schema

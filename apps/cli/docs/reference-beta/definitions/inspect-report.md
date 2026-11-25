@@ -1,8 +1,7 @@
 ---
 id: inspect-report
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect report
 symbol: supabase inspect report
 summary: Export all inspect results as CSV files

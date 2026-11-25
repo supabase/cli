@@ -1,8 +1,7 @@
 ---
 id: telemetry-enable
 kind: command
-category: telemetry
-subcategory: telemetry
+category: Telemetry
 title: telemetry enable
 symbol: supabase telemetry enable
 summary: Enable CLI telemetry

@@ -1,8 +1,7 @@
 ---
 id: encryption
 kind: command
-category: encryption
-subcategory: encryption
+category: Encryption
 title: encryption
 symbol: supabase encryption
 summary: Manage encryption keys

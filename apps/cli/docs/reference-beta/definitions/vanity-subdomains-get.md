@@ -1,8 +1,7 @@
 ---
 id: vanity-subdomains-get
 kind: command
-category: vanity-subdomains
-subcategory: vanity-subdomains
+category: Vanity Subdomains
 title: vanity-subdomains get
 symbol: supabase vanity-subdomains get
 summary: Get the current vanity subdomain

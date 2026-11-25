@@ -1,8 +1,7 @@
 ---
 id: inspect-db-vacuum-stats
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db vacuum-stats
 symbol: supabase inspect db vacuum-stats
 summary: Show vacuum stats

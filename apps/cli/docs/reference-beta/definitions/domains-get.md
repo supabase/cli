@@ -1,8 +1,7 @@
 ---
 id: domains-get
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains get
 symbol: supabase domains get
 summary: Get the current custom hostname config

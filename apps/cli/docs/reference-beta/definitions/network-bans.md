@@ -1,8 +1,7 @@
 ---
 id: network-bans
 kind: command
-category: network-bans
-subcategory: network-bans
+category: Network Bans
 title: network-bans
 symbol: supabase network-bans
 summary: Manage network bans

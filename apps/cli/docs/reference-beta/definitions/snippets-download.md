@@ -1,8 +1,7 @@
 ---
 id: snippets-download
 kind: command
-category: sql-snippets
-subcategory: snippets
+category: SQL Snippets
 title: snippets download
 symbol: supabase snippets download
 summary: Download a SQL snippet

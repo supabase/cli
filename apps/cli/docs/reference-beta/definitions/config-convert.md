@@ -1,8 +1,7 @@
 ---
 id: config-convert
 kind: command
-category: config
-subcategory: config
+category: Config
 title: config convert
 symbol: supabase config convert
 summary: Convert config.toml to config.jsonc

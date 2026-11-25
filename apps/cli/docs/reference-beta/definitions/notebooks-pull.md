@@ -1,8 +1,7 @@
 ---
 id: notebooks-pull
 kind: command
-category: notebooks
-subcategory: notebooks
+category: Notebooks
 title: notebooks pull
 symbol: supabase notebooks pull
 summary: Pull notebooks from a project

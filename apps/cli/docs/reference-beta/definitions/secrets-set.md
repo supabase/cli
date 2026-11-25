@@ -1,8 +1,7 @@
 ---
 id: secrets-set
 kind: command
-category: secrets
-subcategory: secrets
+category: Secrets
 title: secrets set
 symbol: supabase secrets set
 summary: Set secrets on the linked project

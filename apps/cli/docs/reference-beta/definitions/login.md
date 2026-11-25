@@ -1,7 +1,7 @@
 ---
 id: login
 kind: command
-category: general
+category: General
 title: login
 symbol: supabase login
 summary: Log in to your Supabase account

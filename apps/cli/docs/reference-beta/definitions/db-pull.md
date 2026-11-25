@@ -1,8 +1,7 @@
 ---
 id: db-pull
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db pull
 symbol: supabase db pull
 summary: Pull schema from a database

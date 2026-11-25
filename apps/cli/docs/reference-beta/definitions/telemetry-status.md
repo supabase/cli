@@ -1,8 +1,7 @@
 ---
 id: telemetry-status
 kind: command
-category: telemetry
-subcategory: telemetry
+category: Telemetry
 title: telemetry status
 symbol: supabase telemetry status
 summary: Show CLI telemetry status

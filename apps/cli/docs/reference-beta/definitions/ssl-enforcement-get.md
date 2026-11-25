@@ -1,8 +1,7 @@
 ---
 id: ssl-enforcement-get
 kind: command
-category: ssl-enforcement
-subcategory: ssl-enforcement
+category: SSL Enforcement
 title: ssl-enforcement get
 symbol: supabase ssl-enforcement get
 summary: Get SSL enforcement configuration

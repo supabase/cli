@@ -1,8 +1,7 @@
 ---
 id: completion-bash
 kind: command
-category: autocompletion-scripts
-subcategory: completion
+category: Autocompletion Scripts
 title: completion bash
 symbol: supabase completion bash
 summary: Generate the Bash completion script

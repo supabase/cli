@@ -1,8 +1,7 @@
 ---
 id: notebooks-push
 kind: command
-category: notebooks
-subcategory: notebooks
+category: Notebooks
 title: notebooks push
 symbol: supabase notebooks push
 summary: Push local notebooks to a project

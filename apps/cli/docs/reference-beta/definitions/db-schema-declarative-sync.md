@@ -1,8 +1,7 @@
 ---
 id: db-schema-declarative-sync
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db schema declarative sync
 symbol: supabase db schema declarative sync
 summary: Generate a migration from declarative schema

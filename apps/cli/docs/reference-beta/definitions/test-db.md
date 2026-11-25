@@ -1,8 +1,7 @@
 ---
 id: test-db
 kind: command
-category: testing
-subcategory: test
+category: Testing
 title: test db
 symbol: supabase test db
 summary: Run database tests with pgTAP

@@ -1,8 +1,7 @@
 ---
 id: inspect-db
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db
 symbol: supabase inspect db
 summary: Inspect database

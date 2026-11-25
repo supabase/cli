@@ -1,8 +1,7 @@
 ---
 id: branches-delete
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches delete
 symbol: supabase branches delete
 summary: Delete a preview branch

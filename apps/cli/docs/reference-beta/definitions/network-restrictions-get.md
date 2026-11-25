@@ -1,8 +1,7 @@
 ---
 id: network-restrictions-get
 kind: command
-category: network-restrictions
-subcategory: network-restrictions
+category: Network Restrictions
 title: network-restrictions get
 symbol: supabase network-restrictions get
 summary: Get the current network restrictions

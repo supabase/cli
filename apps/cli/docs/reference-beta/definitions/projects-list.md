@@ -1,8 +1,7 @@
 ---
 id: projects-list
 kind: command
-category: projects
-subcategory: projects
+category: Projects
 title: projects list
 symbol: supabase projects list
 summary: List all projects

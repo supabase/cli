@@ -1,8 +1,7 @@
 ---
 id: storage-rm
 kind: command
-category: storage
-subcategory: storage
+category: Storage
 title: storage rm
 symbol: supabase storage rm
 summary: Remove objects from Storage

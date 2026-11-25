@@ -1,8 +1,7 @@
 ---
 id: inspect
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect
 symbol: supabase inspect
 summary: Inspect project tools

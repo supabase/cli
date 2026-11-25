@@ -1,8 +1,7 @@
 ---
 id: test
 kind: command
-category: testing
-subcategory: test
+category: Testing
 title: test
 symbol: supabase test
 summary: Run database tests

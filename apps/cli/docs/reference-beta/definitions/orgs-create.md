@@ -1,8 +1,7 @@
 ---
 id: orgs-create
 kind: command
-category: organizations
-subcategory: orgs
+category: Organizations
 title: orgs create
 symbol: supabase orgs create
 summary: Create an organization

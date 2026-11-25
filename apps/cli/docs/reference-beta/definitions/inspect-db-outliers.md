@@ -1,8 +1,7 @@
 ---
 id: inspect-db-outliers
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db outliers
 symbol: supabase inspect db outliers
 summary: Show query outliers by time

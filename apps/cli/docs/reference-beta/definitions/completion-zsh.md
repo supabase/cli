@@ -1,8 +1,7 @@
 ---
 id: completion-zsh
 kind: command
-category: autocompletion-scripts
-subcategory: completion
+category: Autocompletion Scripts
 title: completion zsh
 symbol: supabase completion zsh
 summary: Generate the Zsh completion script

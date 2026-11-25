@@ -1,8 +1,7 @@
 ---
 id: branches-get
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches get
 symbol: supabase branches get
 summary: Show details of a preview branch

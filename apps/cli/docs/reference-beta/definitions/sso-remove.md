@@ -1,8 +1,7 @@
 ---
 id: sso-remove
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso remove
 symbol: supabase sso remove
 summary: Remove an existing SSO identity provider

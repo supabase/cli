@@ -1,8 +1,7 @@
 ---
 id: functions-delete
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions delete
 symbol: supabase functions delete
 summary: Delete an Edge Function from a project

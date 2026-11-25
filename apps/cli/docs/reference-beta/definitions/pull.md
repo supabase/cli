@@ -1,7 +1,7 @@
 ---
 id: pull
 kind: command
-category: general
+category: General
 title: pull
 symbol: supabase pull
 summary: Pull remote project state locally

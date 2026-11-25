@@ -1,8 +1,7 @@
 ---
 id: secrets-list
 kind: command
-category: secrets
-subcategory: secrets
+category: Secrets
 title: secrets list
 symbol: supabase secrets list
 summary: List secrets on the linked project

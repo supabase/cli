@@ -1,8 +1,7 @@
 ---
 id: notebooks
 kind: command
-category: notebooks
-subcategory: notebooks
+category: Notebooks
 title: notebooks
 symbol: supabase notebooks
 summary: Manage notebooks

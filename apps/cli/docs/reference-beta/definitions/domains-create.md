@@ -1,8 +1,7 @@
 ---
 id: domains-create
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains create
 symbol: supabase domains create
 summary: Create a custom hostname

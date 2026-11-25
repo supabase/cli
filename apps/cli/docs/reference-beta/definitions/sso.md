@@ -1,8 +1,7 @@
 ---
 id: sso
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso
 symbol: supabase sso
 summary: Manage Single Sign-On (SSO) authentication

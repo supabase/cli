@@ -1,8 +1,7 @@
 ---
 id: postgres-config-update
 kind: command
-category: postgres-config
-subcategory: postgres-config
+category: Postgres Config
 title: postgres-config update
 symbol: supabase postgres-config update
 summary: Update Postgres database config

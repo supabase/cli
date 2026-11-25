@@ -1,7 +1,7 @@
 ---
 id: stop
 kind: command
-category: general
+category: General
 title: stop
 symbol: supabase stop
 summary: Stop the local Supabase stack

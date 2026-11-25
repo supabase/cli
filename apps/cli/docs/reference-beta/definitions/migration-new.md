@@ -1,8 +1,7 @@
 ---
 id: migration-new
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration new
 symbol: supabase migration new
 summary: Create an empty migration file

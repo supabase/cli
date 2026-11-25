@@ -1,7 +1,7 @@
 ---
 id: whoami
 kind: command
-category: general
+category: General
 title: whoami
 symbol: supabase whoami
 summary: Show the current user

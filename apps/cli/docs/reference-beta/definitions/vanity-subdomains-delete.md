@@ -1,8 +1,7 @@
 ---
 id: vanity-subdomains-delete
 kind: command
-category: vanity-subdomains
-subcategory: vanity-subdomains
+category: Vanity Subdomains
 title: vanity-subdomains delete
 symbol: supabase vanity-subdomains delete
 summary: Delete the vanity subdomain

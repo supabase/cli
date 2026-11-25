@@ -1,8 +1,7 @@
 ---
 id: functions-new
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions new
 symbol: supabase functions new
 summary: Create an Edge Function locally

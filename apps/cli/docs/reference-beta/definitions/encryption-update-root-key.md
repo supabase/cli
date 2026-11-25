@@ -1,8 +1,7 @@
 ---
 id: encryption-update-root-key
 kind: command
-category: encryption
-subcategory: encryption
+category: Encryption
 title: encryption update-root-key
 symbol: supabase encryption update-root-key
 summary: Update the root encryption key

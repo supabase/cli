@@ -1,7 +1,7 @@
 ---
 id: services
 kind: command
-category: services
+category: Services
 title: services
 symbol: supabase services
 summary: Show Supabase service versions

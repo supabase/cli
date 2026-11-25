@@ -1,8 +1,7 @@
 ---
 id: backups-restore
 kind: command
-category: backups
-subcategory: backups
+category: Backups
 title: backups restore
 symbol: supabase backups restore
 summary: Restore a project to a point in time

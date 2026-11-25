@@ -1,8 +1,7 @@
 ---
 id: secrets-unset
 kind: command
-category: secrets
-subcategory: secrets
+category: Secrets
 title: secrets unset
 symbol: supabase secrets unset
 summary: Unset secrets on the linked project

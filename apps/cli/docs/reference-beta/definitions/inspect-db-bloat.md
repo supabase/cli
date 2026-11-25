@@ -1,8 +1,7 @@
 ---
 id: inspect-db-bloat
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db bloat
 symbol: supabase inspect db bloat
 summary: Show relation bloat

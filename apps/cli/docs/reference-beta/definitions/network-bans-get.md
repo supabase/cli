@@ -1,8 +1,7 @@
 ---
 id: network-bans-get
 kind: command
-category: network-bans
-subcategory: network-bans
+category: Network Bans
 title: network-bans get
 symbol: supabase network-bans get
 summary: Get the current network bans

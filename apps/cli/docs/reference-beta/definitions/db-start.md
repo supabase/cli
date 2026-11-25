@@ -1,8 +1,7 @@
 ---
 id: db-start
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db start
 symbol: supabase db start
 summary: Start the local Postgres database

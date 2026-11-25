@@ -1,8 +1,7 @@
 ---
 id: sso-list
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso list
 symbol: supabase sso list
 summary: List all SSO identity providers

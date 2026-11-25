@@ -1,8 +1,7 @@
 ---
 id: config-pull
 kind: command
-category: config
-subcategory: config
+category: Config
 title: config pull
 symbol: supabase config pull
 summary: Pull remote config into the project config file

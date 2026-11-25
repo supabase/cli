@@ -1,8 +1,7 @@
 ---
 id: storage-cp
 kind: command
-category: storage
-subcategory: storage
+category: Storage
 title: storage cp
 symbol: supabase storage cp
 summary: Copy files between local disk and Storage

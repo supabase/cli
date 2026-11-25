@@ -1,8 +1,7 @@
 ---
 id: sso-info
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso info
 symbol: supabase sso info
 summary: Returns the SAML SSO settings required for the identity provider

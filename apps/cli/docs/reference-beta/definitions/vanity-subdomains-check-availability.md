@@ -1,8 +1,7 @@
 ---
 id: vanity-subdomains-check-availability
 kind: command
-category: vanity-subdomains
-subcategory: vanity-subdomains
+category: Vanity Subdomains
 title: vanity-subdomains check-availability
 symbol: supabase vanity-subdomains check-availability
 summary: Check subdomain availability

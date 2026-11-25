@@ -1,8 +1,7 @@
 ---
 id: functions
 kind: command
-category: edge-functions
-subcategory: functions
+category: Edge Functions
 title: functions
 symbol: supabase functions
 summary: Manage Edge Functions

@@ -1,8 +1,7 @@
 ---
 id: storage-ls
 kind: command
-category: storage
-subcategory: storage
+category: Storage
 title: storage ls
 symbol: supabase storage ls
 summary: List objects by path prefix

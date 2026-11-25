@@ -1,7 +1,7 @@
 ---
 id: init
 kind: command
-category: general
+category: General
 title: init
 symbol: supabase init
 summary: Set up a project for local development

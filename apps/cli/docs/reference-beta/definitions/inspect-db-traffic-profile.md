@@ -1,8 +1,7 @@
 ---
 id: inspect-db-traffic-profile
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db traffic-profile
 symbol: supabase inspect db traffic-profile
 summary: Show traffic profile

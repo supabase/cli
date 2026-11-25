@@ -1,8 +1,7 @@
 ---
 id: inspect-db-role-stats
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db role-stats
 symbol: supabase inspect db role-stats
 summary: Show role stats

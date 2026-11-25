@@ -1,8 +1,7 @@
 ---
 id: db-advisors
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db advisors
 symbol: supabase db advisors
 summary: Check a database for security and performance issues

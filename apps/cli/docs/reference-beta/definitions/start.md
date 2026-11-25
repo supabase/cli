@@ -1,7 +1,7 @@
 ---
 id: start
 kind: command
-category: general
+category: General
 title: start
 symbol: supabase start
 summary: Start the local Supabase stack

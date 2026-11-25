@@ -1,8 +1,7 @@
 ---
 id: postgres-config-get
 kind: command
-category: postgres-config
-subcategory: postgres-config
+category: Postgres Config
 title: postgres-config get
 symbol: supabase postgres-config get
 summary: Get Postgres database config

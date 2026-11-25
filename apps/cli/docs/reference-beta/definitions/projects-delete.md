@@ -1,8 +1,7 @@
 ---
 id: projects-delete
 kind: command
-category: projects
-subcategory: projects
+category: Projects
 title: projects delete
 symbol: supabase projects delete
 summary: Delete a project

@@ -1,8 +1,7 @@
 ---
 id: snippets-list
 kind: command
-category: sql-snippets
-subcategory: snippets
+category: SQL Snippets
 title: snippets list
 symbol: supabase snippets list
 summary: List all SQL snippets

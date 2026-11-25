@@ -1,8 +1,7 @@
 ---
 id: sso-show
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso show
 symbol: supabase sso show
 summary: Show information about an SSO identity provider

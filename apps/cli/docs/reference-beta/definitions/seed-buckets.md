@@ -1,8 +1,7 @@
 ---
 id: seed-buckets
 kind: command
-category: seed
-subcategory: seed
+category: Seed
 title: seed buckets
 symbol: supabase seed buckets
 summary: Seed Storage buckets from the project config file

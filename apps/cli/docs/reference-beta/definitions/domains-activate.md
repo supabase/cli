@@ -1,8 +1,7 @@
 ---
 id: domains-activate
 kind: command
-category: custom-domains
-subcategory: domains
+category: Custom Domains
 title: domains activate
 symbol: supabase domains activate
 summary: Activate the custom hostname for a project

@@ -1,8 +1,7 @@
 ---
 id: config-diff
 kind: command
-category: config
-subcategory: config
+category: Config
 title: config diff
 symbol: supabase config diff
 summary: Diff local config against a project

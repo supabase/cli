@@ -1,8 +1,7 @@
 ---
 id: branches-pause
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches pause
 symbol: supabase branches pause
 summary: Pause a preview branch

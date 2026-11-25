@@ -1,8 +1,7 @@
 ---
 id: migration-squash
 kind: command
-category: migrations
-subcategory: migration
+category: Migrations
 title: migration squash
 symbol: supabase migration squash
 summary: Squash migrations into a single file

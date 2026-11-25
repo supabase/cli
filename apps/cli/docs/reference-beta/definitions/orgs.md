@@ -1,8 +1,7 @@
 ---
 id: orgs
 kind: command
-category: organizations
-subcategory: orgs
+category: Organizations
 title: orgs
 symbol: supabase orgs
 summary: Manage organizations

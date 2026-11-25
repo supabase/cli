@@ -1,8 +1,7 @@
 ---
 id: inspect-db-db-stats
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db db-stats
 symbol: supabase inspect db db-stats
 summary: Show database stats

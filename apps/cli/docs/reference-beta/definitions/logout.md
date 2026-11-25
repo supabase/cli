@@ -1,7 +1,7 @@
 ---
 id: logout
 kind: command
-category: general
+category: General
 title: logout
 symbol: supabase logout
 summary: Log out and delete local credentials

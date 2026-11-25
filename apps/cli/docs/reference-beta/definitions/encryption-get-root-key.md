@@ -1,8 +1,7 @@
 ---
 id: encryption-get-root-key
 kind: command
-category: encryption
-subcategory: encryption
+category: Encryption
 title: encryption get-root-key
 symbol: supabase encryption get-root-key
 summary: Get the root encryption key

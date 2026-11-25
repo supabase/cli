@@ -1,7 +1,7 @@
 ---
 id: bootstrap
 kind: command
-category: general
+category: General
 title: bootstrap
 symbol: supabase bootstrap
 summary: Create a project from a starter template

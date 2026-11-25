@@ -1,8 +1,7 @@
 ---
 id: config-push
 kind: command
-category: config
-subcategory: config
+category: Config
 title: config push
 symbol: supabase config push
 summary: Push local config to a project

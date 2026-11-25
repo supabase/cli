@@ -1,8 +1,7 @@
 ---
 id: gen-signing-key
 kind: command
-category: generate-types
-subcategory: gen
+category: Generate Types
 title: gen signing-key
 symbol: supabase gen signing-key
 summary: Generate a JWT signing key

@@ -1,7 +1,7 @@
 ---
 id: issue-feature
 kind: command
-category: feedback
+category: Feedback and Support
 subcategory: issue
 title: issue feature
 symbol: supabase issue feature

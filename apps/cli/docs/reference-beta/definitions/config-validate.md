@@ -1,8 +1,7 @@
 ---
 id: config-validate
 kind: command
-category: config
-subcategory: config
+category: Config
 title: config validate
 symbol: supabase config validate
 summary: Validate the project config file

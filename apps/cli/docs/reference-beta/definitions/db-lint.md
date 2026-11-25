@@ -1,8 +1,7 @@
 ---
 id: db-lint
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db lint
 symbol: supabase db lint
 summary: Check a database for schema errors

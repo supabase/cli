@@ -1,8 +1,7 @@
 ---
 id: telemetry-disable
 kind: command
-category: telemetry
-subcategory: telemetry
+category: Telemetry
 title: telemetry disable
 symbol: supabase telemetry disable
 summary: Disable CLI telemetry

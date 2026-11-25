@@ -1,8 +1,7 @@
 ---
 id: branches-unpause
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches unpause
 symbol: supabase branches unpause
 summary: Unpause a preview branch

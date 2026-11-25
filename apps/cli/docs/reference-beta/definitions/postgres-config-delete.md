@@ -1,8 +1,7 @@
 ---
 id: postgres-config-delete
 kind: command
-category: postgres-config
-subcategory: postgres-config
+category: Postgres Config
 title: postgres-config delete
 symbol: supabase postgres-config delete
 summary: Delete Postgres database config overrides

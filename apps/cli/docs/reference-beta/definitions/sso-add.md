@@ -1,8 +1,7 @@
 ---
 id: sso-add
 kind: command
-category: authentication
-subcategory: sso
+category: Authentication
 title: sso add
 symbol: supabase sso add
 summary: Add a new SSO identity provider

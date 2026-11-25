@@ -1,7 +1,7 @@
 ---
 id: feedback-delete
 kind: command
-category: feedback
+category: Feedback and Support
 subcategory: feedback
 title: feedback delete
 symbol: supabase feedback delete

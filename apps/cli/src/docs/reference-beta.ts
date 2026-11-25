@@ -112,22 +112,23 @@ function example(entry: DocsExample, index: number): ReferenceExample {
   };
 }
 
-/** Command id to `DOCS_CATEGORIES` key, read from the sidebar sections the bundle groups commands by. */
+/** Command id to `DOCS_CATEGORIES` title, read from the sidebar sections the bundle groups commands by. */
 function categoryIndex(bundle: DocsBundle): ReadonlyMap<string, string> {
-  const keyByTitle = new Map<string, string>(
-    Object.entries(DOCS_CATEGORIES).map(([key, { title }]) => [title, key]),
-  );
+  const titles = new Set<string>(Object.values(DOCS_CATEGORIES).map(({ title }) => title));
   const index = new Map<string, string>();
   for (const section of bundle.sections) {
     if (section.type !== "category") continue;
-    const key = keyByTitle.get(section.title);
-    if (key === undefined) continue;
-    for (const item of section.items) index.set(item.id, key);
+    if (!titles.has(section.title)) continue;
+    for (const item of section.items) index.set(item.id, section.title);
   }
   return index;
 }
 
-function definitionOf(command: DocsCommand, category: string): ReferenceDefinition {
+function definitionOf(
+  command: DocsCommand,
+  category: string,
+  groupFamilies: boolean,
+): ReferenceDefinition {
   const path = command.title.split(" ");
   const experimental = command.flags.some(
     (flag) => flag.id === "experimental" && flag.required === true,
@@ -136,7 +137,9 @@ function definitionOf(command: DocsCommand, category: string): ReferenceDefiniti
     id: command.id.replace(/^supabase-/, ""),
     kind: "command",
     category,
-    ...(path[1] !== undefined && (path.length > 2 || command.subcommands.length > 0)
+    ...(groupFamilies &&
+    path[1] !== undefined &&
+    (path.length > 2 || command.subcommands.length > 0)
       ? { subcategory: path[1] }
       : {}),
     title: path.slice(1).join(" "),
@@ -157,12 +160,22 @@ function definitionOf(command: DocsCommand, category: string): ReferenceDefiniti
 /** One definition file per command in the bundle, sorted by id. */
 export function buildReferenceFiles(bundle: DocsBundle): ReadonlyArray<ReferenceFile> {
   const categories = categoryIndex(bundle);
+  // A category holding one command family (`backups`) needs no sub-group repeating its name.
+  const families = new Map<string, Set<string>>();
+  for (const command of bundle.spec.commands) {
+    const category = categories.get(command.id);
+    if (category === undefined) continue;
+    families.set(
+      category,
+      (families.get(category) ?? new Set()).add(command.title.split(" ")[1] ?? ""),
+    );
+  }
   const files = bundle.spec.commands.map((command) => {
     const category = categories.get(command.id);
     if (category === undefined) {
       throw new Error(`reference-beta.ts: "${command.id}" is in no sidebar category.`);
     }
-    const definition = definitionOf(command, category);
+    const definition = definitionOf(command, category, (families.get(category)?.size ?? 0) > 1);
     const frontmatter = stringify(definition, { lineWidth: 0, blockQuote: "literal" });
     const body = command.description.trim();
     return {

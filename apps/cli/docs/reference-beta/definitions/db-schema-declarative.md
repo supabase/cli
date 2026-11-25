@@ -1,8 +1,7 @@
 ---
 id: db-schema-declarative
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db schema declarative
 symbol: supabase db schema declarative
 summary: Manage declarative database schemas

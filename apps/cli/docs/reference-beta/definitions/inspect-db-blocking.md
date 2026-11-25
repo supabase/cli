@@ -1,8 +1,7 @@
 ---
 id: inspect-db-blocking
 kind: command
-category: inspect
-subcategory: inspect
+category: Inspect
 title: inspect db blocking
 symbol: supabase inspect db blocking
 summary: Show blocking queries

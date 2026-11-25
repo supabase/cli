@@ -1,8 +1,7 @@
 ---
 id: branches-create
 kind: command
-category: branches
-subcategory: branches
+category: Branches
 title: branches create
 symbol: supabase branches create
 summary: Create a preview branch

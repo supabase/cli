@@ -1,8 +1,7 @@
 ---
 id: db-query
 kind: command
-category: database
-subcategory: db
+category: Database
 title: db query
 symbol: supabase db query
 summary: Run a SQL query against a database
