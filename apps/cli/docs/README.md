@@ -93,3 +93,11 @@ the constructor's `docs` field. Commands not yet migrated still read
 `CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no longer resolve
 against the command tree, on a command described by both `withDocs` and a table, and on a
 command with no category.
+
+## Reference-beta definitions
+
+`pnpm docs:reference-beta` writes the same reference as one Markdown file per published command
+under `docs/reference-beta/definitions/` (git-ignored), in the docs site's reference-beta format,
+then validates them. `pnpm docs:reference-beta:check [dir]` runs only the validation against the
+vendored `docs/reference-beta/definition.schema.json`; refetch that file when the docs schema
+changes.
