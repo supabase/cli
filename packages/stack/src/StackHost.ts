@@ -463,8 +463,9 @@ export const runStackHost = Effect.fn("StackHost.run")(
         );
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* fs.truncate(state.ownerLog(id)).pipe(Effect.ignore);
+        // Clients keep a lost owner's log tail only while its holder record survives the read.
         yield* lease.retractHolder;
+        yield* fs.truncate(state.ownerLog(id)).pipe(Effect.ignore);
         const register = options.register;
         if (register !== undefined)
           yield* state.withLock(

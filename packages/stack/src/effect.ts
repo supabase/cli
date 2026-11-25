@@ -45,7 +45,14 @@ import { failureKind, isStackFailureKind, type StackFailureKind } from "./Failur
 import type { ArtifactSelection } from "./Artifacts.ts";
 import { collectDataConflicts } from "./internal/data-conflicts.ts";
 import { initializedDatabaseIds } from "./internal/database-reuse.ts";
-import { failureMessage, rpcClientFailureMessage } from "./internal/failure-message.ts";
+import {
+  failureMessage,
+  lostOwnerDetail,
+  type LostOwnerLease,
+  ownerLogTailBytes,
+  ownerLogTailLines,
+  rpcClientFailureMessage,
+} from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
 import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
@@ -172,14 +179,19 @@ const knownOutcomeKind = <O extends { readonly kind?: string }>({ kind, ...outco
   isStackFailureKind(kind) ? { ...outcome, kind } : outcome;
 
 /** An explicit `kind` wins; otherwise the cause's typed chain is classified. */
-const failure = (operation: string, cause: unknown, kind?: StackFailureKind): StackError => {
+const failure = (
+  operation: string,
+  cause: unknown,
+  kind?: StackFailureKind,
+  ownerDetail?: string,
+): StackError => {
   if (Schema.is(StackError)(cause)) return cause;
   const conflict = findConflict(cause);
   const classified = kind ?? failureKind(cause);
   return new StackError({
     operation,
     message: Schema.is(RpcClientError)(cause)
-      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}`
+      ? `Owner response unavailable; the request outcome is uncertain: ${rpcClientFailureMessage(cause)}${ownerDetail === undefined ? "" : `; ${ownerDetail}`}`
       : failureMessage(cause),
     ...(ownerAbsent(cause) || stackGone(cause)
       ? { reason: "owner-unavailable" as const }
@@ -371,6 +383,14 @@ const ownerGone = (cause: unknown) =>
       Predicate.hasProperty(cause.reason.cause.response, "status") &&
       cause.reason.cause.response.status === 401));
 
+/** An HTTP transport failure, such as a reset, that `ownerGone` does not count as a missing owner. */
+const lostMidCall = (cause: unknown) =>
+  Schema.is(RpcClientError)(cause) &&
+  !ownerGone(cause) &&
+  cause.reason._tag === "HttpError" &&
+  Predicate.hasProperty(cause.reason, "kind") &&
+  cause.reason.kind === "TransportError";
+
 interface Connection {
   readonly access: HostAccess;
   readonly rpc: Client;
@@ -380,6 +400,28 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
+/** Reads the owner log tail as the spawner reports it on startup failure; empty when unreadable. */
+const ownerLogTail = Effect.fn("Stack.ownerLogTail")(function* (log: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const size = Number((yield* fs.stat(log)).size);
+      const offset = Math.max(0, size - ownerLogTailBytes);
+      const file = yield* fs.open(log, { flag: "r" });
+      yield* file.seek(BigInt(offset), "start");
+      const bytes = Option.getOrElse(yield* file.readAlloc(size - offset), () => new Uint8Array(0));
+      return ownerLogTailLines(bytes);
+    }),
+  ).pipe(Effect.orElseSucceed(() => ""));
+});
+
+const sameLease = (before: LostOwnerLease, after: LostOwnerLease) =>
+  before._tag === "Replaced"
+    ? after._tag === "Replaced" &&
+      after.role === before.role &&
+      after.holderPid === before.holderPid
+    : after._tag === before._tag;
+
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
 
@@ -514,10 +556,47 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const dropIfGone = (connection: Connection) => (cause: unknown) =>
     ownerGone(cause) ? invalidate(connection) : Effect.void;
   if (seed.access !== undefined) yield* Ref.set(cached, yield* connectTo(seed.access));
-  const invoke = <A, E, R>(run: (rpc: Client) => Effect.Effect<A, E, R>, reach: Reach) =>
+  const leaseOf = (access: HostAccess) =>
+    Effect.gen(function* () {
+      if (!(yield* state.leased(saved.id))) return { _tag: "Released" } as const;
+      const holder = yield* state.readHolder(saved.id);
+      if (holder === undefined) return { _tag: "Unpublished" } as const;
+      return holder.role === "owner" &&
+        holder.pid === access.endpoint.pid &&
+        holder.port === access.endpoint.port &&
+        holder.secret === access.secret
+        ? ({ _tag: "Held" } as const)
+        : ({ _tag: "Replaced", role: holder.role, holderPid: holder.pid } as const);
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.succeed({ _tag: "Unknown", reason: failureMessage(cause) } as const),
+      ),
+    );
+  const observeLostOwner = Effect.fn("Stack.observeLostOwner")(function* (access: HostAccess) {
+    const pid = access.endpoint.pid;
+    const lease: LostOwnerLease = yield* leaseOf(access);
+    const log = state.ownerLog(saved.id);
+    // A starting owner retracts the previous holder record and then truncates the log, all while
+    // holding the lease, so an unchanged lease around the read ties the tail to this owner.
+    const tail =
+      lease._tag === "Unknown" ||
+      lease._tag === "Unpublished" ||
+      (lease._tag === "Replaced" && lease.role === "owner")
+        ? ""
+        : yield* ownerLogTail(log).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+    const logTail = tail.length > 0 && sameLease(lease, yield* leaseOf(access)) ? tail : "";
+    yield* Effect.annotateCurrentSpan({ "stack.owner.pid": pid, "stack.owner.lease": lease._tag });
+    return lostOwnerDetail({ pid, lease, log, logTail });
+  });
+  const invoke = <A, E, R>(
+    run: (rpc: Client) => Effect.Effect<A, E, R>,
+    reach: Reach,
+    reached?: Ref.Ref<HostAccess | undefined>,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
         const current = yield* borrow(reach);
+        if (reached !== undefined) yield* Ref.set(reached, current.access);
         return yield* run(current.rpc).pipe(Effect.tapError(dropIfGone(current)));
       }),
     ).pipe(Effect.retry({ times: 1, while: ownerGone }), Effect.provideContext(services));
@@ -525,7 +604,22 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     operation: string,
     run: (rpc: Client) => Effect.Effect<A, E, R>,
     reach: Reach = "launch",
-  ) => invoke(run, reach).pipe(Effect.mapError((cause) => failure(operation, cause)));
+  ) =>
+    Effect.gen(function* () {
+      const reached = yield* Ref.make<HostAccess | undefined>(undefined);
+      return yield* invoke(run, reach, reached).pipe(
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            const access = yield* Ref.get(reached);
+            const detail =
+              lostMidCall(cause) && access !== undefined
+                ? yield* observeLostOwner(access)
+                : undefined;
+            return yield* failure(operation, cause, undefined, detail);
+          }),
+        ),
+      );
+    });
   /** Without a live owner, or with a destroyed stack, nothing runs, so the request is already satisfied. */
   const whileRunning = <A, E, R>(
     operation: string,
