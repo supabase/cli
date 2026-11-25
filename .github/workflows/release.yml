@@ -120,7 +120,8 @@ jobs:
           exit 1
       # The stable tag is pushed by main's publish job, so a prerelease planned before that job
       # finishes misses it. The rest of the run (brew, scoop, smoke tests) does not affect the plan.
-      # A run parked at the stable sign-off has not started publishing, so it does not count.
+      # Only a run past the stable sign-off can push a stable tag, so runs waiting at the sign-off
+      # or queued behind one do not count.
       - name: Wait for an in-flight stable release
         if: ${{ (github.ref_name == 'develop' || github.ref_name == 'next') && (github.event_name == 'push' || inputs.version == '') }}
         env:
@@ -133,11 +134,10 @@ jobs:
             pending=0
             if run_ids="$(gh run list --repo "$REPO" --workflow release.yml --branch main --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId')"; then
               for run_id in $run_ids; do
-                job_states="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish" or .name == "Approve stable release") | "\(.name)=\(.status)"')" || job_states=unknown
-                if grep -qxF 'Approve stable release=waiting' <<<"$job_states"; then
-                  continue
-                fi
-                if ! grep -qxF 'Release / publish=completed' <<<"$job_states"; then
+                job_states="$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[] | select(.name == "Release / publish" or .name == "Approve stable release") | "\(.name)=\(.status)/\(.conclusion)"')" || job_states=unknown
+                if [[ "$job_states" == unknown ]]; then
+                  pending=$((pending + 1))
+                elif grep -qxF 'Approve stable release=completed/success' <<<"$job_states" && ! grep -q '^Release / publish=completed/' <<<"$job_states"; then
                   pending=$((pending + 1))
                 fi
               done

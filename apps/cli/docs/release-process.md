@@ -284,7 +284,7 @@ The `develop` and `next` plans wait, up to 120 minutes, until the `publish` job 
 
 A non-dry-run `stable` release is gated by the `cli-stable-release` environment (required reviewers: the `cli` team, deployments limited to `main`). Approving the deploy PR fast-forwards `main`; the `Release` run then waits in `Approve stable release` until a `cli` team member approves it under "Review deployments". Rejecting stops the release without a Slack failure alert: `main` stays ahead of the last stable tag and the next stable release includes those commits. The plan job fails a real stable release when the environment lacks a required-reviewers rule, because GitHub otherwise creates a missing environment unprotected.
 
-- A waiting stable run does not block `develop` or `next` plans; the in-flight wait above counts a `main` run only once it is past the sign-off.
+- A stable run waiting for sign-off, or a `main` run queued behind one, does not block `develop` or `next` plans; the in-flight wait above counts a `main` run only once it is past the sign-off.
 - Maintenance releases are not gated.
 - The concurrency group allows one `Release` run per ref, so a waiting run holds `main`'s slot and a newer push to `main` queues behind it (a still-newer push replaces the queued one). Reject the stale waiting run to let the newer one through.
 
