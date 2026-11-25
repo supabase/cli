@@ -4,7 +4,7 @@ import { jsonResponse } from "../../../tests/helpers/command-mocks.ts";
 import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
 import { branchRow } from "../../../tests/helpers/remote-selection.ts";
 import { branchesCreate } from "./create/create.handler.ts";
-import { branchesDelete } from "./delete/delete.handler.ts";
+import { runBranchesDelete } from "./delete/delete.test-helper.ts";
 import { branchesDisable } from "./disable/disable.handler.ts";
 import { branchesGet } from "./get/get.handler.ts";
 import { branchesList } from "./list/list.handler.ts";
@@ -108,7 +108,7 @@ describeHostedTargetSelection("branches delete", {
   mode: "parent",
   operands: ["feat-x"],
   respond: respondWithBranch(BRANCH_UUID),
-  run: (flags) => branchesDelete({ ...flags, name: Option.some("feat-x") }),
+  run: (flags) => runBranchesDelete({ ...flags, name: Option.some("feat-x") }),
 });
 
 describeHostedTargetSelection("branches pause", {

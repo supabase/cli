@@ -1,3 +1,4 @@
+import { wrapTerminalText } from "../../shared/output/wrap-terminal-text.ts";
 import { hasGatewayLogs } from "../../command-internal/logs/local-sources.ts";
 import { logEvent, markerText } from "../../command-internal/stack-log-events.ts";
 import { Clock, Effect, FileSystem, Option, Path, Result, Schema, Stream } from "effect";
@@ -21,7 +22,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { encodeHtmlSafeJsonIndented } from "../../command-internal/html-safe-json.ts";
-import { renderLogsRows, renderLogsSources, wrapLogsText } from "./logs.display.ts";
+import { renderLogsRows, renderLogsSources } from "./logs.display.ts";
 import { hostedSources, severityServices } from "./logs.catalog.ts";
 import { logsWindow } from "./logs.format.ts";
 import { LogsInputError } from "./logs.errors.ts";
@@ -194,7 +195,7 @@ export const logs = Effect.fn("logs")(function* (input: LogsFlags & StackIdAlias
     if (target.kind === "local" && (yield* currentProjectStateMode) !== "stack")
       return yield* new LogsInputError({
         message:
-          "Local logs require the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted logs.",
+          "Local logs require the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or set experimental.stack to true in the project config, or use --remote for hosted logs.",
       });
     const output = yield* Output;
     const interactive = yield* useLogsBrowser();
@@ -235,7 +236,7 @@ export const logs = Effect.fn("logs")(function* (input: LogsFlags & StackIdAlias
         else {
           const text = filteredText(row);
           yield* output.raw(
-            `${wrap ? wrapLogsText(text, width) : stripControlSequences(text.replaceAll("\r", "\\r").replaceAll("\n", "\\n"))}\n`,
+            `${wrap ? wrapTerminalText(text, width) : stripControlSequences(text.replaceAll("\r", "\\r").replaceAll("\n", "\\n"))}\n`,
           );
         }
       }
@@ -325,7 +326,7 @@ export const logsSources = Effect.fn("logs.sources")(function* (
     if ((yield* currentProjectStateMode) !== "stack")
       return yield* new LogsInputError({
         message:
-          "Local log discovery requires the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml, or use --remote for hosted sources.",
+          "Local log discovery requires the experimental stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1 or set experimental.stack to true in the project config, or use --remote for hosted sources.",
       });
     return yield* Effect.gen(function* () {
       const resolver = yield* StackTargetResolver;

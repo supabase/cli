@@ -1,8 +1,19 @@
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 
-import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -22,9 +33,10 @@ import {
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { branchPrompt } from "../branches.prompt.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
-import { branchesDelete } from "./delete.handler.ts";
+import { runBranchesDelete } from "./delete.test-helper.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { Output } from "../../../shared/output/output.service.ts";
 
 // `branch_id_or_ref` is a oneOf [project-ref, uuid]; a 20-lowercase ref would match both shapes
 // and get rejected, so tests use a v4 UUID to pick exactly one.
@@ -147,7 +159,7 @@ describe("branches delete integration", () => {
   it.effect("deletes a branch and emits 'Deleted preview branch: <ref>' to stderr", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      yield* runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stderrText).toContain(`Deleted preview branch: ${BRANCH_UUID}`);
       expect(api.requests.find((r) => r.method === "DELETE")?.url).toContain(
         `/v1/branches/${BRANCH_UUID}`,
@@ -163,7 +175,7 @@ describe("branches delete integration", () => {
   it.effect("omits the force query param", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      yield* runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       const del = api.requests.find((r) => r.method === "DELETE");
       expect(del?.url).not.toContain("force=");
     }).pipe(Effect.provide(layer));
@@ -173,7 +185,7 @@ describe("branches delete integration", () => {
     const { layer } = setup({ deleteStatus: 500 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
+        runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -187,19 +199,179 @@ describe("branches delete integration", () => {
   it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      yield* runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes linked-project cache + telemetry state on failure", () => {
-    const { layer, telemetry, cache } = setupTracked({ deleteStatus: 500 });
+  it.effect("caches the parent and flushes once before reporting a typed DELETE failure", () => {
+    const out = mockOutput({ format: "json" });
+    const analytics = mockAnalytics();
+    const telemetry = mockTelemetryStateTracked();
+    const cache = mockLinkedProjectCacheTracked();
+    const api = buildApi({ deleteStatus: 500 });
+    const layer = buildRuntime({
+      out,
+      analytics,
+      api,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+    });
+    const beforeReports: Array<readonly [number, number, number]> = [];
     return Effect.gen(function* () {
-      yield* Effect.exit(branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }));
-      expect(telemetry.flushed).toBe(true);
-      expect(cache.cached).toBe(true);
+      const exit = yield* Effect.exit(
+        runBranchesDelete({
+          ...baseFlags,
+          name: Option.some(BRANCH_UUID),
+          projectRef: Option.some(VALID_REF),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(beforeReports).toEqual([[1, 1, 1]]);
+      expect(cache.cacheCount).toBe(1);
+      expect(cache.cachedRef).toBe(VALID_REF);
+      expect(telemetry.flushCount).toBe(1);
+      expect(out.failures).toEqual([
+        {
+          code: "BranchesDeleteUnexpectedStatusError",
+          message: "unexpected delete branch status 500: {}",
+        },
+      ]);
+      expect(analytics.captured).toEqual([
+        expect.objectContaining({
+          event: "cli_command_executed",
+          properties: expect.objectContaining({
+            exit_code: 1,
+            error_fingerprint: "tag:BranchesDeleteUnexpectedStatusError:api_status",
+          }),
+        }),
+      ]);
+    }).pipe(
+      Effect.provideServiceEffect(
+        Output,
+        Output.use((output) =>
+          Effect.succeed({
+            ...output,
+            fail: (error) =>
+              Effect.sync(() => {
+                beforeReports.push([
+                  cache.cacheCount,
+                  telemetry.flushCount,
+                  analytics.captured.length,
+                ]);
+              }).pipe(Effect.andThen(output.fail(error))),
+          }),
+        ),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("does not cache or flush when parent resolution fails", () => {
+    const { layer, api, out, telemetry, cache } = setupTracked();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runBranchesDelete({
+          ...baseFlags,
+          name: Option.some(BRANCH_UUID),
+          remote: Option.some({ _tag: "Branch", name: "feat-x" }),
+        }),
+      );
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+      });
+      expect(api.requests).toEqual([]);
+      expect(cache.cacheCount).toBe(0);
+      expect(telemetry.flushCount).toBe(0);
+      expect(out.failures).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("caches the parent and flushes once when an in-flight DELETE is interrupted", () =>
+    Effect.gen(function* () {
+      const deleteStarted = yield* Deferred.make<void>();
+      const out = mockOutput({ format: "json" });
+      const telemetry = mockTelemetryStateTracked();
+      const cache = mockLinkedProjectCacheTracked();
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          request.method === "DELETE"
+            ? Deferred.succeed(deleteStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(jsonResponse(request, 200, BRANCH_CONFIG)),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        telemetry: telemetry.layer,
+        linkedProjectCache: cache.layer,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      });
+      const fiber = yield* runBranchesDelete({
+        ...baseFlags,
+        name: Option.some(BRANCH_UUID),
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(layer), Effect.forkChild);
+      yield* Deferred.await(deleteStarted);
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(cache.cacheCount).toBe(1);
+      expect(cache.cachedRef).toBe(VALID_REF);
+      expect(telemetry.flushCount).toBe(1);
+      expect(out.stdoutText).toBe("");
+      expect(out.failures).toEqual([]);
+    }),
+  );
+
+  it.effect("caches the parent and flushes once after a partial terminal write fails", () => {
+    const out = mockOutput({ format: "stream-json" });
+    const api = buildApi({});
+    const cache = mockLinkedProjectCacheTracked();
+    const telemetry = mockTelemetryStateTracked();
+    const defect = new Error("terminal write failed");
+    const atWrite: Array<readonly [number, number]> = [];
+    const layer = buildRuntime({
+      out,
+      api,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runBranchesDelete({
+          ...baseFlags,
+          name: Option.some(BRANCH_UUID),
+          projectRef: Option.some(VALID_REF),
+        }),
+      );
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
+      expect(atWrite).toEqual([[0, 0]]);
+      expect(cache.cacheCount).toBe(1);
+      expect(cache.cachedRef).toBe(VALID_REF);
+      expect(telemetry.flushCount).toBe(1);
+      expect(out.stdoutText).toBe('{"type":"result",');
+      expect(out.failures).toEqual([]);
+    }).pipe(
+      Effect.provideServiceEffect(
+        Output,
+        Output.use((output) =>
+          Effect.succeed({
+            ...output,
+            result: () =>
+              Effect.sync(() => {
+                atWrite.push([cache.cacheCount, telemetry.flushCount]);
+              }).pipe(
+                Effect.andThen(output.raw('{"type":"result",', "stdout")),
+                Effect.andThen(Effect.die(defect)),
+              ),
+          }),
+        ),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   it.effect(
@@ -260,7 +432,7 @@ describe("branches delete integration", () => {
           `{"ref":"${PARENT_REF}","name":"Parent Project","organization_id":"org_1","organization_slug":"acme"}`,
         );
 
-        yield* branchesDelete({ ...baseFlags, name: Option.some("my-feature") });
+        yield* runBranchesDelete({ ...baseFlags, name: Option.some("my-feature") });
         const lookup = api.requests.find(
           (r) => r.method === "GET" && r.url.includes("/branches/my-feature"),
         );
@@ -324,7 +496,7 @@ describe("branches delete integration", () => {
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
 
-        yield* branchesDelete(baseFlags);
+        yield* runBranchesDelete(baseFlags);
 
         expect(sequence(api.requests)).toEqual([
           `GET ${API}/v1/projects`,
@@ -345,5 +517,5 @@ describe("branches delete integration", () => {
 
 describeHostedConsent("branches delete", {
   api: apiOptions({}),
-  invoke: () => ({ run: branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }) }),
+  invoke: () => ({ run: runBranchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }) }),
 });

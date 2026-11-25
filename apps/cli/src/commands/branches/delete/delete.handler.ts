@@ -1,10 +1,7 @@
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
-import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { Output } from "../../../shared/output/output.service.ts";
-import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { CommandUX, ResolvedProject } from "../../../command-internal/command-executor.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
@@ -23,10 +20,9 @@ const mapDeleteError = mapHttpError({
 });
 
 export const branchesDelete = Effect.fn("branches.delete")(function* (flags: BranchesDeleteFlags) {
-  const output = yield* Output;
+  const ux = yield* CommandUX;
   const api = yield* CommandPlatformApi;
-  const linkedProjectCache = yield* LinkedProjectCache;
-  const telemetryState = yield* TelemetryState;
+  const resolvedProject = yield* ResolvedProject;
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
@@ -35,29 +31,20 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
     { remote: flags.remote, projectRef: flags.projectRef },
     { parent: true },
   );
+  yield* resolvedProject.record(ref);
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
-  yield* Effect.gen(function* () {
-    const branchInput = yield* promptBranchId(flags.name, ref);
-    const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+  const branchInput = yield* promptBranchId(flags.name, ref);
+  const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
 
-    yield* requireHostedMutationConsent({
-      action: `Delete preview branch ${branchInput}`,
-      details: [`Branch project ref: ${branchRef}`],
-    });
+  yield* ux.requireHostedMutationConsent({
+    action: `Delete preview branch ${branchInput}`,
+    details: [`Branch project ref: ${branchRef}`],
+  });
 
-    const deleting =
-      output.format === "text" ? yield* output.task("Deleting branch...") : undefined;
-    yield* api.v1.deleteABranch({ branch_id_or_ref: branchRef }).pipe(
-      Effect.tapError(() => deleting?.fail() ?? Effect.void),
-      Effect.catch(mapDeleteError),
-    );
-    yield* deleting?.clear ?? Effect.void;
-
-    if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("Deleted preview branch", { project_ref: branchRef });
-      return;
-    }
-    yield* output.raw(`Deleted preview branch: ${branchRef}\n`, "stderr");
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+  yield* ux
+    .task("Deleting branch...", api.v1.deleteABranch({ branch_id_or_ref: branchRef }))
+    .pipe(Effect.catch(mapDeleteError));
+  yield* ux.message(`Deleted preview branch: ${branchRef}`);
+  return { project_ref: branchRef, message: "Deleted preview branch" } as const;
 });

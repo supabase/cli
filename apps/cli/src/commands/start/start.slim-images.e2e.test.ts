@@ -28,6 +28,7 @@ import {
   runSupabaseEffect,
   runDockerEffect,
 } from "../../../tests/helpers/cli.ts";
+import { readSectionPort } from "../../../tests/helpers/jsonc-config.ts";
 import { serviceContainerName, localDbContainerId } from "../../command-internal/docker-ids.ts";
 import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 
@@ -104,14 +105,6 @@ function latestImagesToPull(): ReadonlyArray<string> {
   return [...new Set([...dockerfileImages, ...wgetProbeCatalogImages()])];
 }
 
-function readSectionPort(config: string, section: string): number {
-  const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^\\[${escaped}\\][\\s\\S]*?^port = (\\d+)`, "m").exec(config);
-  if (match?.[1] === undefined) {
-    throw new Error(`missing [${section}] port`);
-  }
-  return Number(match[1]);
-}
 const containerImage = Effect.fnUntraced(function* (name: string) {
   const { stdout } = yield* runDockerEffect(["inspect", name, "--format", "{{.Config.Image}}"]);
   return stdout.trim();
@@ -281,18 +274,11 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
   );
 });
 
-const pullLatestImage = Effect.fnUntraced(function* (image: string, deadline: number) {
-  const now = yield* Clock.currentTimeMillis;
-  yield* runDockerEffect(["pull", image], { timeout: Math.max(1, deadline - now) }).pipe(
-    Effect.catch(() =>
-      Effect.tryPromise({
-        try: () => ensureImage(image, deadline),
-        catch: (cause) =>
-          new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
-      }),
-    ),
-  );
-});
+const ensurePinnedImage = (image: string, deadline?: number) =>
+  Effect.tryPromise({
+    try: () => ensureImage(image, deadline),
+    catch: (cause) => new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
+  });
 
 describe("supabase start slim images (e2e)", () => {
   beforeAll(
@@ -301,9 +287,9 @@ describe("supabase start slim images (e2e)", () => {
         Effect.gen(function* () {
           const deadline = (yield* Clock.currentTimeMillis) + PULL_TIMEOUT_MS;
           for (const image of latestImagesToPull()) {
-            yield* pullLatestImage(image, deadline);
+            yield* ensurePinnedImage(image, deadline);
           }
-        }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+        }),
       ),
     PULL_TIMEOUT_MS + 10_000,
   );
@@ -314,11 +300,7 @@ describe("supabase start slim images (e2e)", () => {
       Effect.gen(function* () {
         for (const entry of catalogPins()) {
           if (!WGET_PROBE_SERVICES.includes(entry.service)) continue;
-          const image = yield* Effect.tryPromise({
-            try: () => ensureImage(entry.pin.image),
-            catch: (cause) =>
-              new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
-          });
+          const image = yield* ensurePinnedImage(entry.pin.image);
           const probe =
             entry.service === "realtime"
               ? slimWgetHealthcheck("http://127.0.0.1:9/", {
@@ -370,7 +352,7 @@ describe("supabase start slim images (e2e)", () => {
           'Deno.serve(async (req) => Response.json({ message: "Hello " + (await req.json()).name + "!" }));\n',
         );
         yield* overridePorts(projectDir);
-        const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.toml"));
+        const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.jsonc"));
         const apiPort = readSectionPort(config, "api");
 
         const start = yield* runSupabaseEffect(START_ARGS, {

@@ -33,6 +33,7 @@ import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
+import { issuesCommand } from "../commands/issues/issues.command.ts";
 import { issueCommand } from "../commands/issue/issue.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { logsCommandFor } from "../commands/logs/logs.command.ts";
@@ -62,6 +63,7 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
+import { commandExecutorLayer } from "../command-internal/command-executor.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
@@ -184,6 +186,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
           initCommand,
           inspectCommand,
           issueCommand,
+          issuesCommand,
           linkCommand,
           loginCommand,
           logoutCommand,
@@ -253,6 +256,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
               : stackBackendLayer(options.stackBackend),
             commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
             machineErrorContextLayer,
+            commandExecutorLayer,
             Layer.succeed(AiTool, aiTool),
           );
         }),

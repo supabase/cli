@@ -33,6 +33,7 @@ const STACK_BACKEND_COMMANDS = new Set([
   "test",
   "gen",
   "inspect",
+  "issues",
   "pull",
   "storage",
   "seed",

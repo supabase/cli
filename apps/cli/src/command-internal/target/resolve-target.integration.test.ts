@@ -249,7 +249,7 @@ describe("resolveTarget", () => {
         expect(failureOf(result.exit)).toMatchObject({
           message: "--stack requires the experimental stack backend.",
           suggestion:
-            "Set SUPABASE_EXPERIMENTAL_STACK=1 or [experimental] stack = true in supabase/config.toml.",
+            "Set SUPABASE_EXPERIMENTAL_STACK=1 or set experimental.stack to true in the project config.",
         });
       }),
     );

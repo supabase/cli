@@ -24,6 +24,8 @@ import {
   PropSuggestionType,
   PropWorkflow,
 } from "../shared/telemetry/event-catalog.ts";
+import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
+import { ConfigValidateProblemsError } from "../commands/config/validate/validate.errors.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { BranchesCreateUnexpectedStatusError } from "../commands/branches/branches.errors.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
@@ -1308,6 +1310,43 @@ describe("withCommandTelemetry", () => {
         }),
       ),
       Effect.asVoid,
+    );
+  });
+
+  it.effect("prefers an Effect failure to a recorded process-controlled failure", () => {
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+    return Effect.gen(function* () {
+      yield* recordCommandTelemetry({
+        processControlledFailure: classifyCliErrorActionability(
+          new ConfigValidateProblemsError({ message: "config problems" }),
+        ),
+      });
+      yield* (yield* ProcessControl).setExitCode(1);
+      return yield* new DbDumpRunError({ message: "container exited 1" });
+    }).pipe(
+      withCommandTelemetry(),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_fingerprint: "tag:DbDumpRunError",
+            error_category: "db_connection",
+          });
+          expect(analytics.captured[0]?.properties).not.toHaveProperty("processControlledFailure");
+        }),
+      ),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
     );
   });
 

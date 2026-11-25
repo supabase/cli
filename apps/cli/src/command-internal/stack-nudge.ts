@@ -19,7 +19,7 @@ const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local st
 To switch this project: ${DOCS_URL}`;
 
 const INIT_STACK_ENABLED_MESSAGE =
-  "Experimental local stack enabled in supabase/config.toml. Share feedback: https://github.com/supabase/cli/issues";
+  "Experimental local stack enabled in supabase/config.jsonc. Share feedback: https://github.com/supabase/cli/issues";
 
 const NUDGE_STATE_FILE = "stack-nudge.json";
 const NUDGE_INTERVAL_MILLIS = 7 * 24 * 60 * 60 * 1000;
@@ -29,7 +29,7 @@ const NudgeState = Schema.fromJsonString(Schema.Struct({ lastShownAt: Schema.Fin
 const startAgentAskLine = (configFile: ConfigFileRef): string =>
   `Coding agents: offer this switch to the user and ask before changing ${configFile.path}.`;
 const INIT_AGENT_ASK_LINE =
-  "Coding agents: offer this to the user and ask before changing supabase/config.toml.";
+  "Coding agents: offer this to the user and ask before changing supabase/config.jsonc.";
 
 /** Who to nudge: a coding agent, a human at a terminal, or nobody. */
 const nudgeAudience = Effect.gen(function* () {

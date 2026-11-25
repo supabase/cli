@@ -25,6 +25,12 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - run: "gh pr create -B main -H develop --title 'chore: production deploy' --label 'do not merge' --fill"
+      - run: |
+          {
+            echo "Approving this PR fast-forwards \`main\`. Publishing the stable release then waits for a \`cli\` team sign-off in the Release run."
+            echo
+            git log --format='- %s' origin/main..origin/develop
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create -B main -H develop --title 'chore: production deploy' --label 'do not merge' --body-file "$RUNNER_TEMP/body.md"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

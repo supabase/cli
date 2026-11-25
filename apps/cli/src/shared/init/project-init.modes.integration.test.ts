@@ -39,7 +39,7 @@ const fileMode = Effect.fnUntraced(function* (pathname: string) {
 });
 
 describe("initProject file modes (0755 dirs, 0644 files)", () => {
-  it.effect("pins the supabase dir and config.toml to the exact modes", () =>
+  it.effect("pins the supabase dir and config.jsonc to the exact modes", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const cwd = yield* makeTempProjectDir;
@@ -49,7 +49,7 @@ describe("initProject file modes (0755 dirs, 0644 files)", () => {
 
       const supabaseDir = path.join(cwd, "supabase");
       expect(yield* fileMode(supabaseDir)).toBe(0o755);
-      expect(yield* fileMode(path.join(supabaseDir, "config.toml"))).toBe(0o644);
+      expect(yield* fileMode(path.join(supabaseDir, "config.jsonc"))).toBe(0o644);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

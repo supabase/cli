@@ -142,9 +142,33 @@ const ancestorsOf = (path: Path.Path, start: string): ReadonlyArray<string> => {
 const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag === "AlreadyExists";
 
 /**
+ * Whether `owner` may own a directory `uid` trusts: `uid` itself, or when `allowRootOwner` uid 0
+ * or, inside a user namespace (a `uidMap` other than the initial one, which maps every uid to
+ * itself), the overflow uid 65534 it reports for any unmapped owner, normally host root. An
+ * unreadable map counts as no namespace.
+ */
+export const isTrustedOwner = (input: {
+  readonly owner: number;
+  readonly uid: number;
+  readonly allowRootOwner: boolean;
+  readonly uidMap: string | undefined;
+}): boolean =>
+  input.owner === input.uid ||
+  (input.allowRootOwner &&
+    (input.owner === 0 ||
+      (input.owner === 65_534 &&
+        input.uidMap !== undefined &&
+        input.uidMap.trim().split(/\s+/u).join(" ") !== "0 0 4294967295")));
+
+const readUidMap = Effect.fn("NativePostgresUser.readUidMap")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString("/proc/self/uid_map").pipe(Effect.orElseSucceed(() => undefined));
+});
+
+/**
  * Confirms `target`'s unresolved state (one `lstat`, so a symlink is never followed) is a
- * directory worth trusting: owned by `uid`, or by root when `allowRootOwner`, and never writable by
- * group or others unless `allowStickyWritable` and the sticky bit guard it, as `/tmp` itself is.
+ * directory worth trusting: owned as `isTrustedOwner` allows, and never writable by group or
+ * others unless `allowStickyWritable` and the sticky bit guard it, as `/tmp` itself is.
  */
 const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDirectory")(function* (
   target: string,
@@ -167,7 +191,9 @@ const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDire
       operation: "launch",
       message: `${target} is not a directory; refusing to use it for the native runtime root`,
     });
-  if (info.uid !== uid && !(policy.allowRootOwner && info.uid === 0))
+  const { allowRootOwner } = policy;
+  const uidMap = allowRootOwner && info.uid === 65_534 ? yield* readUidMap() : undefined;
+  if (!isTrustedOwner({ owner: info.uid, uid, allowRootOwner, uidMap }))
     return yield* new ServiceError({
       operation: "launch",
       message: `${target} belongs to uid ${String(info.uid)}, not the current user; refusing to use it for the native runtime root`,

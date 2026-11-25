@@ -29,7 +29,12 @@ import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
 import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
-import { failureMessage } from "./internal/failure-message.ts";
+import {
+  failureMessage,
+  ownerLogReference,
+  ownerLogTailBytes,
+  ownerLogTailLines,
+} from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
 import type { PortConflict } from "./Ports.ts";
 import { Conflict, StackRpc } from "./Rpc.ts";
@@ -450,11 +455,10 @@ const closeLifeline = (child: ChildProcess) =>
 const logTail = (descriptor: number) => {
   try {
     const size = fstatSync(descriptor).size;
-    const length = Math.min(size, 4096);
+    const length = Math.min(size, ownerLogTailBytes);
     const bytes = Buffer.alloc(length);
     readSync(descriptor, bytes, 0, length, size - length);
-    const lines = bytes.toString("utf8").trimEnd().split("\n").slice(-20);
-    return lines.join("\n");
+    return ownerLogTailLines(bytes);
   } catch {
     return "";
   }
@@ -487,7 +491,7 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
           const tail = logTail(descriptor);
           return error(
             "startup",
-            `Stack owner failed to start: ${error("startup", cause).message} (owner log: ${log})${tail.length === 0 ? "" : `\n${tail}`}`,
+            `Stack owner failed to start: ${error("startup", cause).message} ${ownerLogReference(log, tail)}`,
             reason,
             kind,
           );

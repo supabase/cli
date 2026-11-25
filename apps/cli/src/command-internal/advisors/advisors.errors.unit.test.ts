@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import { DbAdvisorsInvalidTokenError } from "./advisors.errors.ts";
 
 describe("DbAdvisorsInvalidTokenError actionability", () => {
