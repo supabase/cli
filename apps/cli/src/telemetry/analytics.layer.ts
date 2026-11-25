@@ -1,3 +1,4 @@
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import type { ProjectStateMode } from "../shared/config/project-state-mode.ts";
@@ -10,6 +11,7 @@ import {
 } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
+  EnvSignalBooleanKeys,
   EnvSignalPresenceKeys,
   EnvSignalValueKeys,
   GroupOrganization,
@@ -116,6 +118,13 @@ export const collectEnvSignals = Effect.gen(function* () {
       trimmed.length > MaxEnvSignalValueLength
         ? trimmed.slice(0, MaxEnvSignalValueLength)
         : trimmed;
+  }
+
+  for (const key of EnvSignalBooleanKeys) {
+    const raw = yield* Config.option(Config.String(key));
+    if (Option.isNone(raw) || raw.value === "") continue;
+    const parsed = parseBoolLiteral(raw.value);
+    signals[key] = parsed === undefined ? "invalid" : String(parsed);
   }
 
   return Object.keys(signals).length === 0

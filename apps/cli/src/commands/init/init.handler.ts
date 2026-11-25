@@ -19,8 +19,12 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     configValue: Effect.succeed(false),
   });
 
+  const targetDir = Option.isSome(workdir)
+    ? path.resolve(runtimeInfo.cwd, workdir.value)
+    : runtimeInfo.cwd;
+
   const result = yield* initProject({
-    cwd: Option.isSome(workdir) ? path.resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
+    cwd: targetDir,
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
@@ -54,5 +58,10 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
   }
 
   yield* output.raw("Finished supabase init.\n");
-  yield* showInitStackNote(experimentalStack);
+  yield* showInitStackNote({
+    experimentalStack,
+    workdir: Option.isSome(workdir) ? targetDir : undefined,
+    useOrioledb: flags.useOrioledb,
+    platform: runtimeInfo.platform === "win32" ? "windows" : "posix",
+  });
 });
