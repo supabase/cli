@@ -274,18 +274,11 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
   );
 });
 
-const pullLatestImage = Effect.fnUntraced(function* (image: string, deadline: number) {
-  const now = yield* Clock.currentTimeMillis;
-  yield* runDockerEffect(["pull", image], { timeout: Math.max(1, deadline - now) }).pipe(
-    Effect.catch(() =>
-      Effect.tryPromise({
-        try: () => ensureImage(image, deadline),
-        catch: (cause) =>
-          new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
-      }),
-    ),
-  );
-});
+const ensurePinnedImage = (image: string, deadline?: number) =>
+  Effect.tryPromise({
+    try: () => ensureImage(image, deadline),
+    catch: (cause) => new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
+  });
 
 describe("supabase start slim images (e2e)", () => {
   beforeAll(
@@ -294,9 +287,9 @@ describe("supabase start slim images (e2e)", () => {
         Effect.gen(function* () {
           const deadline = (yield* Clock.currentTimeMillis) + PULL_TIMEOUT_MS;
           for (const image of latestImagesToPull()) {
-            yield* pullLatestImage(image, deadline);
+            yield* ensurePinnedImage(image, deadline);
           }
-        }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+        }),
       ),
     PULL_TIMEOUT_MS + 10_000,
   );
@@ -307,11 +300,7 @@ describe("supabase start slim images (e2e)", () => {
       Effect.gen(function* () {
         for (const entry of catalogPins()) {
           if (!WGET_PROBE_SERVICES.includes(entry.service)) continue;
-          const image = yield* Effect.tryPromise({
-            try: () => ensureImage(entry.pin.image),
-            catch: (cause) =>
-              new StartE2eSetupError({ message: "failed to ensure Docker image", cause }),
-          });
+          const image = yield* ensurePinnedImage(entry.pin.image);
           const probe =
             entry.service === "realtime"
               ? slimWgetHealthcheck("http://127.0.0.1:9/", {
