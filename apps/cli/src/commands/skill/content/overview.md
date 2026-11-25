@@ -3,7 +3,7 @@ This guidance matches the installed CLI version. Run `supabase skill display <to
 ## Before you run commands
 
 - Run `supabase <command> --help` for exact flags. It is authoritative.
-- Use `--output-format json` for parsing. It is already the default when an agent is detected. `stream-json` emits NDJSON for long-running commands.
+- For commands that return structured results, use `--output-format json` for parsing. It is already the default when an agent is detected. `stream-json` emits NDJSON for long-running commands. `skill display` always prints markdown, whatever the format.
 
 ## Targeting
 
@@ -11,7 +11,7 @@ This guidance matches the installed CLI version. Run `supabase skill display <to
 - `--remote` with no value targets the linked project.
 - `--remote=<ref|branch|url>` targets a specific project ref, branch, or Postgres URL.
 - Never use the v2 target flags `--local`, `--linked`, `--project-ref`, or `--db-url`. Use `--remote` instead.
-- Local commands need the running stack. Check it with `supabase status` and start it with `supabase start`. Never restart it in a loop.
+- Commands that connect to local services, such as `db query` without `--remote`, need the running stack. Check it with `supabase status` and start it with `supabase start`. Never restart it in a loop.
 
 ```bash
 supabase status
@@ -30,9 +30,9 @@ supabase link <ref>
 
 ## Hosted changes need user approval
 
-- When the CLI detects an agent, it never prompts. Every command that changes a hosted project fails on its first run with a "Confirmation required" error that says nothing was changed, and the error suggests asking the user. This is the designed path, not a bug.
+- When the CLI detects an agent, it never prompts. Unless approval is already present, a command that changes a hosted project fails on its first run with a "Confirmation required" error. The error says nothing was changed and suggests asking the user. This is the designed path, not a bug.
 - Show the user what will change, using the error's details and the command, and ask. Only after the user approves, re-run the same command with `--yes` added.
-- `SUPABASE_YES=1` counts only when exported in the shell. `supabase/.env` and other `.env` files are ignored, and piping `y` does not work.
+- `SUPABASE_YES=1` exported in the shell counts as approval, so hosted changes run with no confirmation error. When it is set, ask the user before running any command that changes a hosted project. `supabase/.env` and other `.env` files are ignored, and piping `y` does not work.
 - Read-only alternatives need no approval. Examples are `db query --read-only` and `db push --dry-run`.
 
 ```bash

@@ -8,6 +8,7 @@ import { rootCommand } from "../../../cli/root.ts";
 import { unwrapParam } from "../../../command-internal/param-introspection.ts";
 import { commandInternals, userGlobalFlagParams } from "../../../docs/docs-introspection.ts";
 import { walkDocsCommands } from "../../../docs/docs-spec.ts";
+import { hasOptionalSubcommand } from "../../../shared/output/optional-subcommand-usage.ts";
 import { renderTopic } from "../display/display.render.ts";
 import { resolveTopic, topicSlugs, topics } from "./topics.ts";
 
@@ -20,6 +21,7 @@ const byteLength = (text: string) => new TextEncoder().encode(text).length;
 interface PublishedCommand {
   readonly path: ReadonlyArray<string>;
   readonly flags: ReadonlySet<string>;
+  readonly takesSubcommand: boolean;
 }
 
 const flagNames = (params: ReadonlyArray<Parameters<typeof unwrapParam>[0]>) =>
@@ -32,9 +34,10 @@ const flagNames = (params: ReadonlyArray<Parameters<typeof unwrapParam>[0]>) =>
 const rootFlags = flagNames([...userGlobalFlagParams(rootCommand), GlobalFlag.Help.flag]);
 
 const published: Array<PublishedCommand> = [];
-walkDocsCommands(rootCommand, (command, path, inherited) => {
+walkDocsCommands(rootCommand, (command, path, inherited, children) => {
   published.push({
     path,
+    takesSubcommand: children.length > 0 && !hasOptionalSubcommand(command),
     flags: new Set([
       ...flagNames(commandInternals(command).config.flags),
       ...flagNames(inherited),
@@ -83,6 +86,25 @@ const resolvePublished = (tokens: ReadonlyArray<string>): PublishedCommand | und
     .filter((command) => command.path.every((segment, index) => tokens[index] === segment))
     .toSorted((a, b) => b.path.length - a.path.length)[0];
 
+const unknownSubcommand = (tokens: ReadonlyArray<string>): string | undefined => {
+  const command = resolvePublished(tokens);
+  const next = command === undefined ? undefined : tokens[command.path.length];
+  return command?.takesSubcommand === true && next !== undefined && !next.startsWith("-")
+    ? next
+    : undefined;
+};
+
+describe("command line matcher", () => {
+  it("rejects a misspelled subcommand of a command group", () => {
+    expect(unknownSubcommand(tokenize("supabase db querry --linked"))).toBe("querry");
+  });
+
+  it("accepts a published subcommand and a positional on a leaf", () => {
+    expect(unknownSubcommand(tokenize("supabase db query"))).toBeUndefined();
+    expect(unknownSubcommand(tokenize("supabase skill display overview"))).toBeUndefined();
+  });
+});
+
 describe("skill topic registry", () => {
   it.effect("has one content file per registered slug", () =>
     Effect.gen(function* () {
@@ -114,8 +136,9 @@ describe.each(topics)("skill topic $slug content", (topic) => {
 
   it("names only published commands in code blocks", () => {
     for (const line of lines) {
-      const command = resolvePublished(tokenize(line));
-      expect(command, line).toBeDefined();
+      const tokens = tokenize(line);
+      expect(resolvePublished(tokens), line).toBeDefined();
+      expect(unknownSubcommand(tokens), line).toBeUndefined();
     }
   });
 

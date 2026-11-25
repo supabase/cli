@@ -43,7 +43,7 @@ export const renderTopic = (
     ...moreTopics,
     "## Links",
     "",
-    `- Release notes for this version: ${releaseNotesUrl(version)}`,
+    `- ${STABLE_OR_PRERELEASE.test(version) ? "Release notes for this version" : "CLI releases"}: ${releaseNotesUrl(version)}`,
     `- CLI reference: ${CLI_REFERENCE_URL}`,
     "",
   ].join("\n");

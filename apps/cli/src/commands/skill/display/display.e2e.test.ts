@@ -8,13 +8,20 @@ const JsonEnvelope = Schema.Struct({
   error: Schema.Struct({ message: Schema.String, suggestion: Schema.String }),
 });
 
-it.live("prints the embedded overview as raw markdown", () =>
+it.live("prints the same embedded overview markdown for every output format", () =>
   Effect.gen(function* () {
-    const result = yield* runSupabaseEffect(["skill", "display"]);
+    const results = yield* Effect.forEach(["text", "json", "stream-json"], (format) =>
+      runSupabaseEffect(["skill", "display", "--output-format", format]),
+    );
 
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toContain("# Supabase CLI: agent overview");
-    expect(result.stderr).toBe("");
+    for (const result of results) {
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toMatch(/^# Supabase CLI: agent overview/);
+      expect(result.stdout).toContain("\n## Targeting\n");
+    }
+    expect(results[1]?.stdout).toBe(results[0]?.stdout);
+    expect(results[2]?.stdout).toBe(results[0]?.stdout);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

@@ -31,12 +31,10 @@ export const skillDisplayHandler = (flags: SkillDisplayFlags) =>
 export const skillDisplayCommand = Command.make("display", config).pipe(
   withSidebar({ title: "Print agent guidance" }),
   Command.withDescription(
-    "Print agent guidance for the installed CLI version as markdown. The output is always raw markdown; --output-format does not change it.",
+    "Print agent guidance for the installed CLI version. Successful output is always raw markdown, whatever --output-format is.",
   ),
   Command.withShortDescription("Print agent guidance for this CLI version"),
-  Command.withExamples([
-    { command: "supabase skill display", description: "Print the overview and topic list" },
-  ]),
+  Command.withExamples([{ command: "supabase skill display", description: "Print the overview" }]),
   withPermissions({ operations: [] }),
   Command.withHandler(skillDisplayHandler),
   Command.provide(commandRuntimeLayer(["skill", "display"])),

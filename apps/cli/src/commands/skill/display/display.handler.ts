@@ -28,11 +28,11 @@ export const skillDisplay = Effect.fn("skill.display")(function* (flags: SkillDi
       available: topicSlugs,
       version: CLI_VERSION,
       message: `Unknown skill topic "${requested}".`,
-      suggestion: `Topics in Supabase CLI ${CLI_VERSION}: ${topicSlugs.join(", ")}. Run \`supabase skill display\` for the index. If the topic you need is missing, this CLI may be older than your guidance; upgrade: ${CLI_UPGRADE_GUIDE_URL}`,
+      suggestion: `Topics in Supabase CLI ${CLI_VERSION}: ${topicSlugs.join(", ")}. If the topic you need is missing, this CLI may be older than your guidance; upgrade: ${CLI_UPGRADE_GUIDE_URL}`,
     });
   }
   yield* Effect.annotateCurrentSpan("skill.topic", topic.value.slug);
-  yield* recordCommandTelemetry({ [PropSkillTopic]: topic.value.slug });
   const output = yield* Output;
   yield* output.raw(renderTopic(topic.value, CLI_VERSION));
+  yield* recordCommandTelemetry({ [PropSkillTopic]: topic.value.slug });
 });

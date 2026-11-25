@@ -1,10 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Sink, Stdio, Stream } from "effect";
 
-import { mockTty } from "../../../../tests/helpers/mocks.ts";
-import { Output } from "../../../shared/output/output.service.ts";
-import { outputLayerFor } from "../../../shared/output/output.layer.ts";
-import type { OutputFormat } from "../../../shared/output/types.ts";
 import { topics } from "../content/topics.ts";
 import { releaseNotesUrl, renderTopic } from "./display.render.ts";
 
@@ -15,6 +10,13 @@ const secondTopic = {
   title: "Second",
   summary: "Second summary.",
   body: "Second body\n",
+};
+
+const thirdTopic = {
+  slug: "third",
+  title: "Third",
+  summary: "Third summary.",
+  body: "Third body\n",
 };
 
 describe("releaseNotesUrl", () => {
@@ -48,6 +50,12 @@ describe("renderTopic", () => {
     );
   });
 
+  it("labels the fallback link as the releases index for dev versions", () => {
+    const text = renderTopic(overview, "0.0.0-dev");
+    expect(text).toContain("- CLI releases: https://github.com/supabase/cli/releases\n");
+    expect(text).not.toContain("Release notes for this version");
+  });
+
   it("omits the more-topics section when the topic is the only one", () => {
     expect(renderTopic(overview, "3.4.5")).not.toContain("## More topics");
   });
@@ -55,54 +63,12 @@ describe("renderTopic", () => {
 
 describe("renderTopic with several topics", () => {
   it("lists every other topic in registry order and not the current one", () => {
-    const text = renderTopic(overview, "3.4.5", [overview, secondTopic]);
+    const text = renderTopic(overview, "3.4.5", [overview, secondTopic, thirdTopic]);
     expect(text).toContain(
-      "## More topics\n\n- `supabase skill display second`: Second summary.\n",
+      "## More topics\n\n" +
+        "- `supabase skill display second`: Second summary.\n" +
+        "- `supabase skill display third`: Third summary.\n",
     );
     expect(text).not.toContain(`supabase skill display ${overview.slug}\``);
   });
-});
-
-function captureStdout() {
-  const chunks: Array<string> = [];
-  const layer = Layer.succeed(
-    Stdio.Stdio,
-    Stdio.make({
-      args: Effect.succeed([]),
-      stdin: Stream.empty,
-      stdout: () =>
-        Sink.forEach((item: string | Uint8Array) =>
-          Effect.sync(() => {
-            chunks.push(typeof item === "string" ? item : new TextDecoder().decode(item));
-          }),
-        ),
-      stderr: () => Sink.forEach(() => Effect.void),
-    }),
-  );
-  return { layer, chunks };
-}
-
-describe("output.raw with rendered markdown", () => {
-  it.effect("writes identical bytes in text, json, and stream-json output", () =>
-    Effect.gen(function* () {
-      const text = renderTopic(overview, "3.4.5");
-      const written: Array<string> = [];
-      const formats: ReadonlyArray<OutputFormat> = ["text", "json", "stream-json"];
-      for (const format of formats) {
-        const stdout = captureStdout();
-        yield* Effect.gen(function* () {
-          const output = yield* Output;
-          yield* output.raw(text);
-        }).pipe(
-          Effect.provide(
-            outputLayerFor(format).pipe(
-              Layer.provide(Layer.mergeAll(stdout.layer, mockTty({ stdoutIsTty: false }))),
-            ),
-          ),
-        );
-        written.push(stdout.chunks.join(""));
-      }
-      expect(written).toEqual([text, text, text]);
-    }),
-  );
 });
