@@ -2,6 +2,7 @@ import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node"
 import { expect, expectTypeOf, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -12,6 +13,8 @@ import {
   Scope,
   Stream,
 } from "effect";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
 import * as Net from "node:net";
 import {
@@ -29,7 +32,8 @@ import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
 import { testEngine } from "../tests/test-engine.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
-import { launchHost } from "./HostProcess.ts";
+import { currentRelease, launchHost } from "./HostProcess.ts";
+import { bindControl } from "./StackHost.ts";
 import * as PromiseApi from "./index.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
@@ -966,6 +970,77 @@ it.live("sends no call to a process that took the port of a replaced owner", () 
     expect(accepted(), "connections reaching the replaced owner's port").toBe(0);
     expect(Exit.isSuccess(status) && status.value.id).toBe(mail.id);
     yield* destroyTestStack(stack);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reports the released lease and log tail of an owner lost during an accepted call", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lost-owner-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
+    );
+    const saved = yield* state.read(stack.id);
+    if (saved === undefined) return yield* Effect.die("Expected a registered stack");
+    // This process stands in for the owner so the test orders the lease release before the drop.
+    const ownership = yield* Scope.fork(yield* Scope.Scope, "sequential");
+    const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(ownership));
+    const control = yield* bindControl();
+    const endpoint = {
+      stackId: stack.id,
+      identity: saved.identity,
+      pid: process.pid,
+      port: control.port,
+      release: yield* currentRelease,
+    };
+    const callAccepted = yield* Deferred.make<void>();
+    yield* control.server.serve(
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        if (request.method === "GET" && request.url === "/identity")
+          return HttpServerResponse.jsonUnsafe(endpoint);
+        if (request.method !== "POST" || !request.url.startsWith("/rpc"))
+          return HttpServerResponse.empty({ status: 404 });
+        yield* Deferred.succeed(callAccepted, undefined);
+        return yield* Effect.interruptible(Effect.never);
+      }),
+    );
+    yield* lease.publishHolder({
+      role: "owner",
+      pid: endpoint.pid,
+      port: endpoint.port,
+      secret: "lost-owner-secret",
+      release: endpoint.release,
+      lifetime: "detached",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const log = state.ownerLog(stack.id);
+    yield* fs.writeFileString(log, "owner started\npanic: owner lost mid-call\n");
+    const start = yield* Effect.forkScoped(stack.composition.start);
+    yield* Effect.raceFirst(
+      Deferred.await(callAccepted),
+      Fiber.await(start).pipe(
+        Effect.flatMap((exit) =>
+          Effect.die(`The call settled before the owner accepted it: ${exit}`),
+        ),
+      ),
+    );
+    yield* Scope.close(ownership, Exit.void);
+    yield* control.closeConnections;
+
+    const lost = yield* Effect.flip(Fiber.join(start));
+
+    expect(lost.message).toContain("Owner response unavailable; the request outcome is uncertain");
+    expect(lost.message).toContain(
+      `; owner ${process.pid} no longer holds the stack lease (owner log: ${log})\nowner started\npanic: owner lost mid-call`,
+    );
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
