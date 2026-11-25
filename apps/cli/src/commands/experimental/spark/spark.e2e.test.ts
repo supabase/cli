@@ -931,7 +931,7 @@ grant all on table "public"."projects" to "authenticated";
       );
       await writeText(
         migrationsPath("20990101000001_events.sql"),
-        "-- a date column\ncreate table public.events (\n  id bigint primary key,\n  day date\n);\n",
+        "-- a partitioned table\ncreate table public.events (\n  id bigint,\n  day timestamptz\n) partition by range (day);\n",
       );
       const refused = await runFails(["db", "push"]);
       expect(
