@@ -628,7 +628,6 @@ describe("generated warehouse commands", () => {
               diagnostic: {
                 code: "process_exited",
                 message: "The pipeline process exited unsuccessfully.",
-                exit_code: 1,
               },
               observed_at: attributes.observed_at,
               unavailable_reason: null,

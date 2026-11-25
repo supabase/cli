@@ -175,16 +175,16 @@ export const apiCommands = [
     definition: "v2GetWarehouseCapacity",
     summary: "Inspect Warehouse capacity diagnostics",
     description:
-      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
+      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
     readOnly: true,
     flags: [
       {
-        name: "attributes",
+        name: "since",
         type: "string",
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_p95`, `activation_duration_p95`. Supply a comma-separated list. Allowed measurements: `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_mean`, `assignment_wait_p95`, `activation_rate`, `activation_duration_mean`, `activation_duration_p95`.",
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
       },
       {
         name: "from",
@@ -192,24 +192,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires `--to`; cannot be combined with `--since`.",
-      },
-      {
-        name: "interval",
-        type: "string",
-        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
-        repeatable: false,
-        required: false,
-        description:
-          "Defaults to `1m`. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least `5m`.",
-      },
-      {
-        name: "since",
-        type: "string",
-        repeatable: false,
-        required: false,
-        description:
-          "Look back from server time, for example `30m`, `2h`, or `1d`. Defaults to `30m` when `--from`/`--to` are omitted. Maximum `30d`. Cannot be combined with `--from`/`--to`.",
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
       },
       {
         name: "to",
@@ -217,7 +200,24 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires `--from`; cannot be combined with `--since`. The service tolerates up to 60 seconds of request delay or clock skew.",
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_p95, activation_duration_p95. Supply a comma-separated list. Allowed measurements: query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_mean, assignment_wait_p95, activation_rate, activation_duration_mean, activation_duration_p95.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["1m", "5m", "10m", "30m", "1h", "1d"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -228,9 +228,9 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "attributes",
+        name: "since",
         source: "flag",
-        flag: "attributes",
+        flag: "since",
       },
       {
         location: "query",
@@ -240,21 +240,21 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "interval",
-        source: "flag",
-        flag: "interval",
-      },
-      {
-        location: "query",
-        name: "since",
-        source: "flag",
-        flag: "since",
-      },
-      {
-        location: "query",
         name: "to",
         source: "flag",
         flag: "to",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
       },
     ],
   },
@@ -268,31 +268,6 @@ export const apiCommands = [
     readOnly: true,
     flags: [
       {
-        name: "attributes",
-        type: "string",
-        repeatable: false,
-        required: false,
-        description:
-          "Up to eight distinct workload measurements. Defaults to invocation rate, latency p50/p95/p99, error rate, and timeout rate. Supply a comma-separated list. Allowed measurements: query_rate, query_error_rate, query_timeout_rate, query_canceled_rate, query_duration_mean, query_duration_p50, query_duration_p95, query_duration_p99, duckdb_duration_mean, rpc_rate, rpc_duration_mean, rpc_duration_p95.",
-      },
-      {
-        name: "from",
-        type: "string",
-        repeatable: false,
-        required: false,
-        description:
-          "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
-      },
-      {
-        name: "interval",
-        type: "string",
-        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
-        repeatable: false,
-        required: false,
-        description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
-      },
-      {
         name: "since",
         type: "string",
         repeatable: false,
@@ -301,12 +276,37 @@ export const apiCommands = [
           "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
       },
       {
+        name: "from",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
+      },
+      {
         name: "to",
         type: "string",
         repeatable: false,
         required: false,
         description:
-          "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+          "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to query_rate, query_duration_p50, query_duration_p95, query_duration_p99, query_error_rate, query_timeout_rate. Supply a comma-separated list. Allowed measurements: query_rate, query_error_rate, query_timeout_rate, query_canceled_rate, query_duration_mean, query_duration_p50, query_duration_p95, query_duration_p99, duckdb_duration_mean, rpc_rate, rpc_duration_mean, rpc_duration_p95.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["1m", "5m", "10m", "30m", "1h", "1d"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -317,9 +317,9 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "attributes",
+        name: "since",
         source: "flag",
-        flag: "attributes",
+        flag: "since",
       },
       {
         location: "query",
@@ -329,21 +329,21 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "interval",
-        source: "flag",
-        flag: "interval",
-      },
-      {
-        location: "query",
-        name: "since",
-        source: "flag",
-        flag: "since",
-      },
-      {
-        location: "query",
         name: "to",
         source: "flag",
         flag: "to",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
       },
     ],
   },
@@ -455,7 +455,7 @@ export const apiCommands = [
     definition: "v2RestartWarehouseReplication",
     summary: "Start or restart Warehouse replication",
     description:
-      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.",
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.",
     readOnly: false,
     confirmDescription: true,
     flags: [],
@@ -631,14 +631,6 @@ export const apiCommands = [
     },
     flags: [
       {
-        name: "partition-by",
-        type: "json",
-        repeatable: false,
-        required: false,
-        description:
-          'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
-      },
-      {
         name: "reset-table",
         type: "boolean",
         repeatable: false,
@@ -653,6 +645,14 @@ export const apiCommands = [
         required: false,
         description:
           'Omit to preserve the saved sorting. Null makes sorting unmanaged. The none selector explicitly clears sorting. Otherwise, supply the complete sort selector. Example: `{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}`. Sort by the primary key with `{"kind":"primary_key"}` or clear sorting with `{"kind":"none"}`.',
+      },
+      {
+        name: "partition-by",
+        type: "json",
+        repeatable: false,
+        required: false,
+        description:
+          'Omit to preserve the saved partitioning. Null makes partitioning unmanaged. An empty list explicitly clears partitioning. Otherwise, supply all ordered partition keys. Day example: `[{"column":"event_at","transform":{"kind":"day"}}]`. Bucket example: `[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]`. Use `[]` to clear or `null` to stop managing partitioning.',
       },
     ],
     bindings: [
@@ -669,13 +669,6 @@ export const apiCommands = [
       },
       {
         location: "body",
-        name: "partition_by",
-        pointer: "/data/attributes/partition_by",
-        source: "flag",
-        flag: "partition-by",
-      },
-      {
-        location: "body",
         name: "reset_table",
         pointer: "/data/attributes/reset_table",
         source: "flag",
@@ -687,6 +680,13 @@ export const apiCommands = [
         pointer: "/data/attributes/sort_by",
         source: "flag",
         flag: "sort-by",
+      },
+      {
+        location: "body",
+        name: "partition_by",
+        pointer: "/data/attributes/partition_by",
+        source: "flag",
+        flag: "partition-by",
       },
     ],
   },

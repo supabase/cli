@@ -72,15 +72,7 @@ Enables replication for the currently eligible tables in a schema, or the named 
 
 Inspect Warehouse capacity diagnostics
 
-Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use `--since` or specify both `--from` and `--to`; the default is the last 30 minutes.
-
-Each measurement includes its definition, unit, aggregation, requested and effective ranges, `rate_window_seconds`, source-sample freshness, availability, coverage, and full series with dimension labels such as `reason`, `kind`, and `result`.
-
-Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or `null`; they do not establish healthy or idle capacity.
-
-Point timestamps are evaluation times; `last_sample_at` is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range.
-
-Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.
+Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.
 
 - Access: read-only, no consent.
 - Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
@@ -90,11 +82,11 @@ Each request returns up to eight measurements, and a failure of one measurement 
 
 | Flag                        | Type                                          | Required | Repeatable | Binds to           |
 | --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
-| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
-| `--from <from>`             | string                                        | no       | no         | query `from`       |
-| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
 | `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
 | `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
 
 ## `supabase warehouse inspect query-stats`
 
@@ -110,11 +102,11 @@ Returns aggregate workload measurements over a bounded time range, using the pro
 
 | Flag                        | Type                                          | Required | Repeatable | Binds to           |
 | --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
-| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
-| `--from <from>`             | string                                        | no       | no         | query `from`       |
-| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
 | `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
 | `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
 
 ## `supabase warehouse replication add`
 
@@ -158,7 +150,7 @@ Removes one selected source table or all selected tables in a schema as a batch.
 
 Start or restart Warehouse replication
 
-Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.
+Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.
 
 - Access: mutation, consent defaults to No (`--yes` when it cannot prompt).
 - Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
@@ -257,9 +249,9 @@ Updates saved sorting and partitioning rules for one source table object identif
 
 | Flag                    | Type    | Required | Repeatable | Binds to                             |
 | ----------------------- | ------- | -------- | ---------- | ------------------------------------ |
-| `--partition-by <json>` | json    | no       | no         | body `/data/attributes/partition_by` |
 | `--reset-table`         | boolean | no       | no         | body `/data/attributes/reset_table`  |
 | `--sort-by <json>`      | json    | no       | no         | body `/data/attributes/sort_by`      |
+| `--partition-by <json>` | json    | no       | no         | body `/data/attributes/partition_by` |
 
 ## `supabase warehouse tables list`
 
