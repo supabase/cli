@@ -63,7 +63,7 @@ describe("buildStartContainerCreateArgs", () => {
       "--expose",
       "4000",
       "--health-cmd",
-      "curl -sSfL --head -o /dev/null http://127.0.0.1:4000/health",
+      "exec curl -sSfL --head -o /dev/null http://127.0.0.1:4000/health",
       "--health-interval",
       "10s",
       "--health-timeout",
@@ -294,15 +294,15 @@ describe("buildHealthCmdArg", () => {
         "/dev/null",
         "http://127.0.0.1:4000/health",
       ]),
-    ).toBe("curl -sSfL --head -o /dev/null http://127.0.0.1:4000/health");
+    ).toBe("exec curl -sSfL --head -o /dev/null http://127.0.0.1:4000/health");
   });
 
   test("quotes an exec-form argument containing spaces so the container shell re-splits it back to one token", () => {
-    expect(buildHealthCmdArg(["CMD", "echo", "hello world"])).toBe("echo 'hello world'");
+    expect(buildHealthCmdArg(["CMD", "echo", "hello world"])).toBe("exec echo 'hello world'");
   });
 
   test("escapes an embedded single quote using the '\\'' POSIX technique", () => {
-    expect(buildHealthCmdArg(["CMD", "echo", "it's here"])).toBe("echo 'it'\\''s here'");
+    expect(buildHealthCmdArg(["CMD", "echo", "it's here"])).toBe("exec echo 'it'\\''s here'");
   });
 });
 
