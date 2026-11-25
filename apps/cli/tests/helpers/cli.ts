@@ -962,7 +962,7 @@ const runSupabaseUntil = (
           Effect.andThen(Effect.sync(() => killProcessGroup(spawned.pid, "SIGKILL"))),
         ),
       );
-      const result = yield* spawned.waitForExit();
+      const { exitFailure: _expectedStop, ...result } = yield* spawned.waitForExit();
       return { ...result, exitCode: 0 };
     }),
   );

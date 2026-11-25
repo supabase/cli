@@ -289,7 +289,7 @@ describe("supabase start slim images (e2e)", () => {
           for (const image of latestImagesToPull()) {
             yield* ensurePinnedImage(image, deadline);
           }
-        }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+        }),
       ),
     PULL_TIMEOUT_MS + 10_000,
   );

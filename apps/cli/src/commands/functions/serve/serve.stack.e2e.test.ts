@@ -22,7 +22,11 @@ import {
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { homedir } from "node:os";
 
-import { type SpawnedSupabase, spawnSupabase } from "../../../../tests/helpers/cli.ts";
+import {
+  requireCliSuccess,
+  type SpawnedSupabase,
+  spawnSupabase,
+} from "../../../../tests/helpers/cli.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
@@ -189,10 +193,7 @@ const serve = Effect.fn("FunctionsServeE2e.serve")(function* (
 const interrupt = Effect.fn("FunctionsServeE2e.interrupt")(function* (child: SpawnedSupabase) {
   yield* child.kill("SIGINT");
   const exit = yield* child.waitForExit(120_000);
-  expect(
-    exit.exitCode,
-    `${exit.exitFailure ?? ""}\nstdout:\n${child.stdout()}\nstderr:\n${child.stderr()}`,
-  ).toBe(0);
+  requireCliSuccess(exit, "supabase functions serve shutdown");
 });
 
 const invoke = Effect.fn("FunctionsServeE2e.invoke")(function* (
