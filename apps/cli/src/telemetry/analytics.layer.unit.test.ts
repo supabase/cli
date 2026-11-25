@@ -59,6 +59,12 @@ describe("collectEnvSignals", () => {
     });
   });
 
+  it("records SUPABASE_EXPERIMENTAL_STACK with its value", () => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: "1" })).toEqual({
+      SUPABASE_EXPERIMENTAL_STACK: "1",
+    });
+  });
+
   it("caps value-key strings at MaxEnvSignalValueLength chars", () => {
     const long = "a".repeat(MaxEnvSignalValueLength + 50);
     const signals = readEnvSignals({ AI_AGENT: long });

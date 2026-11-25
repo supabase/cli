@@ -671,7 +671,8 @@ describe("init", () => {
     {
       env: {},
       interactive: true,
-      expected: "set SUPABASE_EXPERIMENTAL_STACK=1 before your next `supabase init`",
+      expected:
+        "run `SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force` before you edit supabase/config.jsonc",
     },
     {
       env: { SUPABASE_EXPERIMENTAL_STACK: "1" },

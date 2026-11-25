@@ -15,8 +15,8 @@ const startStackNudgeMessage = (configFile: ConfigFileRef): string =>
 To switch: run \`supabase stop\`, remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental", "stack", "true")}.
 Steps and limitations: ${DOCS_URL}`;
 
-const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack: set SUPABASE_EXPERIMENTAL_STACK=1 before your next \`supabase init\`.
-To switch this project: ${DOCS_URL}`;
+const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack. To use it in this project, run \`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force\` before you edit supabase/config.jsonc.
+Steps and limitations: ${DOCS_URL}`;
 
 const INIT_STACK_ENABLED_MESSAGE =
   "Experimental local stack enabled in supabase/config.jsonc. Share feedback: https://github.com/supabase/cli/issues";
