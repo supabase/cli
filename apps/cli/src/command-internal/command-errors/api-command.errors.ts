@@ -20,6 +20,16 @@ export class ApiCommandStatusError extends Data.TaggedError("ApiCommandStatusErr
   }
 }
 
+/** A generated command could not reach the Management API or read its response. */
+export class ApiCommandNetworkError extends Data.TaggedError("ApiCommandNetworkError")<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
+
 /** The invocation cannot form a valid request; nothing was sent. */
 export class ApiCommandUsageError extends Data.TaggedError("ApiCommandUsageError")<{
   readonly message: string;

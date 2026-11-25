@@ -1154,6 +1154,80 @@ describe("deriveApiCommands", () => {
       expect(result.problems.join("\n")).toContain(message);
     });
 
+    it("rejects a poll status that is not a string in the read response", () => {
+      const numericStatus = {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              attributes: { type: "object", properties: { status: { type: "integer" } } },
+            },
+          },
+        },
+      };
+      const result = deriveHidden({
+        "create-thing": changeThing(link({})),
+        "get-thing": hiddenWith(poll, jsonResponse(numericStatus)),
+      });
+
+      expect(result.problems.join("\n")).toContain(
+        'wait.status pointer "/data/attributes/status" is not a string in the get-thing response',
+      );
+    });
+
+    it("rejects a wait parameter whose linked value has another type than the read parameter", () => {
+      const numericId = {
+        type: "object",
+        required: ["data"],
+        properties: {
+          data: { type: "object", required: ["id"], properties: { id: { type: "integer" } } },
+        },
+      };
+      const result = derive({
+        "create-thing": changeThing(link({ thing_id: "$response.body#/data/id" }), numericId),
+        "get-thing": readThing,
+      });
+
+      expect(result.problems.join("\n")).toContain(
+        'wait.params "thing_id" pointer "/data/id" is integer but get-thing parameter "thing_id" is string',
+      );
+    });
+
+    it("rejects path-item parameters on a poll-only read", () => {
+      const result = deriveApiCommands({
+        spec: {
+          paths: {
+            "/v1/projects/{ref}/create-thing": {
+              post: {
+                operationId: "create-thing",
+                ...changeThing(link({})),
+              },
+            },
+            "/v1/projects/{ref}/get-inspect": {
+              post: { operationId: "get-inspect", ...inspectThing },
+            },
+            "/v1/projects/{ref}/get-thing": {
+              parameters: [{ name: "extra", in: "query", schema: { type: "string" } }],
+              get: { operationId: "get-thing", ...hiddenThing },
+            },
+          },
+        },
+        generated: ["create-thing", "get-inspect"],
+        nouns: { thing: thingNoun },
+        operationIdMap: {
+          "create-thing": "v2EnableWarehouse",
+          "get-inspect": "v2EnableWarehouse",
+          "get-thing": "v2EnableWarehouse",
+        },
+        handWrittenRoots: new Set(),
+      });
+
+      expect(result.problems).toContain(
+        "get-thing: unsupported in this runtime: path-item parameters on /v1/projects/{ref}/get-thing; declare them on the operation",
+      );
+    });
+
     it("rejects a linked wait on an operation with several 2xx responses", () => {
       const responses = {
         ...changeResponse(link({ thing_id: "$response.body#/data/id" })),
@@ -1569,6 +1643,27 @@ describe("deriveApiCommands", () => {
       const result = derive(operations);
 
       expect(result.problems).toContain(problem);
+    });
+
+    it("rejects path-item parameters on a generated operation", () => {
+      const result = deriveApiCommands({
+        spec: {
+          paths: {
+            "/v1/projects/{ref}/create-thing": {
+              parameters: [ref],
+              post: { operationId: "create-thing", ...operation({ ...create, parameters: [] }) },
+            },
+          },
+        },
+        generated: ["create-thing"],
+        nouns: { thing: thingNoun },
+        operationIdMap: { "create-thing": "v2EnableWarehouse" },
+        handWrittenRoots: new Set(),
+      });
+
+      expect(result.problems).toContain(
+        "create-thing: unsupported in this runtime: path-item parameters on /v1/projects/{ref}/create-thing; declare them on the operation",
+      );
     });
 
     it("rejects an operation that the typed client does not have", () => {

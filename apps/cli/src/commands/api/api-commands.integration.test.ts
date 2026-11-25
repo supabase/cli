@@ -15,7 +15,6 @@ import {
   Stdio,
 } from "effect";
 import { CliOutput, Command } from "effect/cli";
-import * as HttpClientError from "effect/http/HttpClientError";
 import * as TestClock from "effect/testing/TestClock";
 
 import { respondToComplete } from "../../cli/complete.ts";
@@ -48,6 +47,7 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
+  ApiCommandNetworkError,
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandUsageError,
@@ -159,6 +159,8 @@ interface Reply {
   readonly body?: unknown;
   /** Fails the body stream mid-read, after the status line was delivered. */
   readonly unreadable?: boolean;
+  /** Rejects the request before any status line, like an unreachable host. */
+  readonly unreachable?: boolean;
 }
 
 type Route = (request: Sent) => Reply;
@@ -218,7 +220,10 @@ const withApi = (route: Route, sent: Array<Sent>, seen: Array<string>) => {
         body: text === "" ? undefined : decodeJson(text),
       };
       sent.push(entry);
-      return replyOf(route(entry));
+      const reply = route(entry);
+      return reply.unreachable === true
+        ? Promise.reject(new TypeError("Unable to connect"))
+        : replyOf(reply);
     });
   };
   return <A, E, R>(body: Effect.Effect<A, E, R>) =>
@@ -1981,17 +1986,61 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("fails with a network error when the success body cannot be read", () => {
+    it.effect("says the change was accepted when its success body cannot be read", () => {
       const { out, run } = setup(["warehouse", "enable", "--schema", "public"], {
         yes: true,
         route: () => ({ status: 202, unreadable: true }),
       });
       return Effect.gen(function* () {
         const failure = failureOf(yield* Effect.exit(run));
-        expect(HttpClientError.isHttpClientError(failure)).toBe(true);
+        expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+        expect(failure).toMatchObject({
+          message: expect.stringContaining(
+            "The API accepted the request (Enable Warehouse replication)",
+          ),
+          suggestion: "Check the current state before running the command again.",
+        });
         expect(out.stdoutText).toBe("");
       });
     });
+
+    it.effect(
+      "maps an unreachable API on a read to a network error that suggests running it again",
+      () => {
+        const { run } = setup(["warehouse", "status"], {
+          route: () => ({ status: 0, unreachable: true }),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          const failure = yield* Fiber.join(fiber);
+          expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining("The Management API could not be reached"),
+            suggestion: "Check your network connection and run the command again.",
+          });
+        });
+      },
+    );
+
+    it.effect(
+      "maps an unreachable API on a mutation to a network error that says to check state first",
+      () => {
+        const { run } = setup(
+          ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders"],
+          { yes: true, route: () => ({ status: 0, unreachable: true }) },
+        );
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining("The Management API could not be reached"),
+            suggestion:
+              "The request may have reached the API. Check the current state before running the command again.",
+          });
+        });
+      },
+    );
 
     it.effect.each([
       {
@@ -2289,10 +2338,38 @@ describe("generated warehouse commands", () => {
         yield* driveClock(fiber);
         const failure = yield* Fiber.join(fiber);
         expect(failure).toBeInstanceOf(ApiCommandStatusError);
-        expect(failure).toMatchObject({ status: 409, message: "selection changed (HTTP 409)" });
+        expect(failure).toMatchObject({
+          status: 409,
+          message:
+            "The API accepted the request (Enable Warehouse replication), but reading it failed: selection changed (HTTP 409)",
+          suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
+        });
         expect(sent.filter((request) => request.method === "GET")).toHaveLength(1);
       });
     });
+
+    it.effect(
+      "keeps the permission hint when the read after an accepted change is forbidden",
+      () => {
+        const { run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+          yes: true,
+          route: enableThenPoll([
+            { status: 403, body: { error: { code: "forbidden", message: "Forbidden" } } },
+          ]),
+        });
+        return Effect.gen(function* () {
+          const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* driveClock(fiber);
+          const failure = yield* Fiber.join(fiber);
+          expect(failure).toMatchObject({
+            status: 403,
+            message:
+              "The API accepted the request (Enable Warehouse replication), but reading it failed: Forbidden (HTTP 403)",
+            suggestion: expect.stringContaining("Your token needs the permissions:"),
+          });
+        });
+      },
+    );
 
     it.effect("fails with the generic operation error when a failed status has no error", () => {
       const { run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
@@ -2500,6 +2577,25 @@ describe("generated warehouse commands", () => {
         expect(out.events).toEqual([{ type: "result", data: null, timestamp: expect.any(String) }]);
       });
     });
+
+    it.effect(
+      "says an accepted mutation's non-JSON success body was accepted, without a retry",
+      () => {
+        const { out, run } = setup(
+          ["warehouse", "replication", "resync", "--schema", "public", "--table", "orders"],
+          { yes: true, route: () => ({ status: 202, body: "not json" }), outputFormat: "json" },
+        );
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining("The API accepted the request"),
+            suggestion: "Check the current state before running the command again.",
+          });
+          expect(out.stdoutText).toBe("");
+        });
+      },
+    );
 
     it.effect("fails a non-JSON success body for stream-json without a result frame", () => {
       const { out, run } = setup(["warehouse", "status"], {

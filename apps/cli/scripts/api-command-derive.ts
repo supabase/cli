@@ -137,6 +137,7 @@ interface Operation {
   readonly method: (typeof HTTP_METHODS)[number];
   readonly node: JsonObject;
   readonly pathItem: JsonObject;
+  readonly path: string;
 }
 
 interface OperationMetadata {
@@ -432,7 +433,7 @@ const successSchema = (spec: JsonObject, operation: Operation): unknown => {
 
 const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => {
   const operations = new Map<string, Operation>();
-  for (const rawItem of Object.values(asRecord(spec.paths) ?? {})) {
+  for (const [path, rawItem] of Object.entries(asRecord(spec.paths) ?? {})) {
     const pathItem = asRecord(rawItem);
     if (pathItem === undefined) continue;
     for (const method of HTTP_METHODS) {
@@ -444,6 +445,7 @@ const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => 
         method,
         node,
         pathItem,
+        path,
       });
     }
   }
@@ -451,7 +453,7 @@ const collectOperations = (spec: JsonObject): ReadonlyMap<string, Operation> => 
 };
 
 const operationParameters = (spec: JsonObject, operation: Operation): ReadonlyArray<JsonObject> =>
-  [...asArray(operation.pathItem.parameters), ...asArray(operation.node.parameters)]
+  asArray(operation.node.parameters)
     .map((raw) => asRecord(resolve(spec, raw)))
     .filter(Predicate.isNotUndefined);
 
@@ -489,6 +491,17 @@ const readMetadata = (
     }
   }
   return metadata;
+};
+
+const requireNoPathItemParameters = (
+  operation: Operation,
+  fail: (reason: string) => void,
+): void => {
+  if (asArray(operation.pathItem.parameters).length > 0) {
+    fail(
+      `unsupported in this runtime: path-item parameters on ${operation.path}; declare them on the operation`,
+    );
+  }
 };
 
 const requireExperimental = (operation: Operation, fail: (reason: string) => void): void => {
@@ -699,6 +712,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
 
     requireExperimental(operation, fail);
+    requireNoPathItemParameters(operation, fail);
     const summary = asString(operation.node.summary);
     if (summary === undefined) fail("operation has no summary");
 
@@ -988,6 +1002,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       continue;
     }
     requireExperimental(operation, fail);
+    requireNoPathItemParameters(operation, fail);
     requireOneWait(poll, polledLinkTarget(spec, operations, operation), fail);
     if (!generated.includes(inspectId)) {
       fail(`inspect operation "${inspectId}" is not a generated operation`);
@@ -1071,6 +1086,16 @@ function lintWait(input: {
   }
   for (const parameter of readParameters) {
     const parameterName = asString(parameter.name);
+    const linkedPointer = parameterName === undefined ? undefined : wait.params[parameterName];
+    if (parameterName !== undefined && linkedPointer !== undefined) {
+      const linked = asRecord(resolvePointer(spec, changeResponse, linkedPointer));
+      const expected = asRecord(resolve(spec, parameter.schema))?.type;
+      if (linked !== undefined && linked.type !== expected) {
+        fail(
+          `wait.params "${parameterName}" pointer "${linkedPointer}" is ${String(linked.type)} but ${wait.read} parameter "${parameterName}" is ${String(expected)}`,
+        );
+      }
+    }
     if (
       wait.read !== operation.id &&
       parameter.required === true &&
@@ -1086,6 +1111,9 @@ function lintWait(input: {
   const status = resolvePointer(spec, readResponse, wait.status);
   if (status === undefined) {
     fail(`wait.status pointer "${wait.status}" does not resolve in the ${wait.read} response`);
+  }
+  if (status !== undefined && asRecord(status)?.type !== "string") {
+    fail(`wait.status pointer "${wait.status}" is not a string in the ${wait.read} response`);
   }
   if (wait.error !== undefined && resolvePointer(spec, readResponse, wait.error) === undefined) {
     fail(`wait.error pointer "${wait.error}" does not resolve in the ${wait.read} response`);

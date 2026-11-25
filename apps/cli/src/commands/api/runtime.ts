@@ -27,8 +27,10 @@ import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
+  acceptanceOf,
   linkedReadInput,
   sendApiRequest,
+  summaryText,
   waitForOperation,
   writeApiResponse,
   writeDryRun,
@@ -146,9 +148,6 @@ const parseTimeoutMillis = (value: string) =>
     ),
   );
 
-const summaryText = (entry: Pick<ApiCommandEntry, "summary">): string =>
-  entry.summary.replace(/\.$/, "");
-
 /**
  * Runs `use` under an output task, handing it the task's message updater; the task is cleared on
  * success and marked failed or cancelled otherwise.
@@ -229,6 +228,7 @@ const handle = Effect.fn("api-command.run")(function* (
         });
       }
       const api = yield* (yield* CommandPlatformApiFactory).make;
+      const acceptance = acceptanceOf(entry);
 
       if (waiting) {
         // A read that polls itself already returns the shape it prints; any other wait prints
@@ -256,18 +256,19 @@ const handle = Effect.fn("api-command.run")(function* (
             readInput,
             ref,
             timeoutMillis,
+            accepted: acceptance,
             onPoll: (status) =>
               update(status === undefined ? polling : `${polling} (status: ${singleLine(status)})`),
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");
-        return yield* writeApiResponse(accepted ?? settled, format);
+        return yield* writeApiResponse(accepted ?? settled, format, acceptance);
       }
       const response = yield* withTask(summaryText(entry), () =>
         sendApiRequest(api, entry, decoded),
       );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
-      return yield* writeApiResponse(response, format);
+      return yield* writeApiResponse(response, format, acceptance);
     }).pipe(Effect.ensuring(flags.dryRun ? Effect.void : cache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

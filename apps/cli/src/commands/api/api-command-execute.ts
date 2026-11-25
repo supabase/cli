@@ -12,12 +12,68 @@ import { readPointer } from "./api-command-pointer.ts";
 import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
 import { renderDryRunText, renderResponseText, singleLine } from "./api-command.format.ts";
 import {
+  ApiCommandNetworkError,
   ApiCommandOperationFailedError,
   ApiCommandStatusError,
   ApiCommandUnexpectedResponseError,
   ApiCommandWaitTimeoutError,
 } from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry, ApiCommandWait, ApiPollRead } from "./api-command.model.ts";
+
+export const summaryText = (entry: Pick<ApiCommandEntry, "summary">): string =>
+  entry.summary.replace(/\.$/, "");
+
+/** A mutation the API accepted; failures after it describe its state, so none suggests running it again. */
+export interface Acceptance {
+  readonly action: string;
+  /** The command that shows the state, once a wait knows it. */
+  readonly statusCommand?: string;
+}
+
+/** The acceptance a mutation's 2xx stands for; a read has none. */
+export const acceptanceOf = (
+  entry: Pick<ApiCommandEntry, "summary"> & Partial<Pick<ApiCommandEntry, "readOnly">>,
+): Acceptance | undefined =>
+  entry.readOnly === false ? { action: summaryText(entry) } : undefined;
+
+const acceptedMessage = (accepted: Acceptance, failure: string): string =>
+  `The API accepted the request (${accepted.action}), but ${failure}`;
+
+const inspectSuggestion = ({ statusCommand }: Acceptance): string =>
+  statusCommand === undefined
+    ? "Check the current state before running the command again."
+    : `Check the current state with \`${statusCommand}\` before running the command again.`;
+
+const causeMessage = (cause: unknown): string | undefined =>
+  cause instanceof Error && cause.message !== "" ? cause.message : undefined;
+
+/** A request that failed in transit; `accepted` is set when a mutation's 2xx came first. */
+const networkError = (
+  error: HttpClientError.HttpClientError,
+  mutation: boolean,
+  accepted: Acceptance | undefined,
+) => {
+  const { reason } = error;
+  const detail =
+    reason.description ??
+    (reason._tag === "TransportError" ? causeMessage(reason.cause) : undefined);
+  const cause = sanitizeErrorBody(detail ?? reason._tag);
+  if (accepted !== undefined) {
+    return new ApiCommandNetworkError({
+      message: acceptedMessage(
+        accepted,
+        `the connection to the Management API failed afterwards (${cause}).`,
+      ),
+      suggestion: inspectSuggestion(accepted),
+    });
+  }
+  return new ApiCommandNetworkError({
+    message: `The Management API could not be reached (${cause}).`,
+    suggestion: mutation
+      ? "The request may have reached the API. Check the current state before running the command again."
+      : "Check your network connection and run the command again.",
+  });
+};
 
 const POLL_BASE_DELAY = "1 second";
 const POLL_MAX_DELAY_MILLIS = 10_000;
@@ -111,6 +167,7 @@ const apiErrorFields = (body: unknown) => {
 const statusError = Effect.fnUntraced(function* (
   operationId: string,
   response: HttpClientResponse.HttpClientResponse,
+  after: Acceptance | undefined,
 ) {
   const text = textDecoder.decode(
     yield* readBytes(response).pipe(Effect.orElseSucceed(() => new Uint8Array())),
@@ -119,18 +176,21 @@ const statusError = Effect.fnUntraced(function* (
   const fields = apiErrorFields(body);
   const { entitlement } = planGateFromResponse(response.status, text);
   const ownHint = fields.hint === undefined ? undefined : sanitizeErrorBody(fields.hint);
+  const message =
+    fields.message === undefined || fields.message === ""
+      ? `Unexpected status ${response.status}`
+      : `${sanitizeErrorBody(fields.message)} (HTTP ${response.status})`;
+  const hasOwnHint = ownHint !== undefined && ownHint.trim() !== "";
   return yield* new ApiCommandStatusError({
     status: response.status,
     message:
-      fields.message === undefined || fields.message === ""
-        ? `Unexpected status ${response.status}`
-        : `${sanitizeErrorBody(fields.message)} (HTTP ${response.status})`,
-    suggestion:
-      ownHint === undefined || ownHint.trim() === ""
-        ? entitlement === undefined
-          ? statusHint(operationId, response.status)
-          : undefined
-        : ownHint,
+      after === undefined ? message : acceptedMessage(after, `reading it failed: ${message}`),
+    suggestion: hasOwnHint
+      ? ownHint
+      : entitlement !== undefined
+        ? undefined
+        : (statusHint(operationId, response.status) ??
+          (after === undefined ? undefined : inspectSuggestion(after))),
     ...(entitlement === undefined ? {} : { entitlement }),
   });
 });
@@ -142,44 +202,64 @@ export interface ApiCommandResponse {
   readonly headers: Headers.Headers;
 }
 
+/** The operation a request runs; `readOnly` is known for generated commands, not for hidden poll reads. */
+type ApiRequestEntry = ApiPollRead & Partial<Pick<ApiCommandEntry, "readOnly">>;
+
 /**
  * Sends the decoded input of `entry` through `api` and returns the 2xx response; any other status
- * fails with the API's own message and hint.
+ * fails with the API's own message and hint, and a transport failure with a network error. `after`
+ * is the mutation a follow-up read comes after: its failures say the API accepted the change.
  */
 export const sendApiRequest = Effect.fnUntraced(function* (
   api: ApiClient,
-  entry: Pick<ApiCommandEntry, "definition" | "operationId">,
+  entry: ApiRequestEntry,
   decoded: OperationInput<OperationId>,
+  after?: Acceptance,
 ) {
-  const response = yield* api.executeRaw<OperationId>(definitionOf(entry), decoded);
+  const mutation = entry.readOnly === false;
+  const accepted = after ?? acceptanceOf(entry);
+  const response = yield* api
+    .executeRaw<OperationId>(definitionOf(entry), decoded)
+    .pipe(
+      Effect.catchTag("HttpClientError", (error) =>
+        Effect.fail(networkError(error, mutation, after)),
+      ),
+    );
   if (response.status < 200 || response.status >= 300) {
-    return yield* statusError(entry.operationId, response);
+    return yield* statusError(entry.operationId, response, after);
   }
-  const result: ApiCommandResponse = {
-    status: response.status,
-    bytes: yield* readBytes(response),
-    headers: response.headers,
-  };
+  const bytes = yield* readBytes(response).pipe(
+    Effect.catchTag("HttpClientError", (error) =>
+      Effect.fail(networkError(error, mutation, accepted)),
+    ),
+  );
+  const result: ApiCommandResponse = { status: response.status, bytes, headers: response.headers };
   return result;
 });
 
 const parseResponse = (response: ApiCommandResponse): unknown =>
   Option.getOrUndefined(decodeJsonText(textDecoder.decode(response.bytes)));
 
-const invalidJsonResponse = () =>
-  new ApiCommandUnexpectedResponseError({
-    message: "The API returned a success response that is not valid JSON.",
-    suggestion: "Retry the command; if it keeps failing, report it with the command you ran.",
-  });
+const invalidJsonResponse = (accepted: Acceptance | undefined) =>
+  accepted === undefined
+    ? new ApiCommandUnexpectedResponseError({
+        message: "The API returned a success response that is not valid JSON.",
+        suggestion: "Retry the command; if it keeps failing, report it with the command you ran.",
+      })
+    : new ApiCommandUnexpectedResponseError({
+        message: acceptedMessage(accepted, "its response is not valid JSON."),
+        suggestion: inspectSuggestion(accepted),
+      });
 
 /**
  * Writes a success response. Machine output requires valid JSON: json passes the bytes through
  * untouched and stream-json wraps the parsed value in a result frame; a 2xx without a body is
- * `null` there and `Done.` for a person.
+ * `null` there and `Done.` for a person. `accepted` is the mutation the response answers.
  */
 export const writeApiResponse = Effect.fnUntraced(function* (
   response: ApiCommandResponse,
   format: OutputFormat,
+  accepted?: Acceptance,
 ) {
   const output = yield* Output;
   if (response.bytes.length === 0) {
@@ -201,7 +281,7 @@ export const writeApiResponse = Effect.fnUntraced(function* (
     }
     return yield* output.raw(renderResponseText(parsed.value));
   }
-  if (Option.isNone(parsed)) return yield* invalidJsonResponse();
+  if (Option.isNone(parsed)) return yield* invalidJsonResponse(accepted);
   return format === "json"
     ? yield* output.rawBytes(response.bytes)
     : yield* writeResultFrame(parsed.value);
@@ -218,6 +298,8 @@ interface WaitInput {
   readonly readInput: Readonly<Record<string, unknown>>;
   readonly ref: string;
   readonly timeoutMillis: number;
+  /** The mutation whose change response the wait follows; absent for a read that polls itself. */
+  readonly accepted?: Acceptance | undefined;
   /** Called after each successful poll with the status it read. */
   readonly onPoll?: (status: string | undefined) => Effect.Effect<void>;
 }
@@ -267,10 +349,16 @@ const readPoll = (wait: ApiCommandWait, response: ApiCommandResponse): PollRead 
   return { response, body, status: typeof status === "string" ? status : undefined };
 };
 
+const noStatus = (wait: ApiCommandWait, after: Acceptance | undefined): string => {
+  const message = `${wait.read} returned no status at ${wait.status}.`;
+  return after === undefined ? message : acceptedMessage(after, message);
+};
+
 const classify = (
   wait: ApiCommandWait,
   read: PollRead,
   statusHint: string,
+  after: Acceptance | undefined,
 ): Effect.Effect<
   PollOutcome,
   ApiCommandOperationFailedError | ApiCommandUnexpectedResponseError
@@ -279,7 +367,7 @@ const classify = (
   if (status === undefined) {
     return Effect.fail(
       new ApiCommandUnexpectedResponseError({
-        message: `${wait.read} returned no status at ${wait.status}.`,
+        message: noStatus(wait, after),
         suggestion: statusHint,
       }),
     );
@@ -358,16 +446,19 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     onExcessProperty: "error",
   })(readInput).pipe(Effect.orDie);
   const statusInput = input.statusEntry.operationId === readEntry.operationId ? readInput : {};
-  const suggestion = `Check it with \`${statusCommand(input.statusEntry, input.ref, statusInput)}\`.`;
+  const command = statusCommand(input.statusEntry, input.ref, statusInput);
+  const suggestion = `Check it with \`${command}\`.`;
+  const after: Acceptance | undefined =
+    input.accepted === undefined ? undefined : { ...input.accepted, statusCommand: command };
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 
   const poll = Ref.update(attempts, (count) => count + 1).pipe(
-    Effect.andThen(sendApiRequest(input.api, readEntry, decoded)),
+    Effect.andThen(sendApiRequest(input.api, readEntry, decoded, after)),
     Effect.flatMap((response) => {
       const read = readPoll(wait, response);
       return Ref.set(lastStatus, read.status ?? null).pipe(
-        Effect.andThen(classify(wait, read, suggestion)),
+        Effect.andThen(classify(wait, read, suggestion, after)),
         Effect.tap(() => input.onPoll?.(read.status) ?? Effect.void),
       );
     }),

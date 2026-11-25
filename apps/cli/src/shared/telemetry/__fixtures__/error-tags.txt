@@ -1,4 +1,5 @@
 AccessTokenRequiredError
+ApiCommandNetworkError
 ApiCommandOperationFailedError
 ApiCommandStatusError
 ApiCommandUnexpectedResponseError
