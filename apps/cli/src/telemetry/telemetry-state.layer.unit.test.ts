@@ -237,7 +237,9 @@ describe("telemetryStateLayer while consent is denied", () => {
       });
       const state = yield* TelemetryState;
       yield* state.stitchLogin("gotrue-1");
-      expect((yield* readState).enabled).toBe(false);
+      const next = yield* readState;
+      expect(next.enabled).toBe(false);
+      expect(next.distinct_id).toBe("gotrue-1");
     }).pipe(Effect.provide(makeLayer(analytics, runtime)), withTempHome);
   });
 });

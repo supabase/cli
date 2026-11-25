@@ -2,6 +2,7 @@ import { DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { SecureRandom } from "effect/crypto";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import { publishTelemetryFile } from "../shared/telemetry/consent.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
@@ -426,7 +427,7 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
   };
 
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(state));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(state));
   return state;
 });
 
@@ -443,7 +444,7 @@ export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   const nextState: State = { ...state, enabled };
   const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
   return nextState;
 });
 
@@ -464,7 +465,7 @@ const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
   const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
 });
 
 const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(function* (
@@ -478,16 +479,16 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
   const nextState: State = { ...rest, device_id: yield* crypto.uuidV4() };
   const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
 });
 
 /**
- * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run:
+ * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` when a command runs:
  *
  *  - Reuses an existing `device_id` if the file is present.
  *  - Rotates `session_id` if `session_last_active` is older than 30 minutes.
- *  - Always sets `enabled: true` on a fresh state — the field is only flipped to `false` if the
- *    user has run `supabase telemetry disable`, in which case the prior value is preserved.
+ *  - Sets `enabled: true` on a fresh state and `enabled: false` when the file holds content that
+ *    does not decode. A decoded value is preserved.
  *  - While telemetry is disabled, updates an existing file but never creates one, so an opt-out
  *    by env var leaves no enabled state behind.
  *

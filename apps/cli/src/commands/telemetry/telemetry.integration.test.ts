@@ -290,6 +290,9 @@ describe("telemetry integration", () => {
       const ambientHome = path.join(dir, "ambient-home");
       const disable = setup(dir, {}, ambientHome);
       yield* runTelemetry(["telemetry", "disable"]).pipe(Effect.provide(disable.layer));
+      expect((yield* readTelemetryConfig(dir)).enabled).toBe(false);
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(path.join(ambientHome, TELEMETRY_FILE))).toBe(false);
 
       const status = setup(dir, {}, ambientHome);
       yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(status.layer));
