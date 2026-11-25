@@ -1,0 +1,15 @@
+---
+id: snippets
+kind: command
+category: sql-snippets
+title: snippets
+symbol: supabase snippets
+summary: Manage SQL snippets
+stability: stable
+deprecated: false
+inherits_flags: global
+parameters: []
+examples: []
+---
+
+List and download the SQL snippets saved in a project.

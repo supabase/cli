@@ -2,4 +2,3 @@ dist/
 coverage/
 supabase/
 !docs/supabase/
-docs/reference-beta/definitions/

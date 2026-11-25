@@ -15,7 +15,7 @@ function run(script: string, dir: string) {
 
 describe("reference-beta definitions", () => {
   it.effect(
-    "writes one schema-valid file per published command, and the check rejects a broken file",
+    "writes one schema-valid file per published command matching the committed copy, and the check rejects a broken file",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -27,6 +27,13 @@ describe("reference-beta definitions", () => {
         expect(generated.exitCode).toBe(0);
         const files = (yield* fs.readDirectory(dir)).filter((name) => name.endsWith(".md"));
         expect(files).toHaveLength(docsCommandTree(rootCommand).size);
+        const committedDir = path.join(cliRoot, "docs/reference-beta/definitions");
+        expect((yield* fs.readDirectory(committedDir)).toSorted()).toEqual(files.toSorted());
+        for (const name of files) {
+          expect(yield* fs.readFileString(path.join(committedDir, name))).toBe(
+            yield* fs.readFileString(path.join(dir, name)),
+          );
+        }
 
         const target = path.join(dir, "db-push.md");
         const original = yield* fs.readFileString(target);

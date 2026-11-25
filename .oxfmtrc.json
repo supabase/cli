@@ -5,6 +5,7 @@
     "packages/stack/src/functions/generated/",
     "apps/cli-e2e/fixtures/",
     "apps/cli/schemas/",
-    "**/testdata/"
+    "**/testdata/",
+    "apps/cli/docs/reference-beta/definitions/"
   ]
 }
