@@ -59,10 +59,19 @@ describe("collectEnvSignals", () => {
     });
   });
 
-  it("records SUPABASE_EXPERIMENTAL_STACK with its value", () => {
-    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: "1" })).toEqual({
-      SUPABASE_EXPERIMENTAL_STACK: "1",
+  it.each([
+    ["1", "true"],
+    ["TRUE", "true"],
+    ["0", "false"],
+    ["yes", "invalid"],
+  ])("records SUPABASE_EXPERIMENTAL_STACK=%j as %j", (value, expected) => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: value })).toEqual({
+      SUPABASE_EXPERIMENTAL_STACK: expected,
     });
+  });
+
+  it("skips an empty SUPABASE_EXPERIMENTAL_STACK", () => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: "" })).toBeUndefined();
   });
 
   it("caps value-key strings at MaxEnvSignalValueLength chars", () => {

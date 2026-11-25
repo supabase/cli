@@ -118,9 +118,11 @@ export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "AI_AGENT",
   "CURSOR_EXTENSION_HOST_ROLE",
   "SUPABASE_API_MAX_RETRIES",
-  "SUPABASE_EXPERIMENTAL_STACK",
   "TERM",
   "TERM_PROGRAM",
   "TERM_PROGRAM_VERSION",
   "TERM_COLOR_MODE",
 ];
+
+// Env vars recorded as "true", "false" or "invalid", parsed the way config booleans are.
+export const EnvSignalBooleanKeys: ReadonlyArray<string> = ["SUPABASE_EXPERIMENTAL_STACK"];

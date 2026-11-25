@@ -6,6 +6,7 @@ import { resolveExperimentalFeature } from "../shared/config/experimental-featur
 import { Output } from "../shared/output/output.service.ts";
 import { agentDetected } from "./agent-mode.ts";
 import { type ConfigFileRef, configSetting } from "./config-advice.ts";
+import { type ShellPlatform, shellQuoteArgument } from "./shell-quote.ts";
 
 const DOCS_URL =
   "https://supabase.com/docs/guides/local-development/running-multiple-local-projects";
@@ -15,8 +16,31 @@ const startStackNudgeMessage = (configFile: ConfigFileRef): string =>
 To switch: run \`supabase stop\`, remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental", "stack", "true")}.
 Steps and limitations: ${DOCS_URL}`;
 
-const INIT_STACK_NUDGE_MESSAGE = `Try the new faster, lighter, parallel local stack. To use it in this project, run \`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force\` before you edit supabase/config.jsonc.
-Steps and limitations: ${DOCS_URL}`;
+interface InitStackNoteInput {
+  readonly experimentalStack: boolean;
+  /** The resolved target directory, set only when `--workdir` was passed. */
+  readonly workdir: string | undefined;
+  readonly useOrioledb: boolean;
+  readonly platform: ShellPlatform;
+}
+
+const initStackRerunCommand = (input: InitStackNoteInput): string => {
+  const args = [
+    "init",
+    "--force",
+    ...(input.workdir === undefined ? [] : ["--workdir", input.workdir]),
+    ...(input.useOrioledb ? ["--use-orioledb"] : []),
+  ]
+    .map((argument) => shellQuoteArgument(argument, input.platform))
+    .join(" ");
+  return input.platform === "windows"
+    ? `$env:SUPABASE_EXPERIMENTAL_STACK=1; supabase ${args}`
+    : `SUPABASE_EXPERIMENTAL_STACK=1 supabase ${args}`;
+};
+
+const initStackNudgeMessage = (command: string): string =>
+  `Try the new faster, lighter, parallel local stack. To use it in this project, run \`${command}\`.
+That replaces supabase/config.jsonc, so only run it before you edit the file. Steps, limitations, and how to switch an edited config: ${DOCS_URL}`;
 
 const INIT_STACK_ENABLED_MESSAGE =
   "Experimental local stack enabled in supabase/config.jsonc. Share feedback: https://github.com/supabase/cli/issues";
@@ -96,14 +120,11 @@ export const maybeShowStartStackNudge = Effect.fn("StackNudge.maybeShowStart")(f
 
 /** Shows the `init` nudge or confirmation to a human at a terminal or an agent. */
 export const showInitStackNote = Effect.fn("StackNudge.showInit")(function* (
-  experimentalStack: boolean,
+  input: InitStackNoteInput,
 ) {
   const audience = yield* nudgeAudience;
   if (audience === undefined) return;
-  if (experimentalStack) return yield* emitNudge(INIT_STACK_ENABLED_MESSAGE);
-  yield* emitNudge(
-    audience === "agent"
-      ? `${INIT_STACK_NUDGE_MESSAGE}\n${INIT_AGENT_ASK_LINE}`
-      : INIT_STACK_NUDGE_MESSAGE,
-  );
+  if (input.experimentalStack) return yield* emitNudge(INIT_STACK_ENABLED_MESSAGE);
+  const message = initStackNudgeMessage(initStackRerunCommand(input));
+  yield* emitNudge(audience === "agent" ? `${message}\n${INIT_AGENT_ASK_LINE}` : message);
 });
