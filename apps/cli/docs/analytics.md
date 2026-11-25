@@ -125,6 +125,9 @@ Local-runtime commands also carry properties that split error rates by runtime:
   known: its stop code for `container_stopped`, `0` for `container_exited`, its crash code for
   `container_crashed`
 
+`skill display` records `skill_topic` on success: the canonical topic it printed (`overview`,
+growing with the topic registry), never the raw input.
+
 Flag capture is intentionally conservative: `flags` records only flags changed on the command
 line, and redacts each value unless it is boolean, a choice flag, or listed in the command's
 `safeFlags`.

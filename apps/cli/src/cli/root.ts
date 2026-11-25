@@ -45,6 +45,7 @@ import { pullCommand } from "../commands/pull/pull.command.ts";
 import { secretsCommand } from "../commands/secrets/secrets.command.ts";
 import { seedCommand } from "../commands/seed/seed.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
+import { skillCommand } from "../commands/skill/skill.command.ts";
 import { snippetsCommand } from "../commands/snippets/snippets.command.ts";
 import { sslEnforcementCommand } from "../commands/ssl-enforcement/ssl-enforcement.command.ts";
 import { ssoCommand } from "../commands/sso/sso.command.ts";
@@ -193,6 +194,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       secretsCommand,
       seedCommand,
       servicesCommand,
+      skillCommand,
       snippetsCommand,
       sslEnforcementCommand,
       ssoCommand,

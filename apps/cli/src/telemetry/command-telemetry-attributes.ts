@@ -1,5 +1,6 @@
 import { Context, Effect } from "effect";
 import type { StackRuntime } from "../command-internal/stack-runtime.ts";
+import type { SkillTopicSlug } from "../commands/skill/content/topics.ts";
 import type { ServeEndReason } from "../shared/functions/serve.ts";
 import {
   PropConfigFormat,
@@ -10,6 +11,7 @@ import {
   PropEdgeRuntimeExitCode,
   PropOrioleDb,
   PropServeEndReason,
+  PropSkillTopic,
   PropStackRuntime,
 } from "../shared/telemetry/event-catalog.ts";
 
@@ -36,6 +38,7 @@ export interface CommandTelemetryAttributeValues {
   readonly [PropStackRuntime]?: StackRuntime;
   readonly [PropServeEndReason]?: ServeEndReason;
   readonly [PropEdgeRuntimeExitCode]?: number;
+  readonly [PropSkillTopic]?: SkillTopicSlug;
 }
 
 /** Command-scoped attribute sink; `withCommandTelemetry` provides one, otherwise records are dropped. */

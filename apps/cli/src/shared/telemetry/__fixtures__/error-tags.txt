@@ -471,6 +471,8 @@ ServeLocalDbNotRunningError
 ServiceVersionNotFoundError
 ServicesEnvNotSupportedError
 ShadowDbError
+SkillDisplayOutputFlagUnsupportedError
+SkillTopicNotFoundError
 SnippetsDownloadNetworkError
 SnippetsDownloadUnexpectedStatusError
 SnippetsEnvNotSupportedError
