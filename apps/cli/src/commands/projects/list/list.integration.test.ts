@@ -1,8 +1,8 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -15,7 +15,18 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
+  CommandExecutor,
+  commandExecutorLayer,
+} from "../../../command-internal/command-executor.ts";
+import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { projectsList } from "./list.handler.ts";
+
+const runList = CommandExecutor.use((executor) =>
+  executor.run({ owner: "handler", handler: projectsList }, {}, Layer.empty),
+).pipe(Effect.provide([commandExecutorLayer, commandRuntimeLayer(["projects", "list"])]));
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
 
@@ -130,25 +141,37 @@ function setupTracked(opts: SetupOpts = {}) {
   });
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
-    projectId: opts.linked === false ? Option.none() : Option.some(VALID_REF),
+    projectId: opts.projectId ?? (opts.linked === false ? Option.none() : Option.some(VALID_REF)),
   });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
+  const analytics = mockAnalytics();
+  const cacheCallsAtFlush: number[] = [];
+  const telemetryWithOrderCheck = Layer.effect(
+    TelemetryState,
+    Effect.map(TelemetryState, (state) => ({
+      ...state,
+      flush: Effect.sync(() => cacheCallsAtFlush.push(cache.cacheCount)).pipe(
+        Effect.andThen(state.flush),
+      ),
+    })),
+  ).pipe(Layer.provide(telemetry.layer));
   const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
-    telemetry: telemetry.layer,
+    analytics,
+    telemetry: telemetryWithOrderCheck,
     linkedProjectCache: cache.layer,
   });
-  return { layer, out, telemetry, cache };
+  return { layer, out, telemetry, cache, analytics, cacheCallsAtFlush };
 }
 
 describe("projects list integration", () => {
   it.effect("renders a Glamour table with all six columns in text mode", () => {
     const { layer, out, api } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       assertPermissionDrift({ command: "projects list", requests: api.requests, exact: true });
       expect(out.stdoutText).toContain("LINKED");
       expect(out.stdoutText).toContain("ORG ID");
@@ -165,7 +188,7 @@ describe("projects list integration", () => {
   it.effect("marks the linked project with a bullet", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText).toContain("●");
     }).pipe(Effect.provide(layer));
   });
@@ -173,7 +196,7 @@ describe("projects list integration", () => {
   it.effect("renders no bullet when nothing is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText).not.toContain("●");
     }).pipe(Effect.provide(layer));
   });
@@ -181,7 +204,7 @@ describe("projects list integration", () => {
   it.effect("warns on stderr when no project is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stderrText).toContain("Cannot find project ref. Have you run supabase link?");
     }).pipe(Effect.provide(layer));
   });
@@ -189,7 +212,7 @@ describe("projects list integration", () => {
   it.effect("does not warn on stderr when a project is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stderrText).not.toContain("Cannot find project ref");
     }).pipe(Effect.provide(layer));
   });
@@ -205,34 +228,32 @@ describe("projects list integration", () => {
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
           yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
-          yield* projectsList({});
+          yield* runList;
           expect(out.stdoutText).toContain("●");
           expect(out.stdoutText).toContain("parent");
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.effect(
-      "marks the parent row with linked:true in the json payload (structured output)",
-      () => {
-        const { layer, out, workdir } = setup({
-          format: "json",
-          projectId: Option.none(),
-          response: [SAMPLE_PROJECT, PARENT_PROJECT],
-        });
-        return Effect.gen(function* () {
-          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
-          yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
-          yield* projectsList({});
-          const success = out.messages.find((m) => m.type === "success");
-          const { projects } = yield* Schema.decodeUnknownEffect(LinkedProjectsPayload)(
-            success?.data,
-          );
-          expect(projects.find((p) => p.id === PARENT_PROJECT.id)?.linked).toBe(true);
-          expect(projects.find((p) => p.id === SAMPLE_PROJECT.id)?.linked).toBe(false);
-        }).pipe(Effect.provide(layer));
-      },
-    );
+    it.effect("marks the parent in the JSON payload but caches the linked branch ref", () => {
+      const { layer, out, cache } = setupTracked({
+        format: "json",
+        projectId: Option.none(),
+        response: [SAMPLE_PROJECT, PARENT_PROJECT],
+      });
+      return Effect.gen(function* () {
+        yield* writeProjectRefFile(tempRoot.current, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(tempRoot.current, PARENT_PROJECT.id);
+        yield* runList;
+        expect(cache.cachedRef).toBe(BRANCH_OWN_REF);
+        const success = out.messages.find((m) => m.type === "success");
+        const { projects } = yield* Schema.decodeUnknownEffect(LinkedProjectsPayload)(
+          success?.data,
+        );
+        expect(projects.find((p) => p.id === PARENT_PROJECT.id)?.linked).toBe(true);
+        expect(projects.find((p) => p.id === SAMPLE_PROJECT.id)?.linked).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
 
     it.effect(
       "an exact match wins outright — a cache pointing at a different project must not steal the marker",
@@ -245,7 +266,7 @@ describe("projects list integration", () => {
           // Cache points elsewhere; the exact match on SAMPLE_PROJECT must still win outright.
           yield* writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
           yield* writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
-          yield* projectsList({});
+          yield* runList;
           expect(out.stdoutText).toContain("●");
         }).pipe(Effect.provide(layer));
       },
@@ -262,7 +283,7 @@ describe("projects list integration", () => {
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
         return Effect.gen(function* () {
-          yield* projectsList({});
+          yield* runList;
           expect(out.stdoutText).not.toContain("●");
         }).pipe(Effect.provide(layer));
       },
@@ -272,7 +293,7 @@ describe("projects list integration", () => {
   it.effect("emits a success event with { projects } for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ projects: [{ linked: true }] });
@@ -282,7 +303,7 @@ describe("projects list integration", () => {
   it.effect("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -290,7 +311,7 @@ describe("projects list integration", () => {
   it.effect("emits byte-exact indented JSON including `linked` for --output json", () => {
     const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"linked": true');
@@ -300,7 +321,7 @@ describe("projects list integration", () => {
   it.effect("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText).toContain("name: alpha");
       expect(out.stdoutText).toContain("linked:");
     }).pipe(Effect.provide(layer));
@@ -309,7 +330,7 @@ describe("projects list integration", () => {
   it.effect("wraps the result as { projects = [...] } for --output toml", () => {
     const { layer, out } = setup({ outputFlag: "toml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText).toContain("[[projects]]");
       expect(out.stdoutText).toContain('  Name = "alpha"');
       expect(out.stdoutText).toContain("  Linked = true");
@@ -320,7 +341,7 @@ describe("projects list integration", () => {
   it.effect("fails with ProjectsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ outputFlag: "env", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsList({}));
+      const exit = yield* Effect.exit(runList);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -333,7 +354,7 @@ describe("projects list integration", () => {
   it.effect("fails with ProjectsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsList({}));
+      const exit = yield* Effect.exit(runList);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -346,7 +367,7 @@ describe("projects list integration", () => {
   it.effect("fails with ProjectsListUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ status: 500, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsList({}));
+      const exit = yield* Effect.exit(runList);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
@@ -357,7 +378,7 @@ describe("projects list integration", () => {
   it.effect("fails with an unexpected-status error when the body is not an array", () => {
     const { layer } = setup({ response: {} });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(projectsList({}));
+      const exit = yield* Effect.exit(runList);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
@@ -371,28 +392,43 @@ describe("projects list integration", () => {
       response: [{ ...SAMPLE_PROJECT, undeclared_field: "kept" }],
     });
     return Effect.gen(function* () {
-      yield* projectsList({});
+      yield* runList;
       expect(out.stdoutText).toContain('"undeclared_field": "kept"');
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes linked-project cache + telemetry state on success", () => {
-    const { layer, telemetry, cache } = setupTracked({ linked: true });
-    return Effect.gen(function* () {
-      yield* projectsList({});
-      expect(telemetry.flushed).toBe(true);
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("flushes telemetry but skips the cache write when nothing is linked", () => {
-    const { layer, telemetry, cache } = setupTracked({ linked: false });
-    return Effect.gen(function* () {
-      yield* projectsList({});
-      expect(telemetry.flushed).toBe(true);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect.each([
+    { linked: true, status: 200 },
+    { linked: false, status: 200 },
+    { linked: true, status: 500 },
+    { linked: false, status: 500 },
+  ])(
+    "flushes once after optional cache work (linked=$linked, status=$status)",
+    ({ linked, status }) => {
+      const { layer, out, telemetry, cache, analytics, cacheCallsAtFlush } = setupTracked({
+        linked,
+        status,
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        yield* runList;
+        expect(cache.cacheCount).toBe(linked ? 1 : 0);
+        expect(cache.cachedRef).toBe(linked ? VALID_REF : undefined);
+        expect(telemetry.flushCount).toBe(1);
+        expect(cacheCallsAtFlush).toEqual([linked ? 1 : 0]);
+        const events = analytics.captured.filter(({ event }) => event === EventCommandExecuted);
+        expect(events.map(({ properties }) => properties.exit_code)).toEqual([
+          status === 200 ? 0 : 1,
+        ]);
+        if (status === 500) {
+          expect(events[0]?.properties.error_fingerprint).toMatch(
+            /^tag:ProjectsListUnexpectedStatusError/u,
+          );
+          expect(out.failures).toHaveLength(1);
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("fills the real linked-project cache for a ref saved in supabase/.temp", () => {
     const out = mockOutput({ format: "text" });
@@ -424,7 +460,7 @@ describe("projects list integration", () => {
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
 
-      yield* projectsList({});
+      yield* runList;
 
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${API}/v1/projects`,

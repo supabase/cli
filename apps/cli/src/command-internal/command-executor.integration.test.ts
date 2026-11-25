@@ -16,6 +16,7 @@ import {
   CommandUX,
   ResolvedProject,
   commandExecutorLayer,
+  withLegacyOutputHandler,
   withManagedHandler,
 } from "./command-executor.ts";
 
@@ -37,8 +38,60 @@ it("requires the handler to return the declared result", () => {
     runtime: { required: Layer.empty, completion: Layer.empty },
   });
 });
+it("requires explicit and exclusive result ownership", () => {
+  const handler = () => Effect.succeed({ value: "done" });
+  const runtime = { required: Layer.empty, completion: Layer.empty };
+  // @ts-expect-error Managed declarations must supply an output schema.
+  withManagedHandler({ handler, runtime });
+  // @ts-expect-error Legacy declarations cannot supply an output schema.
+  withLegacyOutputHandler({ handler, runtime, output });
+});
+
+it.effect("keeps legacy bytes and waits for scoped release on interruption", () => {
+  const out = mockOutput({ format: "stream-json" });
+  return Effect.gen(function* () {
+    const ready = yield* Deferred.make<void>();
+    const releasing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const released = yield* Deferred.make<void>();
+    const handler = () =>
+      Effect.gen(function* () {
+        yield* Effect.acquireRelease(Effect.void, () =>
+          Deferred.succeed(releasing, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(Deferred.succeed(released, undefined)),
+          ),
+        );
+        const writer = yield* Output;
+        yield* writer.raw("legacy bytes\n");
+        yield* Deferred.succeed(ready, undefined);
+        return yield* Effect.never;
+      });
+    const fiber = yield* CommandExecutor.use((executor) =>
+      executor.run({ owner: "handler", handler }, {}, Layer.empty),
+    ).pipe(Effect.forkChild);
+    yield* Effect.gen(function* () {
+      yield* Deferred.await(ready);
+      const cancel = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+      yield* Deferred.await(releasing);
+      expect(out.stdoutText).toBe("legacy bytes\n");
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(cancel);
+      expect(yield* Deferred.isDone(released)).toBe(true);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(out.stdoutText).toBe("legacy bytes\n");
+      expect(out.messages).toEqual([]);
+      expect(out.failures).toEqual([]);
+    }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+  }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
+});
+
 const run = <E, R>(handler: () => Effect.Effect<typeof output.Type, E, R>) =>
-  CommandExecutor.use((executor) => executor.run({ output, handler }, {}, Layer.empty));
+  CommandExecutor.use((executor) =>
+    executor.run({ owner: "executor", output, handler }, {}, Layer.empty),
+  );
 
 it.effect.each(["interrupt", "defect"] as const)("clears a text task once on %s", (outcome) => {
   const out = mockOutput({ format: "text" });
