@@ -3,6 +3,7 @@ This guidance matches the installed CLI version. Run `supabase skill display <to
 ## Before you run commands
 
 - Run `supabase <command> --help` for exact flags. It is authoritative.
+- Replace `<...>` placeholders, such as `<ref>`, with real values before running a command.
 - For commands that return structured results, use `--output-format json` for parsing. It is already the default when an agent is detected. `stream-json` emits NDJSON for long-running commands. `skill display` always prints markdown, whatever the format.
 
 ## Targeting

@@ -8,6 +8,8 @@ const JsonEnvelope = Schema.Struct({
   error: Schema.Struct({ message: Schema.String, suggestion: Schema.String }),
 });
 
+const ErrorEnvelope = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) });
+
 it.live("prints the same embedded overview markdown for every output format", () =>
   Effect.gen(function* () {
     const results = yield* Effect.forEach(["text", "json", "stream-json"], (format) =>
@@ -39,5 +41,27 @@ it.live("reports an unknown topic as a JSON error envelope listing the topics", 
     const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(JsonEnvelope))(result.stdout);
     expect(envelope.error.message).toContain("Unknown skill topic");
     expect(envelope.error.suggestion).toContain("overview");
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+
+it.live("rejects -o table with the command's own error instead of printing", () =>
+  Effect.gen(function* () {
+    const result = yield* runSupabaseEffect([
+      "skill",
+      "display",
+      "-o",
+      "table",
+      "--output-format",
+      "json",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).not.toContain("# Supabase CLI: agent overview");
+    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ErrorEnvelope))(
+      result.stdout,
+    );
+    expect(envelope.error.message).toBe(
+      "skill display always prints markdown; -o/--output is not supported.",
+    );
   }).pipe(Effect.provide(BunServices.layer)),
 );
