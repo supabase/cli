@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto, BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 
@@ -48,19 +48,25 @@ const readTelemetryConfig = (dir: string) =>
     )(text);
   }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
 
-function setup(dir: string, optOutEnv: Record<string, string> = {}) {
+// `dir` is the home the CLI settings resolve. `ambientHome` differs from it when a project
+// `.env` sets `SUPABASE_HOME`.
+function setup(dir: string, optOutEnv: Record<string, string> = {}, ambientHome = dir) {
   const out = mockOutput();
   const analytics = mockAnalytics();
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: dir });
   const envLayer = processEnvLayer({
-    SUPABASE_HOME: dir,
+    SUPABASE_HOME: ambientHome,
     SUPABASE_TELEMETRY_DISABLED: undefined,
     DO_NOT_TRACK: undefined,
     ...optOutEnv,
   });
+  const settingsEnvLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord({ SUPABASE_HOME: dir, ...optOutEnv }),
+  );
   const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(mockCliProjectContext()),
+    Layer.provide(settingsEnvLayer),
     Layer.provide(envLayer),
     Layer.provide([BunServices.layer, BunCrypto.layer]),
   );
@@ -274,6 +280,21 @@ describe("telemetry integration", () => {
       expect(out.stdoutText).toBe("Telemetry is enabled.\n");
       expect((yield* readTelemetryConfig(dir)).enabled).toBe(true);
     });
+  });
+
+  it.live("disable writes the opt-out to the home the CLI reads consent from", () => {
+    const dir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const ambientHome = path.join(dir, "ambient-home");
+      const disable = setup(dir, {}, ambientHome);
+      yield* runTelemetry(["telemetry", "disable"]).pipe(Effect.provide(disable.layer));
+
+      const status = setup(dir, {}, ambientHome);
+      yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(status.layer));
+      expect(status.out.stdoutText).toBe("Telemetry is disabled.\n");
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("an opt-out in a file with a malformed field stays an opt-out", () => {

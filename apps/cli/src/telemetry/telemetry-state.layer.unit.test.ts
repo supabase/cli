@@ -28,7 +28,7 @@ function makeRuntime(
 ) {
   const identity = makeTelemetryIdentity(undefined);
   const layer = Layer.succeed(TelemetryRuntime, {
-    configDir: "/tmp",
+    configDir: tempHome.current,
     consent: opts.consent ?? "granted",
     deviceId: "device-xyz",
     sessionId: "session-1",
@@ -246,9 +246,12 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current).pipe(Effect.provide(platformLayer), withTempHome);
   const runLoadAt = (now: DateTime.Utc) =>
-    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current, { now }).pipe(
+      Effect.provide(platformLayer),
+      withTempHome,
+    );
 
   it.effect("an empty file holds no opt-out and is recreated enabled", () =>
     Effect.gen(function* () {
@@ -807,7 +810,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
 
 describe("exact int64 schema_version round-trip", () => {
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current).pipe(Effect.provide(platformLayer), withTempHome);
 
   // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
   // would round inside the test itself, hiding exactly the bug under test.
@@ -841,7 +844,10 @@ describe("exact int64 schema_version round-trip", () => {
   it.effect("setTelemetryEnabled's rewrite also preserves the exact token", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("9007199254740993"));
-      yield* setTelemetryEnabled(true).pipe(Effect.provide(platformLayer), withTempHome);
+      yield* setTelemetryEnabled(tempHome.current, true).pipe(
+        Effect.provide(platformLayer),
+        withTempHome,
+      );
       const written = yield* readTelemetryFile;
       expect(written).toContain('"enabled":true');
       expect(written).toContain('"schema_version":9007199254740993');

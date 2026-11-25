@@ -137,6 +137,23 @@ describe("telemetryRuntimeLayer", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect(
+    "reads a telemetry.json that cannot be read as an opt-out and does not replace it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homeDir = tempRoot.current;
+        const configPath = yield* telemetryConfigPath(homeDir);
+        yield* fs.makeDirectory(configPath);
+
+        yield* Effect.gen(function* () {
+          const runtime = yield* TelemetryRuntime;
+          expect(runtime.consent).toBe("denied");
+          expect((yield* fs.stat(configPath)).type).toBe("Directory");
+        }).pipe(Effect.provide(buildLayer({ homeDir })));
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("honors a legacy disabled telemetry state", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

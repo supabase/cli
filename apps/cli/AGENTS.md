@@ -228,8 +228,9 @@ on every path:
 - Every send goes through the `Analytics` layer. Nothing else constructs a PostHog client or calls
   an analytics host.
 - A command that opts the user out sends nothing.
-- `telemetry.json` content that does not decode is an opt-out. No reader treats it as enabled and
-  no writer rewrites it as enabled.
+- A `telemetry.json` that cannot be read, or whose content does not decode, is an opt-out. Only a
+  missing or empty file is a first run.
+- Every reader and writer of `telemetry.json` resolves it from `TelemetryRuntime.configDir`.
 - While the user is opted out, only `telemetry enable` and `telemetry disable` create
   `telemetry.json`. An existing file may be updated with its opt-out written back unchanged.
 - Event and group properties carry no user-chosen names. Project groups send the organization

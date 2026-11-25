@@ -72,7 +72,7 @@ const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) 
   );
 });
 
-// Content that does not decode may hold an opt-out, so it reads as one.
+// A file that cannot be read or decoded may hold an opt-out, so it reads as one.
 const optedOutTelemetryConfig = Effect.gen(function* () {
   const crypto = yield* SecureRandom.SecureRandom;
   const config: TelemetryConfig = {
@@ -91,9 +91,10 @@ export const readTelemetryConfig = Effect.fnUntraced(
     const configPath = path.join(configDir, "telemetry.json");
     const exists = yield* fs.exists(configPath);
     if (!exists) return Option.none<TelemetryConfig>();
-    const content = yield* fs.readFileString(configPath);
-    if (content.trim().length === 0) return Option.none<TelemetryConfig>();
-    const config = yield* decodeTelemetryConfigFile(content).pipe(
+    const content = yield* fs.readFileString(configPath).pipe(Effect.option);
+    if (Option.isNone(content)) return Option.some(yield* optedOutTelemetryConfig);
+    if (content.value.trim().length === 0) return Option.none<TelemetryConfig>();
+    const config = yield* decodeTelemetryConfigFile(content.value).pipe(
       Effect.catch(() => optedOutTelemetryConfig),
     );
     return Option.some(config);
