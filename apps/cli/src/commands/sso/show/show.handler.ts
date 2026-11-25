@@ -34,7 +34,6 @@ const mapStatusOrNetwork = mapHttpError({
 
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
   mapStatusOrNetwork(cause).pipe(
-    // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
     Effect.catchTag("SsoShowUnexpectedStatusError", (mapped) =>
       Effect.gen(function* () {
         if (mapped.status === 404) {

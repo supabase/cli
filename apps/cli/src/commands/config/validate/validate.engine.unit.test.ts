@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { parseCliConfigDocumentFile } from "@supabase/config/internal";
+import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
 import { Effect, Exit, FileSystem, Path, PlatformError } from "effect";
 
 import type {
@@ -685,7 +686,9 @@ ${remote("env-b", "env(REF_B)")}
   describe("a fresh init config", () => {
     it.effect("has no problems in default mode and defers what reads env()", () =>
       Effect.gen(function* () {
-        const result = yield* run(renderCliConfigTemplate("demo", false));
+        const result = yield* run(
+          convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text,
+        );
 
         expect(result.problems).toEqual([]);
         expect(result.complete).toBe(true);
@@ -697,7 +700,9 @@ ${remote("env-b", "env(REF_B)")}
   describe("a fresh init config", () => {
     it.effect("defers nothing for a disabled provider", () =>
       Effect.gen(function* () {
-        const result = yield* run(renderCliConfigTemplate("demo", false));
+        const result = yield* run(
+          convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text,
+        );
 
         expect(result.deferred.filter((item) => item.check.startsWith("auth.external"))).toEqual(
           [],
@@ -707,7 +712,10 @@ ${remote("env-b", "env(REF_B)")}
 
     it.effect("has no errors under --resolve-env with nothing set", () =>
       Effect.gen(function* () {
-        const result = yield* run(renderCliConfigTemplate("demo", false), lookupOf({}));
+        const result = yield* run(
+          convertCliConfigJsoncToToml(renderCliConfigTemplate("demo", false)).text,
+          lookupOf({}),
+        );
 
         expect(result.problems.filter((problem) => problem.severity === "error")).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

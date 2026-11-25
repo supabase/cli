@@ -323,6 +323,11 @@ InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidServiceVersionTagError
+IssuesChecksUnavailableError
+IssuesFailOnError
+IssuesHealthAuthorizationError
+IssuesHealthUnsupportedError
+IssuesOutputFlagUnsupportedError
 KongReloadError
 LinkApiKeysNetworkError
 LinkAuthTokenError
@@ -494,13 +499,11 @@ SsoAddAttributeMappingFileError
 SsoAddMetadataFileError
 SsoAddNetworkError
 SsoAddRequiredFlagError
-SsoAddSamlDisabledError
 SsoAddUnexpectedStatusError
 SsoFlagNeedsArgumentError
 SsoInvalidFlagValueError
 SsoInvalidUuidError
 SsoListNetworkError
-SsoListSamlDisabledError
 SsoListUnexpectedStatusError
 SsoMetadataUrlInvalidError
 SsoMetadataUrlNetworkError

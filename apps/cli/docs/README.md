@@ -56,17 +56,16 @@ For CLI contributors, preview reference changes in the real website before publi
    `/docs/reference/cli/supabase-init` on the local server to inspect a rendered command page.
    Rerun the pipe after changing CLI documentation.
 
-`--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` in the supplied checkout using the
-same formatting as release publishing. Save any edits to that file first. If formatting fails,
-the file contains the unformatted generated spec; fix the error and rerun the pipe. The target
-directory must already exist. Local mode does not clone, commit, push, or open a PR, and needs no GitHub
-credentials. Add `--dry-run` to validate the input and print the destination without writing.
+`--local` overwrites `apps/docs/spec/cli_v1_commands.yaml` and
+`apps/docs/spec/common-cli-sections.json` in the supplied checkout. Save any edits to those files
+first. The publisher prepares both outputs before replacing either file, so a YAML formatting
+failure leaves both files unchanged. If replacing the sidebar fails, the publisher attempts to
+restore the previous spec. Local mode does not clone, commit, push, or open a PR, and needs no
+GitHub credentials. Add `--dry-run` to validate the input and print both destinations without writing.
 
-This preview writes only the command-reference spec, not sidebar entries or JSON Schemas.
-From `apps/cli`, `pnpm docs:spec <version>` generates the command-reference spec and
-`pnpm docs:sidebar` generates the content for the website's
-[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json).
-Copy the generated sidebar into that file so new commands appear in the reference.
+For a custom layout, pass `--spec-path` and, if needed, `--sidebar-path`. Both are relative to the
+checkout root and their parent directories must already exist. By default, the sidebar is named
+`common-cli-sections.json` and goes next to the spec.
 
 ## Release Publishing
 
@@ -76,14 +75,14 @@ command tree in the current checkout, excluding unlisted and explicitly excluded
 Generate and publish from the same checkout; duplicate, missing, or unexpected commands fail validation.
 
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
-release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
-pushes the `cli/ref-doc` branch in [supabase/supabase](https://github.com/supabase/supabase),
-and opens a PR when none is open. When the spec is already published and a PR is open
-or not needed, the run is a no-op.
-Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
-fixes committed onto the branch survive.
+release: it pipes the spec into `scripts/publish-docs-spec.ts`, which formats the spec and
+generates the sidebar from the same command tree. It pushes both files to the `cli/ref-doc` branch
+in [supabase/supabase](https://github.com/supabase/supabase) and opens a PR when needed.
+Later releases add commits to an open `cli/ref-doc` PR and replace both generated files. Make
+lasting fixes in the CLI command definitions or in `apps/cli/docs/`, not in the generated files.
 
-To publish by hand, run the same pipe the job runs:
+To publish by hand, run the same pipe the job runs. The same path overrides apply if you
+publish to a custom layout:
 
 ```bash
 bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--dry-run]

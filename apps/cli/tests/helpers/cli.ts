@@ -26,6 +26,7 @@ import {
   registerTempHome,
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
+import { activeStackPortPaths, setConfigValues } from "./jsonc-config.ts";
 
 export { stripAnsi } from "./ansi.ts";
 
@@ -73,6 +74,8 @@ export type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Why no exit code was reported, such as the signal that killed the process. */
+  exitFailure?: string;
   /** Set when the harness exit bound fired and SIGKILLed the process group. */
   timedOutAfterMs?: number;
 };
@@ -357,32 +360,28 @@ const overrideStackPortsEffect = (projectDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const configPath = pathService.join(projectDir, "supabase", "config.toml");
+    const configPath = pathService.join(projectDir, "supabase", "config.jsonc");
     /* Decoded keeping a leading byte order mark, like Node's `Buffer#toString`. */
     const config = chunkDecoder.decode(yield* fs.readFile(configPath));
     const assigned = new Set<number>();
-    const lines: string[] = [];
-    for (const line of config.split("\n")) {
-      const match = /^(\s*(?:port|smtp_port|pop3_port|inspector_port|shadow_port) = )\d+$/.exec(
-        line,
-      );
-      if (match === null) {
-        lines.push(line);
-        continue;
-      }
+    const edits: Array<{ path: ReadonlyArray<string>; value: number }> = [];
+    for (const path of activeStackPortPaths(config)) {
       let port = yield* pickFreePort;
       while (assigned.has(port)) {
         port = yield* pickFreePort;
       }
       assigned.add(port);
-      lines.push(`${match[1]}${port}`);
+      edits.push({ path, value: port });
     }
-    yield* fs.writeFileString(configPath, lines.join("\n"));
+    if (edits.length === 0) {
+      throw new Error(`no active stack ports found in ${configPath}`);
+    }
+    yield* fs.writeFileString(configPath, setConfigValues(config, edits));
   });
 
 /**
  * Rewrites every active port assignment in an `init`-generated
- * `supabase/config.toml` with a freshly allocated free port, so stacks started
+ * `supabase/config.jsonc` with a freshly allocated free port, so stacks started
  * from default configs cannot collide on host ports with other e2e stacks on
  * the same runner. Commented-out port lines are left untouched.
  */
@@ -423,7 +422,10 @@ const stopAndRemoveStackProject = (dir: string, cleanupTimeoutMs: number) =>
 
     // `init` can fail before creating a project config. There is no stack to
     // stop in that case, so remove the exact owned directory directly.
-    if (!(yield* pathExists(fs, pathService.join(dir, "supabase", "config.toml")))) {
+    const hasConfig =
+      (yield* pathExists(fs, pathService.join(dir, "supabase", "config.jsonc"))) ||
+      (yield* pathExists(fs, pathService.join(dir, "supabase", "config.toml")));
+    if (!hasConfig) {
       yield* removeOwnedDir(dir);
       return;
     }
@@ -779,19 +781,19 @@ const spawnSupabaseProgram = Effect.fnUntraced(function* (
   /* "close" in Node terms: the root exited and every holder of its stdout/stderr let go. */
   yield* Effect.forkScoped(
     Effect.gen(function* () {
-      const [exitCode] = yield* Effect.all(
+      const [exit] = yield* Effect.all(
         [
           /* A signal death has no code and reports exit code 1. */
           handle.exitCode.pipe(
-            Effect.map((code): number => code),
-            Effect.orElseSucceed(() => 1),
+            Effect.map((code): Pick<RunResult, "exitCode" | "exitFailure"> => ({ exitCode: code })),
+            Effect.catch((error) => Effect.succeed({ exitCode: 1, exitFailure: error.message })),
           ),
           Fiber.join(stdoutDrained),
           Fiber.join(stderrDrained),
         ],
         { concurrency: "unbounded" },
       );
-      const result: RunResult = { stdout, stderr, exitCode };
+      const result: RunResult = { stdout, stderr, ...exit };
       closeResult = result;
       yield* PubSub.publish(stdoutChanged, undefined);
       yield* Deferred.succeed(closed, result);
@@ -960,7 +962,7 @@ const runSupabaseUntil = (
           Effect.andThen(Effect.sync(() => killProcessGroup(spawned.pid, "SIGKILL"))),
         ),
       );
-      const result = yield* spawned.waitForExit();
+      const { exitFailure: _expectedStop, ...result } = yield* spawned.waitForExit();
       return { ...result, exitCode: 0 };
     }),
   );
@@ -996,6 +998,7 @@ export function runSupabase(
 export function requireCliSuccess(
   result: {
     readonly exitCode: number;
+    readonly exitFailure?: string;
     readonly stdout: string;
     readonly stderr: string;
     readonly timedOutAfterMs?: number;
@@ -1003,10 +1006,13 @@ export function requireCliSuccess(
   command: string,
 ): void {
   if (result.exitCode !== 0) {
-    const reason =
-      result.timedOutAfterMs === undefined
-        ? `exit ${result.exitCode}`
-        : `exit ${result.exitCode}; harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`;
+    const reason = [
+      `exit ${result.exitCode}`,
+      ...(result.exitFailure === undefined ? [] : [result.exitFailure]),
+      ...(result.timedOutAfterMs === undefined
+        ? []
+        : [`harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`]),
+    ].join("; ");
     throw new Error(
       `${command} failed (${reason})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );

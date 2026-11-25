@@ -26,6 +26,46 @@ import { telemetryStateLayer } from "../telemetry/telemetry-state.layer.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 
+function managementApiRuntimeParts(subcommand: ReadonlyArray<string>) {
+  const settings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+  const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+  const credentials = commandCredentialsLayer.pipe(
+    Layer.provide(settings),
+    Layer.provide(debugLoggerLayer),
+  );
+  const cache = linkedProjectCacheLayer.pipe(
+    Layer.provide(credentials),
+    Layer.provide(settings),
+    Layer.provide(httpClient),
+    Layer.provide(identityStitchLayer),
+  );
+  const runtime = commandRuntimeLayer([...subcommand]);
+  return { settings, httpClient, credentials, cache, runtime };
+}
+
+export function managementApiRuntime(subcommand: ReadonlyArray<string>) {
+  const { settings, credentials, cache, runtime } = managementApiRuntimeParts(subcommand);
+  const platformApi = commandPlatformApiLayer.pipe(
+    Layer.provide(Layer.fresh(FetchHttpClient.layer)),
+    Layer.provide(dohFetchLayer),
+  );
+  const factory = commandPlatformApiFactoryFromApiLayer.pipe(Layer.provide(platformApi));
+  return {
+    required: Layer.merge(platformApi, projectRefLayer.pipe(Layer.provide(factory))),
+    // Cache and accounting run after delivery and share identity with the handler.
+    // Do not put resources that require pre-delivery release in this layer.
+    completion: Layer.mergeAll(
+      settings,
+      credentials,
+      cache,
+      runtime,
+      telemetryStateLayer,
+      identityStitchLayer,
+      debugLoggerLayer,
+    ),
+  };
+}
+
 /**
  * Composes the runtime layer for a Management-API-style `supabase <command> <subcommand>`
  * invocation.
@@ -40,12 +80,13 @@ import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts"
  * @param subcommand - command path segments after `supabase`, e.g. `["backups", "list"]`.
  */
 export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
-  const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
-  const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
-  const credentials = commandCredentialsLayer.pipe(
-    Layer.provide(cliSettings),
-    Layer.provide(debugLoggerLayer),
-  );
+  const {
+    settings: cliSettings,
+    httpClient,
+    credentials,
+    cache,
+    runtime,
+  } = managementApiRuntimeParts(subcommand);
   // `identityStitchLayer` is the one per-command identity stitcher; the same reference is
   // provided to the cache below so, by layer memoisation, the typed client and the cache share a
   // single `stitchAttempted` guard instead of one per transport.
@@ -69,14 +110,9 @@ export function managementApiRuntimeLayer(subcommand: ReadonlyArray<string>) {
     credentials,
     cliSettings,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
-    linkedProjectCacheLayer.pipe(
-      Layer.provide(credentials),
-      Layer.provide(cliSettings),
-      Layer.provide(httpClient),
-      Layer.provide(identityStitchLayer),
-    ),
+    cache,
     telemetryStateLayer,
-    commandRuntimeLayer([...subcommand]),
+    runtime,
     // Exposed at the top level so post-run instrumentation can read `stitchedDistinctId()` via
     // `serviceOption`.
     identityStitchLayer,
