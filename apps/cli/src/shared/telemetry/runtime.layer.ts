@@ -4,7 +4,12 @@ import { SecureRandom } from "effect/crypto";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
-import { getConfigDir, getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
+import {
+  getConfigDir,
+  getEffectiveConsent,
+  readTelemetryConfig,
+  telemetryOptOutVariable,
+} from "./consent.ts";
 import { makeTelemetryIdentity, resolveIdentity } from "./identity.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 
@@ -29,6 +34,7 @@ export const telemetryRuntimeLayer = Layer.effect(
     const config = yield* readTelemetryConfig(configDir);
     const isTty = tty.stdoutIsTty;
     const consent = yield* getEffectiveConsent(config);
+    const optOutVariable = yield* telemetryOptOutVariable;
 
     let identity: {
       readonly deviceId: string;
@@ -40,7 +46,7 @@ export const telemetryRuntimeLayer = Layer.effect(
       if (Option.isNone(config) && isTty) {
         yield* Effect.sync(() =>
           note(
-            "Supabase collects anonymous usage data to improve the CLI.\nYou can opt out at any time:\n\n  supabase telemetry disable\n\nLearn more: https://supabase.com/docs/guides/local-development/cli/getting-started#telemetry",
+            "Supabase collects usage data to improve the CLI.\nYou can opt out at any time:\n\n  supabase telemetry disable\n\nLearn more: https://supabase.com/docs/guides/local-development/cli/getting-started#telemetry",
             "Telemetry",
           ),
         );
@@ -69,6 +75,7 @@ export const telemetryRuntimeLayer = Layer.effect(
     return TelemetryRuntime.of({
       configDir,
       consent,
+      optOutVariable,
       deviceId: identity.deviceId,
       sessionId: identity.sessionId,
       identity: makeTelemetryIdentity(identity.distinctId),

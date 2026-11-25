@@ -38,7 +38,7 @@ const recordingPosthogClient = (events: unknown[]) =>
     }),
   );
 
-const captureWithProcessEnv = (env: Record<string, string>) =>
+const captureWithProcessEnv = (env: Record<string, string>, stdoutIsTty = false) =>
   Effect.gen(function* () {
     const events: unknown[] = [];
     const layer = analyticsLayer.pipe(
@@ -59,7 +59,7 @@ const captureWithProcessEnv = (env: Record<string, string>) =>
         }),
       ),
       Layer.provide(mockRuntimeInfo({ homeDir: tempRoot.current, cwd: tempRoot.current })),
-      Layer.provide(mockTty({ stdoutIsTty: false })),
+      Layer.provide(mockTty({ stdoutIsTty })),
       Layer.provide([BunServices.layer, BunCrypto.layer]),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingPosthogClient(events))),
       Layer.provide(
@@ -202,6 +202,18 @@ describe("analytics base properties", () => {
       expect(captured.map(({ event }) => event)).toEqual(["base_properties_test"]);
       expect(captured[0]?.properties).toMatchObject({ is_eval: false, is_agent: false });
       expect(captured[0]?.properties).not.toHaveProperty("agent_name");
+    }),
+  );
+});
+
+describe("analytics first interactive run", () => {
+  it.live("sends nothing in the run that shows the notice, then sends on the next run", () =>
+    Effect.gen(function* () {
+      const firstRun = yield* captureWithProcessEnv({}, true);
+      expect(firstRun).toEqual([]);
+
+      const nextRun = yield* captureWithProcessEnv({}, true);
+      expect(nextRun.map(({ event }) => event)).toEqual(["base_properties_test"]);
     }),
   );
 });

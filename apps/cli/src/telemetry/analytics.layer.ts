@@ -199,7 +199,9 @@ export const analyticsLayerFor = (mode: ProjectStateMode) =>
       const runtimeInfo = yield* RuntimeInfo;
       const posthogConfig = yield* resolvePosthogConfig(configProvider);
 
-      if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
+      // The first-run notice prints in this invocation, so sending starts with the next one.
+      const noticeShownThisRun = runtime.isFirstRun && runtime.isTty;
+      if (runtime.consent !== "granted" || noticeShownThisRun || Option.isNone(posthogConfig.key)) {
         return Analytics.of({
           capture: () => Effect.void,
           identify: () => Effect.void,

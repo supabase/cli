@@ -286,9 +286,9 @@ function lastNonNullString(
  * Decodes the on-disk telemetry state: all-or-nothing, never salvaging individual fields. A file
  * missing (or mistyping) any required piece — an `enabled` bool (or a `granted`/`denied`
  * `consent`), a parseable `session_last_active`, and non-empty `device_id` and `session_id` — is
- * treated as wholly malformed, so the caller recreates everything fresh: `enabled` back to
- * `true`, new `device_id`, new `session_id`. A corrupt file that still says `"enabled": false`
- * does not stay disabled.
+ * treated as wholly malformed, so the caller recreates everything fresh: new `device_id`, new
+ * `session_id`, and `enabled: false`, because the malformed content may hold an opt-out. Only a
+ * missing or empty file is recreated enabled.
  *
  * Strictness is reproduced at the token level, over every occurrence of every root field
  * ({@link scanRootJsonEntries} + {@link hasDecodableFieldTokens}): `JSON.parse` collapses
@@ -408,8 +408,11 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
     priorActiveMs === undefined ||
     DateTime.toEpochMillis(now) - priorActiveMs > SESSION_ROTATION_MS;
 
+  const heldUndecodableContent =
+    prior === undefined && existing !== undefined && existing.trim().length > 0;
+
   const state: State = {
-    enabled: prior?.enabled ?? true,
+    enabled: prior?.enabled ?? !heldUndecodableContent,
     device_id: prior?.device_id ?? (yield* crypto.uuidV4()),
     session_id:
       !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.uuidV4(),
@@ -482,10 +485,9 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
  *  - Reuses an existing `device_id` if the file is present.
  *  - Rotates `session_id` if `session_last_active` is older than 30 minutes.
  *  - Always sets `enabled: true` on a fresh state — the field is only flipped to `false` if the
- *    user has run `supabase telemetry disable`, in which case the prior value is preserved. The
- *    `SUPABASE_TELEMETRY_DISABLED`/`DO_NOT_TRACK` env vars suppress event delivery, not
- *    state-file writes.
- *  - Always writes, even when telemetry is disabled; only event delivery is suppressed.
+ *    user has run `supabase telemetry disable`, in which case the prior value is preserved.
+ *  - While telemetry is disabled, updates an existing file but never creates one, so an opt-out
+ *    by env var leaves no enabled state behind.
  *
  * Best-effort: filesystem or JSON parse errors are swallowed.
  */
@@ -507,8 +509,23 @@ export const telemetryStateLayer = Layer.effect(
         Effect.provideService(SecureRandom.SecureRandom, crypto),
       );
 
+    const stateFileHoldsContent = Effect.gen(function* () {
+      const content = yield* fs
+        .readFileString(yield* telemetryPath(pathSvc))
+        .pipe(Effect.orElseSucceed(() => ""));
+      return content.trim().length > 0;
+    });
+
+    const persist = <A, E>(
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom>,
+    ) =>
+      Effect.gen(function* () {
+        if (runtime.consent !== "granted" && !(yield* stateFileHoldsContent)) return;
+        yield* provide(effect);
+      });
+
     return TelemetryState.of({
-      flush: provide(loadOrCreateTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
+      flush: persist(loadOrCreateTelemetryState()).pipe(Effect.ignore),
       stitchLogin: (distinctId: string) =>
         // The in-memory stamp always happens so subsequent captures in this process carry the
         // user's id; the alias (which merges pre-login history) and the `telemetry.json` write
@@ -525,14 +542,14 @@ export const telemetryStateLayer = Layer.effect(
           if (firstIdentity) {
             yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
           }
-          yield* provide(persistDistinctId(distinctId));
+          yield* persist(persistDistinctId(distinctId));
         }).pipe(Effect.ignore),
       clearDistinctId: Effect.sync(() => {
         runtime.identity.clear();
-      }).pipe(Effect.andThen(provide(persistDistinctId(undefined))), Effect.asVoid, Effect.ignore),
+      }).pipe(Effect.andThen(persist(persistDistinctId(undefined))), Effect.asVoid, Effect.ignore),
       resetIdentity: Effect.sync(() => {
         runtime.identity.clear();
-      }).pipe(Effect.andThen(provide(persistIdentityReset())), Effect.asVoid, Effect.ignore),
+      }).pipe(Effect.andThen(persist(persistIdentityReset())), Effect.asVoid, Effect.ignore),
     });
   }),
 );

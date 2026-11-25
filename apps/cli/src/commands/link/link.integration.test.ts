@@ -427,7 +427,7 @@ describe("link integration", () => {
           {
             groupType: "project",
             groupKey: VALID_REF,
-            properties: { name: "My Project", organization_slug: "acme" },
+            properties: { organization_slug: "acme" },
           },
         ]);
         const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
@@ -1565,7 +1565,7 @@ describe("link integration", () => {
             {
               groupType: "project",
               groupKey: PARENT_REF,
-              properties: { name: "My Project", organization_slug: "acme" },
+              properties: { organization_slug: "acme" },
             },
           ]);
           expect(yield* jsonText(analytics.captured)).not.toContain('"main"');

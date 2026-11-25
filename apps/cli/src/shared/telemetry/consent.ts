@@ -1,4 +1,5 @@
 import {
+  Clock,
   Duration,
   Effect,
   FileSystem,
@@ -16,6 +17,7 @@ import {
   PersistedNumberSchema,
   TelemetryConfigSchema,
   type TelemetryConfig,
+  type TelemetryOptOutVariable,
 } from "./types.ts";
 
 export const getConfigDir = CliSettings.useSync((cliSettings) => cliSettings.supabaseHome);
@@ -70,6 +72,18 @@ const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) 
   );
 });
 
+// Content that does not decode may hold an opt-out, so it reads as one.
+const optedOutTelemetryConfig = Effect.gen(function* () {
+  const crypto = yield* SecureRandom.SecureRandom;
+  const config: TelemetryConfig = {
+    consent: "denied",
+    device_id: yield* crypto.uuidV4(),
+    session_id: yield* crypto.uuidV4(),
+    session_last_active: yield* Clock.currentTimeMillis,
+  };
+  return config;
+});
+
 export const readTelemetryConfig = Effect.fnUntraced(
   function* (configDir: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -78,7 +92,10 @@ export const readTelemetryConfig = Effect.fnUntraced(
     const exists = yield* fs.exists(configPath);
     if (!exists) return Option.none<TelemetryConfig>();
     const content = yield* fs.readFileString(configPath);
-    const config = yield* decodeTelemetryConfigFile(content);
+    if (content.trim().length === 0) return Option.none<TelemetryConfig>();
+    const config = yield* decodeTelemetryConfigFile(content).pipe(
+      Effect.catch(() => optedOutTelemetryConfig),
+    );
     return Option.some(config);
   },
   (effect) => Effect.orElseSucceed(effect, () => Option.none<TelemetryConfig>()),
@@ -150,17 +167,25 @@ function contextualRenameError(
   });
 }
 
-export const getEffectiveConsent = Effect.fnUntraced(function* (
-  config: Option.Option<TelemetryConfig>,
-) {
+/** The environment variable that opts this run out of telemetry, when one is set to `1`. */
+export const telemetryOptOutVariable = Effect.gen(function* () {
   const cliSettings = yield* CliSettings;
   const telemetryDisabled = cliSettings.telemetryDisabled;
   if (Option.isSome(telemetryDisabled) && telemetryDisabled.value === "1") {
-    return "denied" as const;
+    return "SUPABASE_TELEMETRY_DISABLED" satisfies TelemetryOptOutVariable;
   }
 
   const doNotTrack = cliSettings.doNotTrack;
-  if (Option.isSome(doNotTrack) && doNotTrack.value === "1") return "denied" as const;
+  if (Option.isSome(doNotTrack) && doNotTrack.value === "1") {
+    return "DO_NOT_TRACK" satisfies TelemetryOptOutVariable;
+  }
+  return undefined;
+});
+
+export const getEffectiveConsent = Effect.fnUntraced(function* (
+  config: Option.Option<TelemetryConfig>,
+) {
+  if ((yield* telemetryOptOutVariable) !== undefined) return "denied" as const;
 
   return Option.match(config, {
     onNone: () => "granted" as const,

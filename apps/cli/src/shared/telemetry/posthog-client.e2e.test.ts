@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Exit } from "effect";
-import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
+import { makeTempHome, runSupabaseEffect } from "../../../tests/helpers/cli.ts";
 
 class BlackholeServerError extends Data.TaggedError("BlackholeServerError")<{
   readonly cause: unknown;
@@ -57,6 +57,50 @@ describe("telemetry against a blackholed PostHog endpoint", () => {
       // Healthy runs land near 2.5s (2s drain cap + spawn overhead); the nearest real failure
       // signature is the SDK's 5s default deadline plus startup.
       expect(elapsedMs).toBeLessThan(4_500);
+    }),
+  );
+});
+
+describe("telemetry disable against a recording PostHog endpoint", () => {
+  it.live("sends nothing for the opt-out or for the command after it", () =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const server = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () =>
+            Bun.serve({
+              hostname: "127.0.0.1",
+              port: 0,
+              fetch() {
+                requests += 1;
+                return Response.json({ status: 1 });
+              },
+            }),
+          catch: (cause) => new BlackholeServerError({ cause }),
+        }),
+        (running) => Effect.promise(() => running.stop(true)),
+      );
+      const home = yield* makeTempHome;
+      const run = (args: string[]) =>
+        runSupabaseEffect(args, {
+          home: home.dir,
+          env: {
+            SUPABASE_TELEMETRY_DISABLED: "0",
+            DO_NOT_TRACK: "0",
+            SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_e2e_recording_test",
+            SUPABASE_TELEMETRY_POSTHOG_HOST: server.url.origin,
+          },
+        });
+
+      const whileEnabled = yield* run(["telemetry", "status"]);
+      expect(whileEnabled.stdout).toContain("Telemetry is enabled.");
+      expect(requests).toBeGreaterThan(0);
+      const requestsBeforeOptOut = requests;
+
+      yield* run(["telemetry", "disable"]);
+      const afterOptOut = yield* run(["telemetry", "status"]);
+      expect(afterOptOut.stdout).toContain("Telemetry is disabled.");
+      expect(requests).toBe(requestsBeforeOptOut);
     }),
   );
 });
