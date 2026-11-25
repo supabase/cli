@@ -30,7 +30,7 @@ describe("buildPgMetaContainerSpec", () => {
       healthcheck: {
         test: [
           "CMD-SHELL",
-          `node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
+          `exec node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
         ],
         intervalSeconds: 10,
         timeoutSeconds: 2,
