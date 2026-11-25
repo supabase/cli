@@ -2,6 +2,7 @@
 id: logs
 kind: command
 category: general
+subcategory: logs
 title: logs
 symbol: supabase logs
 summary: Browse local or hosted logs. Arrows select, Enter details, C copies, L loads more logs, and q quits. Custom SQL uses L to rerun. Pipes and machine output read once. Explicit --output-format text disables the viewer. Use --output-format json|stream-json for structured output; -o/--output is unsupported.

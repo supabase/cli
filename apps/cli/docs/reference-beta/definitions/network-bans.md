@@ -2,6 +2,7 @@
 id: network-bans
 kind: command
 category: network-bans
+subcategory: network-bans
 title: network-bans
 symbol: supabase network-bans
 summary: Manage network bans

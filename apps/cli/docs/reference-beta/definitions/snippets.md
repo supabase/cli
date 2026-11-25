@@ -2,6 +2,7 @@
 id: snippets
 kind: command
 category: sql-snippets
+subcategory: snippets
 title: snippets
 symbol: supabase snippets
 summary: Manage SQL snippets

@@ -2,6 +2,7 @@
 id: network-restrictions
 kind: command
 category: network-restrictions
+subcategory: network-restrictions
 title: network-restrictions
 symbol: supabase network-restrictions
 summary: Manage network restrictions

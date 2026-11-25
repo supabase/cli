@@ -2,6 +2,7 @@
 id: inspect
 kind: command
 category: inspect
+subcategory: inspect
 title: inspect
 symbol: supabase inspect
 summary: Inspect project tools

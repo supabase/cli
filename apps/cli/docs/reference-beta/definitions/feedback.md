@@ -2,6 +2,7 @@
 id: feedback
 kind: command
 category: feedback
+subcategory: feedback
 title: feedback
 symbol: supabase feedback
 summary: Send or delete CLI feedback

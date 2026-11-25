@@ -2,6 +2,7 @@
 id: issue
 kind: command
 category: feedback
+subcategory: issue
 title: issue
 symbol: supabase issue
 summary: Open a GitHub issue form

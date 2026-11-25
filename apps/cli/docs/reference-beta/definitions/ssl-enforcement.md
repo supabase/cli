@@ -2,6 +2,7 @@
 id: ssl-enforcement
 kind: command
 category: ssl-enforcement
+subcategory: ssl-enforcement
 title: ssl-enforcement
 symbol: supabase ssl-enforcement
 summary: Manage SSL enforcement

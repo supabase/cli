@@ -2,6 +2,7 @@
 id: storage
 kind: command
 category: storage
+subcategory: storage
 title: storage
 symbol: supabase storage
 summary: Manage Storage objects

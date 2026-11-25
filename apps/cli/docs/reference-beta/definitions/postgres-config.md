@@ -2,6 +2,7 @@
 id: postgres-config
 kind: command
 category: postgres-config
+subcategory: postgres-config
 title: postgres-config
 symbol: supabase postgres-config
 summary: Manage Postgres database config

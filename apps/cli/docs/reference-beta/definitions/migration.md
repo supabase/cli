@@ -2,6 +2,7 @@
 id: migration
 kind: command
 category: migrations
+subcategory: migration
 title: migration
 symbol: supabase migration
 summary: Manage database migrations

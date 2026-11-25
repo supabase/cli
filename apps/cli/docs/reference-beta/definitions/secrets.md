@@ -2,6 +2,7 @@
 id: secrets
 kind: command
 category: secrets
+subcategory: secrets
 title: secrets
 symbol: supabase secrets
 summary: Manage Edge Function secrets

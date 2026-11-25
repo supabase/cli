@@ -2,6 +2,7 @@
 id: db
 kind: command
 category: database
+subcategory: db
 title: db
 symbol: supabase db
 summary: Manage databases

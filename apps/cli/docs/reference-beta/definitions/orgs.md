@@ -2,6 +2,7 @@
 id: orgs
 kind: command
 category: organizations
+subcategory: orgs
 title: orgs
 symbol: supabase orgs
 summary: Manage organizations

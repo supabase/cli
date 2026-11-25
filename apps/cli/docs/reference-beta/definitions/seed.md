@@ -2,6 +2,7 @@
 id: seed
 kind: command
 category: seed
+subcategory: seed
 title: seed
 symbol: supabase seed
 summary: Seed a project from its config file

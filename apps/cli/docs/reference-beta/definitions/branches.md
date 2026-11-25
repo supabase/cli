@@ -2,6 +2,7 @@
 id: branches
 kind: command
 category: branches
+subcategory: branches
 title: branches
 symbol: supabase branches
 summary: Manage preview branches

@@ -2,6 +2,7 @@
 id: gen
 kind: command
 category: generate-types
+subcategory: gen
 title: gen
 symbol: supabase gen
 summary: Generate types, keys and tokens

@@ -2,6 +2,7 @@
 id: config
 kind: command
 category: config
+subcategory: config
 title: config
 symbol: supabase config
 summary: Manage project configuration

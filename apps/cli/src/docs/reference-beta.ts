@@ -136,7 +136,9 @@ function definitionOf(command: DocsCommand, category: string): ReferenceDefiniti
     id: command.id.replace(/^supabase-/, ""),
     kind: "command",
     category,
-    ...(path.length > 2 ? { subcategory: path[1] } : {}),
+    ...(path[1] !== undefined && (path.length > 2 || command.subcommands.length > 0)
+      ? { subcategory: path[1] }
+      : {}),
     title: path.slice(1).join(" "),
     symbol: command.title,
     summary: command.summary,
