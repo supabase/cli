@@ -221,6 +221,15 @@ describe("service catalog", () => {
     Effect.gen(function* () {
       const phase = yield* Ref.make("setup");
       const enter = (name: string) => Ref.set(phase, name);
+      // Logs before the timeout interrupts the body, because native stop finalizers can
+      // outlast the suite timeout and swallow the stall error.
+      yield* Effect.sleep(NATIVE_REST_DEADLINE).pipe(
+        Effect.andThen(Ref.get(phase)),
+        Effect.flatMap((stalled) =>
+          Effect.logError(new NativeRestStallError({ phase: stalled }).message),
+        ),
+        Effect.forkChild,
+      );
       yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -288,6 +297,7 @@ END $$;`);
           yield* sql.unsafe(
             "ALTER ROLE supabase_admin SET pgrst.db_pre_request = 'public.catalog_native_hook';",
           );
+          yield* enter("rest.setup");
           const restRecipe = yield* makeServiceRecipe(
             {
               service: "rest",
