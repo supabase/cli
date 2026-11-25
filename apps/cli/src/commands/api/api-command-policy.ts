@@ -24,6 +24,8 @@ export const generatedOperations: ReadonlyArray<OpenApiOperationId> = [
   "v2-update-warehouse-table-layout",
   "v2-get-warehouse-query-stats",
   "v2-get-warehouse-capacity",
+  "v2-get-warehouse-ingestion-stats",
+  "v2-get-warehouse-storage-stats",
   "v2-add-warehouse-replication",
   "v2-remove-warehouse-replication",
   "v2-resync-warehouse-replication",
@@ -72,7 +74,7 @@ export const nouns = {
     experimental: "warehouse",
     groups: {
       replication: "Manage Warehouse replication selections and rebuilds",
-      inspect: "Inspect Warehouse workload metrics",
+      inspect: "Inspect Warehouse workload, capacity, ingestion, and storage metrics",
       tables: "Inspect tables replicated to Warehouse",
       "tables.layout": "Inspect and update the layout of tables replicated to Warehouse",
       teardowns: "Inspect Warehouse cleanup operations",

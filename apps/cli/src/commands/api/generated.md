@@ -88,6 +88,26 @@ Returns capacity, admission, assignment-wait, and activation measurements over a
 | `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
 | `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
 
+## `supabase warehouse inspect ingestion-stats`
+
+Inspect Warehouse ingestion throughput and WAL lag
+
+Returns DuckLake ingestion throughput and WAL lag from the authorized pipelines and their independently resolved ETL regions. Select from six measurements: events received/processed per second, bytes received/processed per second, replication WAL lag and receive WAL lag. All six are selected by default. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and worker, replication-path or event-type dimensions are retained. WAL lag is bytes; negative sentinels become null. Processed throughput acknowledges destination acceptance, not guaranteed durability. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Maintenance, inline-flush and sampled storage-health measurements are available from storage-stats.
+
+- Access: read-only, no consent.
+- Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
+- Request: `GET /v2/projects/{ref}/warehouse/ingestion-stats` (`v2-get-warehouse-ingestion-stats`), success 200 json.
+
+### Flags
+
+| Flag                        | Type                                          | Required | Repeatable | Binds to           |
+| --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
+| `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
+| `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
+
 ## `supabase warehouse inspect query-stats`
 
 Inspect Warehouse workload query statistics
@@ -97,6 +117,26 @@ Returns aggregate workload measurements over a bounded time range, using the pro
 - Access: read-only, no consent.
 - Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
 - Request: `GET /v2/projects/{ref}/warehouse/query-stats` (`v2-get-warehouse-query-stats`), success 200 json.
+
+### Flags
+
+| Flag                        | Type                                          | Required | Repeatable | Binds to           |
+| --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
+| `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
+| `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
+
+## `supabase warehouse inspect storage-stats`
+
+Inspect Warehouse storage and maintenance statistics
+
+Returns up to eight DuckLake maintenance, inline-flush or sampled storage-health measurements from the authorized pipelines and their independently resolved ETL regions. Use since or both from and to; defaults to the last 30 minutes. Rates describe each effective rate window. Pipeline IDs and allowed operation, outcome, table or controller-process dimensions are retained. Table summary means are observations across tables and time, not current inventories. Sampled health has unknown observation freshness: last_sample_at is scrape receipt, not a successful recent health sample. Catalog-wide metrics require the collector exclusive-ownership gate; shared catalogs remain unavailable. Maintenance pause outcomes differ from run outcomes, and result availability is per controller process without global latest-run ordering. Missing, stale and unavailable values remain null. No raw queries or backend selection are accepted. A failure of one measurement does not discard successful siblings. Throughput and WAL lag are available from ingestion-stats.
+
+- Access: read-only, no consent.
+- Experimental: enable with `experimental.warehouse` or `SUPABASE_EXPERIMENTAL_WAREHOUSE=1`.
+- Request: `GET /v2/projects/{ref}/warehouse/storage-stats` (`v2-get-warehouse-storage-stats`), success 200 json.
 
 ### Flags
 

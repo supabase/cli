@@ -298,5 +298,60 @@
       "type": "string"
     },
     "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/2/description",
+    "value": "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+    "$comment": "The platform describes the range as an ISO timestamp, but the parameter pattern requires seconds and a time zone; the replacement states that format with an example."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/2/description",
+    "value": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/3/description",
+    "value": "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+    "$comment": "The platform describes the range as an ISO timestamp, but the parameter pattern requires seconds and a time zone; the replacement states that format with an example."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/3/description",
+    "value": "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/5/description",
+    "value": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+    "$comment": "The platform shares the query-stats interval description, which mentions latency windows; no ingestion measurement is a latency."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1ingestion-stats/get/parameters/5/description",
+    "value": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate windows are at least 5m."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1storage-stats/get/parameters/2/description",
+    "value": "Range start as an ISO timestamp, within the last 30 days. Requires to; cannot be combined with since.",
+    "$comment": "The platform describes the range as an ISO timestamp, but the parameter pattern requires seconds and a time zone; the replacement states that format with an example."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1storage-stats/get/parameters/2/description",
+    "value": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since."
+  },
+  {
+    "op": "test",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1storage-stats/get/parameters/3/description",
+    "value": "Range end as an ISO timestamp, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+    "$comment": "The platform describes the range as an ISO timestamp, but the parameter pattern requires seconds and a time zone; the replacement states that format with an example."
+  },
+  {
+    "op": "replace",
+    "path": "/paths/~1v2~1projects~1{ref}~1warehouse~1storage-stats/get/parameters/3/description",
+    "value": "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew."
   }
 ]
