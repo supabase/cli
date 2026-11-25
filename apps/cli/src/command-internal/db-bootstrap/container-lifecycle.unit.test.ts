@@ -300,7 +300,7 @@ describe("createContainer", () => {
   describe("Docker's first health check", () => {
     const steady = { test: ["CMD", "true"], intervalSeconds: 10, timeoutSeconds: 2, retries: 3 };
     const steadyFlags = {
-      "--health-cmd": "true",
+      "--health-cmd": "exec true",
       "--health-interval": "10s",
       "--health-timeout": "2s",
       "--health-retries": "3",
