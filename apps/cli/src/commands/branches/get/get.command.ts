@@ -1,5 +1,5 @@
 import { withSidebar } from "../../../command-internal/command-sidebar.ts";
-import { Argument, Command } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -53,6 +53,10 @@ const config = {
     Argument.optional,
   ),
   ...projectTargetFlags({ parent: true }),
+  reveal: Flag.Boolean("reveal").pipe(
+    Flag.withDescription("Reveal the secret API keys in full (e.g. sb_secret_...)."),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -63,6 +67,16 @@ export const branchesGetCommand = Command.make("get", config).pipe(
     "Retrieve details of the specified preview branch.\n\nNote: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.",
   ),
   Command.withShortDescription("Retrieve details of a preview branch"),
+  Command.withExamples([
+    {
+      command: "supabase branches get feat-x",
+      description: "Retrieve details of a preview branch",
+    },
+    {
+      command: "supabase branches get feat-x --reveal -o json",
+      description: "Retrieve connection details and API keys with secret keys revealed in full",
+    },
+  ]),
   withPermissions(
     compose(
       {
@@ -74,14 +88,27 @@ export const branchesGetCommand = Command.make("get", config).pipe(
               "the branch given (argument or typed answer) is a name, not a UUID or a 20-letter project ref",
           },
           { operationId: "v1-get-a-branch-config", kind: "required" },
-          ...MACHINE_OUTPUT.flatMap(({ when, context }) =>
-            ["v1-get-project-api-keys", "v1-get-pooler-config"].map((operationId) => ({
-              operationId,
+          ...MACHINE_OUTPUT.flatMap(({ when, context }) => [
+            {
+              operationId: "v1-get-project-api-keys",
+              kind: "required" as const,
+              when: [...when, { flag: "reveal", is: true }],
+              request: { query: { reveal: "true" } },
+              ...(context === undefined ? {} : { context }),
+            },
+            {
+              operationId: "v1-get-project-api-keys",
+              kind: "required" as const,
+              when: [...when, { flag: "reveal", is: false }],
+              ...(context === undefined ? {} : { context }),
+            },
+            {
+              operationId: "v1-get-pooler-config",
               kind: "required" as const,
               when,
               ...(context === undefined ? {} : { context }),
-            })),
-          ),
+            },
+          ]),
         ],
       },
       branchesParentTarget,

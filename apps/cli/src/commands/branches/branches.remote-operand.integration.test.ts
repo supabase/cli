@@ -78,6 +78,7 @@ const getBranch = (argv: ReadonlyArray<string>, name: string) =>
     name: Option.some(name),
     remote: Option.some({ _tag: "Linked" }),
     projectRef: Option.none(),
+    reveal: false,
   }).pipe(Effect.provide(Layer.succeed(CliArgs, prepareCliArgs(root, argv))));
 
 const requested = (api: { readonly requests: ReadonlyArray<{ method: string; url: string }> }) =>

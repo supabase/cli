@@ -129,7 +129,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     }
 
     const keys: ApiKeys = yield* api.v1
-      .getProjectApiKeys({ ref: detail.ref })
+      .getProjectApiKeys(flags.reveal ? { ref: detail.ref, reveal: true } : { ref: detail.ref })
       .pipe(Effect.catch(mapApiKeysError));
     const poolers: Pooler = yield* api.v1
       .getPoolerConfig({ ref: detail.ref })

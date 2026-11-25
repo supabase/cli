@@ -204,6 +204,7 @@ const baseFlags: BranchesGetFlags = {
   name: Option.none(),
   remote: Option.none(),
   projectRef: Option.none(),
+  reveal: false,
 };
 
 describe("branches get integration", () => {
@@ -249,7 +250,12 @@ describe("branches get integration", () => {
       expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
         ref: VALID_REF,
       });
-      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -274,7 +280,12 @@ describe("branches get integration", () => {
         api.requests.some((r) => r.url.includes(`/v1/projects/${VALID_REF}/branches/feat-x`)),
       ).toBe(true);
       expect(api.requests.some((r) => r.url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
-      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -286,7 +297,12 @@ describe("branches get integration", () => {
       expect(out.stdoutText).toContain("******");
       expect(out.stdoutText).toContain("ACTIVE_HEALTHY");
       expect(requested(api)).toEqual([DETAIL_REQUEST]);
-      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -298,7 +314,7 @@ describe("branches get integration", () => {
       expect(requested(api)).toEqual([DETAIL_REQUEST]);
       assertPermissionDrift({
         command: "branches get",
-        activeFlags: { output: "pretty" },
+        activeFlags: { output: "pretty", reveal: false },
         requests: api.requests,
         exact: true,
       });
@@ -312,7 +328,7 @@ describe("branches get integration", () => {
       expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
       assertPermissionDrift({
         command: "branches get",
-        activeFlags: { "output-format": "json" },
+        activeFlags: { "output-format": "json", reveal: false },
         requests: api.requests,
         exact: true,
       });
@@ -359,7 +375,7 @@ describe("branches get integration", () => {
         yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
         assertPermissionDrift({
           command: "branches get",
-          activeFlags: { output: "toml" },
+          activeFlags: { output: "toml", reveal: false },
           requests: api.requests,
           exact: true,
         });
@@ -379,7 +395,7 @@ describe("branches get integration", () => {
       expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
       assertPermissionDrift({
         command: "branches get",
-        activeFlags: { output: "env" },
+        activeFlags: { output: "env", reveal: false },
         requests: api.requests,
         exact: true,
       });
@@ -397,7 +413,7 @@ describe("branches get integration", () => {
       });
       assertPermissionDrift({
         command: "branches get",
-        activeFlags: { output: "table" },
+        activeFlags: { output: "table", reveal: false },
         requests: api.requests,
         exact: true,
       });
@@ -418,7 +434,7 @@ describe("branches get integration", () => {
           );
           assertPermissionDrift({
             command: "branches get",
-            activeFlags: { agent },
+            activeFlags: { agent, reveal: false },
             requests: api.requests,
             exact: true,
           });
@@ -500,9 +516,190 @@ describe("branches get integration", () => {
       expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST]);
       assertPermissionDrift({
         command: "branches get",
-        activeFlags: { output: "json" },
+        activeFlags: { output: "json", reveal: false },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("omits the reveal query param by default", () => {
+    const { layer, api } = setup({ outputFlag: "json" });
+    return Effect.gen(function* () {
+      yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      const apiKeysReq = api.requests.find((r) => r.url.includes("/api-keys"));
+      expect(apiKeysReq).toBeDefined();
+      expect(apiKeysReq?.urlWithParams).not.toContain("reveal");
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "json", reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("sends reveal=true when --reveal is passed", () => {
+    const { layer, api } = setup({ outputFlag: "json" });
+    return Effect.gen(function* () {
+      yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true });
+      const apiKeysReq = api.requests.find((r) => r.url.includes("/api-keys"));
+      expect(apiKeysReq).toBeDefined();
+      expect(apiKeysReq?.urlWithParams).toContain("reveal=true");
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "json", reveal: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("masks secret keys by default when api_key is null", () => {
+    const maskedKeys: ApiKeys = [
+      { name: "default", type: "publishable", api_key: "sb_publishable_test" },
+      { name: "default", type: "secret", api_key: null },
+      { name: "service_role", type: "secret", api_key: null },
+    ];
+    const { layer, out } = setup({ outputFlag: "json", apiKeysBody: maskedKeys });
+    return Effect.gen(function* () {
+      yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      const envs = yield* decodeJson(out.stdoutText);
+      expect(envs).toMatchObject({
+        SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+        SUPABASE_DEFAULT_KEY: "******",
+        SUPABASE_SERVICE_ROLE_KEY: "******",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "reveals secret keys in full with --reveal across all structured formats (json, env, toml, yaml)",
+    () => {
+      const revealedKeys: ApiKeys = [
+        { name: "default", type: "publishable", api_key: "sb_publishable_test" },
+        { name: "default", type: "secret", api_key: "sb_secret_revealed_test" },
+        { name: "service_role", type: "secret", api_key: "sb_secret_sr_revealed" },
+      ];
+      return Effect.gen(function* () {
+        // json
+        {
+          const { layer, out, api } = setup({ outputFlag: "json", apiKeysBody: revealedKeys });
+          yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true }).pipe(
+            Effect.provide(layer),
+          );
+          const envs = yield* decodeJson(out.stdoutText);
+          expect(envs).toMatchObject({
+            SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+            SUPABASE_DEFAULT_KEY: "sb_secret_revealed_test",
+            SUPABASE_SERVICE_ROLE_KEY: "sb_secret_sr_revealed",
+          });
+          assertPermissionDrift({
+            command: "branches get",
+            activeFlags: { output: "json", reveal: true },
+            requests: api.requests,
+            exact: true,
+          });
+        }
+        // env
+        {
+          const { layer, out, api } = setup({ outputFlag: "env", apiKeysBody: revealedKeys });
+          yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true }).pipe(
+            Effect.provide(layer),
+          );
+          expect(out.stdoutText).toContain('SUPABASE_DEFAULT_KEY="sb_secret_revealed_test"');
+          expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY="sb_secret_sr_revealed"');
+          assertPermissionDrift({
+            command: "branches get",
+            activeFlags: { output: "env", reveal: true },
+            requests: api.requests,
+            exact: true,
+          });
+        }
+        // toml
+        {
+          const { layer, out, api } = setup({ outputFlag: "toml", apiKeysBody: revealedKeys });
+          yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true }).pipe(
+            Effect.provide(layer),
+          );
+          expect(out.stdoutText).toContain('SUPABASE_DEFAULT_KEY = "sb_secret_revealed_test"');
+          expect(out.stdoutText).toContain('SUPABASE_SERVICE_ROLE_KEY = "sb_secret_sr_revealed"');
+          assertPermissionDrift({
+            command: "branches get",
+            activeFlags: { output: "toml", reveal: true },
+            requests: api.requests,
+            exact: true,
+          });
+        }
+        // yaml
+        {
+          const { layer, out, api } = setup({ outputFlag: "yaml", apiKeysBody: revealedKeys });
+          yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true }).pipe(
+            Effect.provide(layer),
+          );
+          expect(out.stdoutText).toContain("SUPABASE_DEFAULT_KEY: sb_secret_revealed_test");
+          expect(out.stdoutText).toContain("SUPABASE_SERVICE_ROLE_KEY: sb_secret_sr_revealed");
+          assertPermissionDrift({
+            command: "branches get",
+            activeFlags: { output: "yaml", reveal: true },
+            requests: api.requests,
+            exact: true,
+          });
+        }
+      });
+    },
+  );
+
+  it.effect(
+    "fails with BranchesApiKeysUnexpectedStatusError on api-keys 403 when --reveal is passed",
+    () => {
+      const { layer, api } = setup({ outputFlag: "json", apiKeysStatus: 403 });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("BranchesApiKeysUnexpectedStatusError");
+          expect(causeText).toContain("unexpected get api keys status 403");
+        }
+        expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST]);
+        expect(api.requests[1]?.urlWithParams).toContain("reveal=true");
+        assertPermissionDrift({
+          command: "branches get",
+          activeFlags: { output: "json", reveal: true },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "reveals secret keys on main branch while leaving database credentials unpopulated",
+    () => {
+      const mainBranchDetail: BranchDetail = {
+        ...DETAIL,
+        db_pass: undefined,
+        db_user: undefined,
+      };
+      const revealedKeys: ApiKeys = [
+        { name: "default", type: "secret", api_key: "sb_secret_main_branch" },
+      ];
+      const { layer, out } = setup({
+        outputFlag: "json",
+        detailBody: mainBranchDetail,
+        apiKeysBody: revealedKeys,
+      });
+      return Effect.gen(function* () {
+        yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID), reveal: true });
+        const envs = yield* decodeJson(out.stdoutText);
+        expect(envs).toMatchObject({
+          SUPABASE_DEFAULT_KEY: "sb_secret_main_branch",
+        });
+        // Database password remains masked because main branch credentials cannot be retrieved via API
+        expect((envs as Record<string, string>)["POSTGRES_URL"]).toContain("******");
+        expect((envs as Record<string, string>)["POSTGRES_URL_NON_POOLING"]).toContain("******");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

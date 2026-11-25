@@ -84,8 +84,9 @@ describeHostedTargetSelection("branches create", {
 describeHostedTargetSelection("branches get", {
   mode: "parent",
   operands: ["feat-x"],
+  activeFlags: { reveal: false },
   respond: respondWithBranch(BRANCH_UUID),
-  run: (flags) => branchesGet({ ...flags, name: Option.some("feat-x") }),
+  run: (flags) => branchesGet({ ...flags, name: Option.some("feat-x"), reveal: false }),
 });
 
 describeHostedTargetSelection("branches update", {
