@@ -9,6 +9,8 @@ import {
   mockCommandPlatformApi,
   mockCommandSettings,
 } from "../../tests/helpers/command-mocks.ts";
+import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import { EventCommandExecuted, PropExitCode } from "../shared/telemetry/event-catalog.ts";
 import { LinkedProjectCache } from "../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import {
@@ -86,6 +88,52 @@ it.effect("keeps legacy bytes and waits for scoped release on interruption", () 
       expect(out.failures).toEqual([]);
     }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
   }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
+});
+
+it.effect("records legacy output before a required layer release defect escapes", () => {
+  const out = mockOutput({ format: "json" });
+  const defect = new Error("required layer release failed");
+  const events: unknown[] = [];
+  const required = Layer.effectDiscard(
+    Effect.addFinalizer(() =>
+      Effect.sync(() => events.push({ release: true })).pipe(Effect.andThen(Effect.die(defect))),
+    ),
+  );
+  const handler = () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => events.push({ handlerReleased: true })));
+      yield* Output.use((writer) => writer.raw('{"legacy":true}\n'));
+    });
+
+  return Effect.gen(function* () {
+    const exit = yield* CommandExecutor.use((executor) =>
+      executor.run({ owner: "handler", handler }, {}, required),
+    ).pipe(Effect.exit);
+    expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
+    expect(out.stdoutText).toBe('{"legacy":true}\n');
+    expect(out.failures).toEqual([]);
+    expect(events).toEqual([
+      { handlerReleased: true },
+      { exitCode: 0, stdout: '{"legacy":true}\n' },
+      { release: true },
+    ]);
+  }).pipe(
+    Effect.provideServiceEffect(
+      Analytics,
+      Analytics.use((sink) =>
+        Effect.succeed({
+          ...sink,
+          capture: (event, properties) =>
+            Effect.sync(() => {
+              if (event === EventCommandExecuted) {
+                events.push({ exitCode: properties?.[PropExitCode], stdout: out.stdoutText });
+              }
+            }),
+        }),
+      ),
+    ),
+    Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))),
+  );
 });
 
 const run = <E, R>(handler: () => Effect.Effect<typeof output.Type, E, R>) =>

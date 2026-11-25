@@ -139,7 +139,6 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
       }),
       Effect.scoped,
       Effect.provideContext(services),
-      Scope.use(requiredScope),
     );
     const instrument = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
       operation.pipe(
@@ -159,7 +158,11 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
 
     if (declaration.owner === "handler") {
       // Legacy writes do not mark a terminal attempt: the runner owns unhandled failures.
-      return yield* instrument(execute).pipe(withJsonErrorHandling, Effect.asVoid);
+      return yield* instrument(execute).pipe(
+        withJsonErrorHandling,
+        Scope.use(requiredScope),
+        Effect.asVoid,
+      );
     }
 
     const response = yield* TerminalResponse;
@@ -178,7 +181,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
 
     const exit = yield* Effect.gen(function* () {
       // Keep handler finalizers inside the services' lifetime, and own release before delivery.
-      const result = yield* execute;
+      const result = yield* execute.pipe(Scope.use(requiredScope));
       if (isMachine(output)) {
         const encoded = yield* Schema.encodeEffect(declaration.output)(result).pipe(Effect.orDie);
         yield* writeTerminal(() => output.result(encoded));

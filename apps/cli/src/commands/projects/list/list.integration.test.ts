@@ -308,7 +308,7 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits byte-exact indented JSON including `linked` for --output json", () => {
+  it.effect("emits indented --output json with `linked: true` and a trailing newline", () => {
     const { layer, out } = setup({ outputFlag: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
       yield* runList;
