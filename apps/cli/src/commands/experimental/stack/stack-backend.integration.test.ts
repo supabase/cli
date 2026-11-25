@@ -82,6 +82,7 @@ stack = true
         expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["services"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["issues"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["logs"], cwd: root, env: {} })).toBeUndefined();
         expect(yield* resolve({ args: ["logs", "sources"], cwd: root, env: {} })).toBeUndefined();
       }),

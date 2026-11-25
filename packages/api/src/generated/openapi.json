@@ -40665,6 +40665,21 @@
                       "items": {
                         "type": "number"
                       }
+                    },
+                    "extension_name": {
+                      "type": "string"
+                    },
+                    "installed_version": {
+                      "type": "string"
+                    },
+                    "default_version": {
+                      "type": "string"
+                    },
+                    "foreign_key": {
+                      "type": "string"
+                    },
+                    "arguments": {
+                      "type": "string"
                     }
                   }
                 },
@@ -49111,6 +49126,21 @@
                               "items": {
                                 "type": "number"
                               }
+                            },
+                            "extension_name": {
+                              "type": "string"
+                            },
+                            "installed_version": {
+                              "type": "string"
+                            },
+                            "default_version": {
+                              "type": "string"
+                            },
+                            "foreign_key": {
+                              "type": "string"
+                            },
+                            "arguments": {
+                              "type": "string"
                             }
                           }
                         },

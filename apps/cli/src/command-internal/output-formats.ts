@@ -21,6 +21,7 @@ export const QUERY_OUTPUT_FORMATS = ["json", "table", "csv"] as const;
 const commandOutputFormats: Readonly<Record<string, ReadonlyArray<string>>> = {
   "db query": QUERY_OUTPUT_FORMATS,
   logs: [],
+  issues: [],
   "logs sources": [],
 };
 
