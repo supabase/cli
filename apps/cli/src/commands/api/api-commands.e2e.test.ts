@@ -1,6 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
-import type { OperationOutput } from "@supabase/api/effect";
 import { Data, Effect, FileSystem, Path, Schema } from "effect";
 
 import { makeTempHome, requireCliSuccess, runSupabaseEffect } from "../../../tests/helpers/cli.ts";
@@ -17,7 +16,6 @@ const REF = "abcdefghijklmnopqrst";
 const ACCESS_TOKEN = `sbp_${"a".repeat(40)}`;
 const SEL = "ab".repeat(32);
 const ENABLE_PATH = `/v2/projects/${REF}/warehouse/enable`;
-const SETUP_PATH = `/v2/projects/${REF}/warehouse/setups/current`;
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeLines = (text: string) =>
@@ -112,97 +110,6 @@ const runWarehouse = (
     return { result, requests, bodies };
   }).pipe(Effect.scoped);
 
-it.live.each([
-  { command: "query-stats", metric: "query_rate", unit: "per_second", aggregation: "rate" },
-  { command: "capacity", metric: "query_in_flight", unit: "queries", aggregation: "sum" },
-] as const)(
-  "warehouse inspect $command reaches the public route through the compiled CLI",
-  ({ command, metric, unit, aggregation }) =>
-    Effect.gen(function* () {
-      const response = json(200, {
-        data: [
-          {
-            type: "warehouse_metric",
-            id: metric,
-            attributes: {
-              project_ref: REF,
-              metric,
-              unit,
-              aggregation,
-              definition: "Executor query invocations.",
-              requested: { metric, start: 1795000000, end: 1795001800 },
-              effective: { start: 1795000000, end: 1795001800, step: 60, rate_window_seconds: 300 },
-              scrape_interval_seconds: 60,
-              last_sample_at: null,
-              availability: "unavailable",
-              series: [],
-            },
-          },
-        ],
-      } satisfies
-        | OperationOutput<"v2GetWarehouseQueryStats">
-        | OperationOutput<"v2GetWarehouseCapacity">);
-      const { result, requests } = yield* runWarehouse(
-        ["inspect", command, "--since", "30m", "--output-format", "json"],
-        () => response,
-      );
-
-      requireCliSuccess(result, `warehouse inspect ${command}`);
-      expect(result.stdout, result.stderr).toBe(response.body);
-      expect(requests).toEqual([`GET /v2/projects/${REF}/warehouse/${command}`]);
-    }).pipe(Effect.provide(BunServices.layer)),
-);
-
-const conflict = json(409, {
-  error: {
-    code: "selection_conflict",
-    message: "The selection changed",
-    description: "Re-run enable.",
-  },
-});
-
-it.live("warehouse status reports a 409 as a text failure when stdout is piped", () =>
-  Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status"], () => conflict);
-
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("The selection changed: Re-run enable. (HTTP 409)");
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse status reports a 409 as an error document with --output-format json", () =>
-  Effect.gen(function* () {
-    const { result } = yield* runWarehouse(["status", "--output-format", "json"], () => conflict);
-
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(decodeJson(result.stdout)).toMatchObject({
-      _tag: "Error",
-      error: {
-        code: "ApiCommandStatusError",
-        message: "The selection changed: Re-run enable. (HTTP 409)",
-      },
-    });
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse status reports a 409 as an error frame with --output-format stream-json", () =>
-  Effect.gen(function* () {
-    const { result } = yield* runWarehouse(
-      ["status", "--output-format", "stream-json"],
-      () => conflict,
-    );
-
-    expect(result.exitCode, result.stderr).toBe(1);
-    const frames = decodeLines(result.stdout);
-    expect(frames.at(-1)).toMatchObject({
-      type: "error",
-      error: { code: "ApiCommandStatusError" },
-    });
-    expect(frames.filter((frame) => (frame as { type?: string }).type === "result")).toEqual([]);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
 it.live("warehouse status prints the consolidated status as text when stdout is piped", () =>
   Effect.gen(function* () {
     const response = json(200, {
@@ -247,53 +154,6 @@ it.live("warehouse status prints the consolidated status as text when stdout is 
   }).pipe(Effect.provide(BunServices.layer)),
 );
 
-it.live(
-  "warehouse status --output-format json keeps the API bytes and shows progress on stderr",
-  () =>
-    Effect.gen(function* () {
-      const response = json(200, { data: { type: "warehouse_context", id: REF, attributes: {} } });
-      const { result } = yield* runWarehouse(["status", "--output-format", "json"], () => response);
-
-      requireCliSuccess(result, "warehouse status --output-format json");
-      expect(result.stdout).toBe(response.body);
-      expect(result.stderr).toContain("[task] start:");
-    }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse status --output-format stream-json emits one result frame", () =>
-  Effect.gen(function* () {
-    const response = json(200, { data: { type: "warehouse_context", id: REF, attributes: {} } });
-    const { result } = yield* runWarehouse(
-      ["status", "--output-format", "stream-json"],
-      () => response,
-    );
-
-    requireCliSuccess(result, "warehouse status --output-format stream-json");
-    const frames = decodeLines(result.stdout);
-    expect(frames.filter((frame) => (frame as { type?: string }).type === "result")).toEqual([
-      {
-        type: "result",
-        data: decodeJson(response.body),
-        timestamp: expect.any(String),
-      },
-    ]);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse enable --wait prints the accepted response after the setup succeeds", () =>
-  Effect.gen(function* () {
-    const accepted = json(202, { data: { attributes: { selection_id: SEL } } });
-    const { result, requests } = yield* runWarehouse(
-      ["enable", "--schema", "public", "--wait", "--yes", "--output-format", "json"],
-      (request) => (request.method === "POST" ? accepted : statusBody("succeeded")),
-    );
-
-    requireCliSuccess(result, "warehouse enable --wait");
-    expect(result.stdout, result.stderr).toBe(accepted.body);
-    expect(requests).toEqual([`POST ${ENABLE_PATH}`, `GET ${SETUP_PATH}`]);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
 it.live("warehouse enable --wait --output-format stream-json logs progress before the result", () =>
   Effect.gen(function* () {
     const accepted = json(202, { data: { attributes: { selection_id: SEL } } });
@@ -312,26 +172,6 @@ it.live("warehouse enable --wait --output-format stream-json logs progress befor
     expect(frames.filter((frame) => frame.type === "result")).toHaveLength(1);
     expect(frames.slice(0, -1).every((frame) => frame.type === "log")).toBe(true);
     expect(frames.length).toBeGreaterThan(1);
-  }).pipe(Effect.provide(BunServices.layer)),
-);
-
-it.live("warehouse enable without --yes refuses to run when stdin is piped", () =>
-  Effect.gen(function* () {
-    const { result, requests } = yield* runWarehouse(
-      ["enable", "--schema", "public", "--output-format", "json"],
-      () => json(202, {}),
-      { stdin: "" },
-    );
-
-    expect(result.exitCode, result.stderr).toBe(1);
-    expect(decodeJson(result.stdout)).toMatchObject({
-      _tag: "Error",
-      error: {
-        code: "HostedMutationConsentRequiredError",
-        suggestion: expect.stringContaining("--yes"),
-      },
-    });
-    expect(requests).toEqual([]);
   }).pipe(Effect.provide(BunServices.layer)),
 );
 

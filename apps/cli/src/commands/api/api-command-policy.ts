@@ -70,10 +70,10 @@ export const commandPolicies = {
 
 export const nouns = {
   warehouse: {
-    description: "Manage the data warehouse for a project",
+    description: "Enable, inspect, and disable the data warehouse for a project",
     experimental: "warehouse",
     groups: {
-      replication: "Manage Warehouse replication selections and rebuilds",
+      replication: "Add, remove, resync, and restart table replication to Warehouse",
       inspect: "Inspect Warehouse workload, capacity, ingestion, and storage metrics",
       tables: "Inspect tables replicated to Warehouse",
       "tables.layout": "Inspect and update the layout of tables replicated to Warehouse",

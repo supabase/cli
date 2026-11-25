@@ -29,6 +29,7 @@ import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   acceptanceOf,
   linkedReadInput,
+  refOnlyStatusCommand,
   sendApiRequest,
   summaryText,
   waitForOperation,
@@ -98,7 +99,7 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
         body: Flag.optional(
           Flag.String("body").pipe(
             Flag.withDescription(
-              "Whole request body as JSON; other flags replace fields at their own location.",
+              "Whole request body as JSON. Flags that set body fields override the matching fields.",
             ),
           ),
         ),
@@ -228,7 +229,10 @@ const handle = Effect.fn("api-command.run")(function* (
         });
       }
       const api = yield* (yield* CommandPlatformApiFactory).make;
-      const acceptance = acceptanceOf(entry);
+      const acceptance = acceptanceOf(
+        entry,
+        resolved === undefined ? undefined : refOnlyStatusCommand(resolved.statusEntry, ref),
+      );
 
       if (waiting) {
         // A read that polls itself already returns the shape it prints; any other wait prints
@@ -236,15 +240,17 @@ const handle = Effect.fn("api-command.run")(function* (
         const selfPolling = resolved.readEntry.operationId === entry.operationId;
         const accepted = selfPolling
           ? undefined
-          : yield* withTask(summaryText(entry), () => sendApiRequest(api, entry, decoded));
+          : yield* withTask(summaryText(entry), () =>
+              sendApiRequest(api, entry, decoded, { acceptance }),
+            );
         const readInput =
           accepted === undefined
             ? input
             : yield* linkedReadInput({
                 wait: resolved.wait,
-                changedOperationId: entry.operationId,
                 ref,
                 changed: accepted,
+                accepted: acceptance ?? { action: summaryText(entry) },
               });
         const polling = summaryText(resolved.readEntry);
         const settled = yield* withTask(polling, (update) =>
@@ -265,7 +271,7 @@ const handle = Effect.fn("api-command.run")(function* (
         return yield* writeApiResponse(accepted ?? settled, format, acceptance);
       }
       const response = yield* withTask(summaryText(entry), () =>
-        sendApiRequest(api, entry, decoded),
+        sendApiRequest(api, entry, decoded, { acceptance }),
       );
       yield* Effect.annotateCurrentSpan("run.outcome", "sent");
       return yield* writeApiResponse(response, format, acceptance);

@@ -1998,7 +1998,7 @@ describe("generated warehouse commands", () => {
           message: expect.stringContaining(
             "The API accepted the request (Enable Warehouse replication)",
           ),
-          suggestion: "Check the current state before running the command again.",
+          suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
         });
         expect(out.stdoutText).toBe("");
       });
@@ -2017,6 +2017,23 @@ describe("generated warehouse commands", () => {
           expect(failure).toBeInstanceOf(ApiCommandNetworkError);
           expect(failure).toMatchObject({
             message: expect.stringContaining("The Management API could not be reached"),
+            suggestion: "Check your network connection and run the command again.",
+          });
+        });
+      },
+    );
+
+    it.effect(
+      "says the response could not be read when a read's body fails after its status line",
+      () => {
+        const { run } = setup(["warehouse", "status"], {
+          route: () => ({ status: 200, unreadable: true }),
+        });
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining("The Management API response could not be read"),
             suggestion: "Check your network connection and run the command again.",
           });
         });
@@ -2422,7 +2439,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect(
-      "ends the wait with a defect when the accepted response lacks the selection id",
+      "says the change was accepted when its response lacks the selection id the wait needs",
       () => {
         const { sent, run } = setup(
           ["warehouse", "enable", "--schema", "public", "--yes", "--wait"],
@@ -2435,8 +2452,14 @@ describe("generated warehouse commands", () => {
           },
         );
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(run);
-          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+          expect(failure).toMatchObject({
+            message: expect.stringContaining(
+              "The API accepted the request (Enable Warehouse replication), but its response did not include /data/attributes/selection_id",
+            ),
+            suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
+          });
           expect(sent.map((request) => request.method)).toEqual(["POST"]);
         });
       },
@@ -2455,14 +2478,21 @@ describe("generated warehouse commands", () => {
         );
         const suggestion = `Check it with \`supabase warehouse status --remote=${VALID_REF}\`.`;
         return Effect.gen(function* () {
+          const failures = [];
           for (const { run } of [failing, stalling]) {
             const fiber = yield* run.pipe(
               Effect.flip,
               Effect.forkChild({ startImmediately: true }),
             );
             yield* driveClock(fiber);
-            expect(yield* Fiber.join(fiber)).toMatchObject({ suggestion });
+            failures.push(yield* Fiber.join(fiber));
           }
+          for (const failure of failures) expect(failure).toMatchObject({ suggestion });
+          expect(failures[1]).toMatchObject({
+            message: expect.stringContaining(
+              "The API accepted the request (Enable Warehouse replication), but the wait for v2-get-warehouse-setup to report succeeded timed out.",
+            ),
+          });
         });
       },
     );

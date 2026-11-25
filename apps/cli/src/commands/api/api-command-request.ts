@@ -97,6 +97,8 @@ const parseJsonFlag = (flag: string, text: ApiFlagValue) =>
     ),
   );
 
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 /**
  * The flat operation input `{...bodyFields, ...query, ref, <path parameter>}`. A body
  * override is the starting point when given, else the synthesized envelope; only flags that were
@@ -117,7 +119,7 @@ export const assembleInput = Effect.fnUntraced(function* (
     const unknown = Object.keys(bodyOverride.value).find((key) => !declared.includes(key));
     if (unknown !== undefined) {
       return yield* new ApiCommandUsageError({
-        message: `--body/--file has the field "${unknown}", which the request body does not take.`,
+        message: `--body/--file has the field ${encodeJsonString(unknown)}, which the request body does not take.`,
         suggestion:
           declared.length === 0
             ? "This command takes no request body."
