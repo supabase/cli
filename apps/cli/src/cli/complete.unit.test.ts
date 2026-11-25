@@ -530,6 +530,8 @@ describe("respondToComplete", () => {
 
   describe("--output's choice values are validated per-command, not the widened global union (CLI-1965 review)", () => {
     it.each([
+      { path: ["issues"], format: "json" },
+      { path: ["issues"], format: "yaml" },
       { path: ["logs"], format: "table" },
       { path: ["logs"], format: "csv" },
       { path: ["logs", "sources"], format: "table" },

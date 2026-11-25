@@ -6,8 +6,8 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
-import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
+import { encodeHtmlSafeJsonIndented } from "../html-safe-json.ts";
+import { makeLevelEnum } from "../fail-on.ts";
 
 /** Lowest severity first. */
 const ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
@@ -92,6 +92,11 @@ interface ApiLint {
   readonly detail: string;
   readonly remediation: string;
   readonly metadata?: {
+    readonly extension_name?: string;
+    readonly installed_version?: string;
+    readonly default_version?: string;
+    readonly foreign_key?: string;
+    readonly arguments?: string;
     readonly schema?: string;
     readonly name?: string;
     readonly entity?: string;
@@ -106,20 +111,25 @@ interface ApiLint {
  * Maps decoded API lints to the output shape: metadata keeps its six fields in the established
  * order and an empty `categories` collapses to `null`.
  */
-export function apiLintsToAdvisorLints(lints: ReadonlyArray<ApiLint>): ReadonlyArray<AdvisorLint> {
+export function apiLintsToAdvisorLints(
+  lints: ReadonlyArray<ApiLint>,
+  options: { readonly preserveMetadata?: boolean } = {},
+): ReadonlyArray<AdvisorLint> {
   return lints.map((lint) => {
     const m = lint.metadata;
     const metadata =
       m === undefined
         ? undefined
-        : {
-            ...(m.entity !== undefined ? { entity: m.entity } : {}),
-            ...(m.fkey_columns !== undefined ? { fkey_columns: m.fkey_columns } : {}),
-            ...(m.fkey_name !== undefined ? { fkey_name: m.fkey_name } : {}),
-            ...(m.name !== undefined ? { name: m.name } : {}),
-            ...(m.schema !== undefined ? { schema: m.schema } : {}),
-            ...(m.type !== undefined ? { type: m.type } : {}),
-          };
+        : options.preserveMetadata === true
+          ? m
+          : {
+              ...(m.entity !== undefined ? { entity: m.entity } : {}),
+              ...(m.fkey_columns !== undefined ? { fkey_columns: m.fkey_columns } : {}),
+              ...(m.fkey_name !== undefined ? { fkey_name: m.fkey_name } : {}),
+              ...(m.name !== undefined ? { name: m.name } : {}),
+              ...(m.schema !== undefined ? { schema: m.schema } : {}),
+              ...(m.type !== undefined ? { type: m.type } : {}),
+            };
     return {
       name: lint.name,
       title: lint.title,

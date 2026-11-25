@@ -152,5 +152,85 @@
     "path": "/components/schemas/SnippetResponse_Output/properties/content/nullable",
     "value": true,
     "$comment": "The platform returns a null `content` for a snippet that has no stored content."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1ProjectAdvisorsResponse_Output/properties/lints/items/properties/metadata/properties/extension_name",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1ProjectAdvisorsResponse_Output/properties/lints/items/properties/metadata/properties/installed_version",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1ProjectAdvisorsResponse_Output/properties/lints/items/properties/metadata/properties/default_version",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1ProjectAdvisorsResponse_Output/properties/lints/items/properties/metadata/properties/foreign_key",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1ProjectAdvisorsResponse_Output/properties/lints/items/properties/metadata/properties/arguments",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ProjectAdvisorsResponse_Output/properties/data/properties/attributes/properties/lints/items/properties/metadata/properties/extension_name",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ProjectAdvisorsResponse_Output/properties/data/properties/attributes/properties/lints/items/properties/metadata/properties/installed_version",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ProjectAdvisorsResponse_Output/properties/data/properties/attributes/properties/lints/items/properties/metadata/properties/default_version",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ProjectAdvisorsResponse_Output/properties/data/properties/attributes/properties/lints/items/properties/metadata/properties/foreign_key",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ProjectAdvisorsResponse_Output/properties/data/properties/attributes/properties/lints/items/properties/metadata/properties/arguments",
+    "value": {
+      "type": "string"
+    },
+    "$comment": "The published advisor schema omits identity fields emitted by database checks."
   }
 ]
