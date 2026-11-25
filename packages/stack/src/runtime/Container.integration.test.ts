@@ -1,5 +1,5 @@
 import { NodeCrypto, NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { describe, expect, it } from "@effect/vitest";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   ConfigProvider,
@@ -65,6 +65,25 @@ class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+// The runtime's own pull bound, plus slack for its daemon probe; keeps a cold pull out of every
+// test's 120s budget so a stalled pull fails with the runtime's diagnostic instead.
+const IMAGE_PREPARE_TIMEOUT_MS = 330_000;
+
+beforeAll(
+  () =>
+    makeContainerRuntime({
+      target: containerTarget,
+      root: ".",
+      hostGateway: sharedHostGateway,
+    }).pipe(
+      Effect.flatMap((runtime) => runtime.prepare(image)),
+      Effect.scoped,
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
+      Effect.runPromise,
+    ),
+  IMAGE_PREPARE_TIMEOUT_MS,
+);
 
 describe("container process adapter", { timeout: 120_000 }, () => {
   it.live("recognizes a cached pinned image without pulling", () =>
