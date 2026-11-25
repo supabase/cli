@@ -268,12 +268,12 @@ export const apiCommands = [
     readOnly: true,
     flags: [
       {
-        name: "attributes",
+        name: "since",
         type: "string",
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
       },
       {
         name: "from",
@@ -284,29 +284,29 @@ export const apiCommands = [
           "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
       },
       {
-        name: "interval",
-        type: "string",
-        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
-        repeatable: false,
-        required: false,
-        description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
-      },
-      {
-        name: "since",
-        type: "string",
-        repeatable: false,
-        required: false,
-        description:
-          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
-      },
-      {
         name: "to",
         type: "string",
         repeatable: false,
         required: false,
         description:
           "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["1m", "5m", "10m", "30m", "1h", "1d"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate windows are at least 5m.",
       },
     ],
     bindings: [
@@ -317,9 +317,9 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "attributes",
+        name: "since",
         source: "flag",
-        flag: "attributes",
+        flag: "since",
       },
       {
         location: "query",
@@ -329,21 +329,21 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "interval",
-        source: "flag",
-        flag: "interval",
-      },
-      {
-        location: "query",
-        name: "since",
-        source: "flag",
-        flag: "since",
-      },
-      {
-        location: "query",
         name: "to",
         source: "flag",
         flag: "to",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
       },
     ],
   },
@@ -446,12 +446,12 @@ export const apiCommands = [
     readOnly: true,
     flags: [
       {
-        name: "attributes",
+        name: "since",
         type: "string",
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
       },
       {
         name: "from",
@@ -462,29 +462,29 @@ export const apiCommands = [
           "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
       },
       {
-        name: "interval",
-        type: "string",
-        choices: ["10m", "1d", "1h", "1m", "30m", "5m"],
-        repeatable: false,
-        required: false,
-        description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
-      },
-      {
-        name: "since",
-        type: "string",
-        repeatable: false,
-        required: false,
-        description:
-          "Look back from server time, for example 30m, 2h, or 1d. Defaults to 30m when from/to are omitted. Maximum 30d. Cannot be combined with from/to.",
-      },
-      {
         name: "to",
         type: "string",
         repeatable: false,
         required: false,
         description:
           "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
+      },
+      {
+        name: "attributes",
+        type: "string",
+        repeatable: false,
+        required: false,
+        description:
+          "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+      },
+      {
+        name: "interval",
+        type: "string",
+        choices: ["1m", "5m", "10m", "30m", "1h", "1d"],
+        repeatable: false,
+        required: false,
+        description:
+          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -495,9 +495,9 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "attributes",
+        name: "since",
         source: "flag",
-        flag: "attributes",
+        flag: "since",
       },
       {
         location: "query",
@@ -507,21 +507,21 @@ export const apiCommands = [
       },
       {
         location: "query",
-        name: "interval",
-        source: "flag",
-        flag: "interval",
-      },
-      {
-        location: "query",
-        name: "since",
-        source: "flag",
-        flag: "since",
-      },
-      {
-        location: "query",
         name: "to",
         source: "flag",
         flag: "to",
+      },
+      {
+        location: "query",
+        name: "attributes",
+        source: "flag",
+        flag: "attributes",
+      },
+      {
+        location: "query",
+        name: "interval",
+        source: "flag",
+        flag: "interval",
       },
     ],
   },

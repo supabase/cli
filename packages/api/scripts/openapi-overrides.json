@@ -416,36 +416,6 @@
         "operationId": "v2-get-warehouse-ingestion-stats",
         "parameters": [
           {
-            "description": "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
-            "in": "query",
-            "name": "attributes",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
-            "in": "query",
-            "name": "from",
-            "required": false,
-            "schema": {
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
-            "in": "query",
-            "name": "interval",
-            "required": false,
-            "schema": {
-              "enum": ["10m", "1d", "1h", "1m", "30m", "5m"],
-              "type": "string"
-            }
-          },
-          {
             "description": "Project ref",
             "in": "path",
             "name": "ref",
@@ -469,6 +439,17 @@
             }
           },
           {
+            "description": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          },
+          {
             "description": "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
             "in": "query",
             "name": "to",
@@ -476,6 +457,25 @@
             "schema": {
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+            "in": "query",
+            "name": "attributes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate windows are at least 5m.",
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "enum": ["1m", "5m", "10m", "30m", "1h", "1d"],
               "type": "string"
             }
           }
@@ -594,7 +594,7 @@
         "x-scalar-stability": "experimental"
       }
     },
-    "$comment": "Public Warehouse ingestion throughput and WAL lag metrics generate warehouse inspect ingestion-stats. The from and to descriptions state the timestamp format the parameter pattern requires."
+    "$comment": "Public Warehouse ingestion throughput and WAL lag metrics generate warehouse inspect ingestion-stats. Parameter and interval order follow the deployed query-stats and capacity operations. The from and to descriptions state the timestamp format the parameter pattern requires, and the interval description omits latency windows because no ingestion measurement is a latency."
   },
   {
     "op": "add",
@@ -867,36 +867,6 @@
         "operationId": "v2-get-warehouse-storage-stats",
         "parameters": [
           {
-            "description": "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
-            "in": "query",
-            "name": "attributes",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
-            "in": "query",
-            "name": "from",
-            "required": false,
-            "schema": {
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
-            "in": "query",
-            "name": "interval",
-            "required": false,
-            "schema": {
-              "enum": ["10m", "1d", "1h", "1m", "30m", "5m"],
-              "type": "string"
-            }
-          },
-          {
             "description": "Project ref",
             "in": "path",
             "name": "ref",
@@ -920,6 +890,17 @@
             }
           },
           {
+            "description": "Range start as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, within the last 30 days. Requires to; cannot be combined with since.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          },
+          {
             "description": "Range end as an ISO 8601 timestamp with seconds and a time zone, for example `2026-11-18T09:30:00Z`, no later than server time. Requires from; cannot be combined with since. The service tolerates up to 60 seconds of request delay or clock skew.",
             "in": "query",
             "name": "to",
@@ -927,6 +908,25 @@
             "schema": {
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+            "in": "query",
+            "name": "attributes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "enum": ["1m", "5m", "10m", "30m", "1h", "1d"],
               "type": "string"
             }
           }
@@ -1045,6 +1045,6 @@
         "x-scalar-stability": "experimental"
       }
     },
-    "$comment": "Public Warehouse storage and maintenance metrics generate warehouse inspect storage-stats. The from and to descriptions state the timestamp format the parameter pattern requires."
+    "$comment": "Public Warehouse storage and maintenance metrics generate warehouse inspect storage-stats. Parameter and interval order follow the deployed query-stats and capacity operations. The from and to descriptions state the timestamp format the parameter pattern requires."
   }
 ]

@@ -74,7 +74,7 @@ export const nouns = {
     experimental: "warehouse",
     groups: {
       replication: "Manage Warehouse replication selections and rebuilds",
-      inspect: "Inspect Warehouse workload, capacity, ingestion and storage metrics",
+      inspect: "Inspect Warehouse workload, capacity, ingestion, and storage metrics",
       tables: "Inspect tables replicated to Warehouse",
       "tables.layout": "Inspect and update the layout of tables replicated to Warehouse",
       teardowns: "Inspect Warehouse cleanup operations",

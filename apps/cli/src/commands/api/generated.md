@@ -102,11 +102,11 @@ Returns DuckLake ingestion throughput and WAL lag from the authorized pipelines 
 
 | Flag                        | Type                                          | Required | Repeatable | Binds to           |
 | --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
-| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
-| `--from <from>`             | string                                        | no       | no         | query `from`       |
-| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
 | `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
 | `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
 
 ## `supabase warehouse inspect query-stats`
 
@@ -142,11 +142,11 @@ Returns up to eight DuckLake maintenance, inline-flush or sampled storage-health
 
 | Flag                        | Type                                          | Required | Repeatable | Binds to           |
 | --------------------------- | --------------------------------------------- | -------- | ---------- | ------------------ |
-| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
-| `--from <from>`             | string                                        | no       | no         | query `from`       |
-| `--interval <interval>`     | string (`10m`, `1d`, `1h`, `1m`, `30m`, `5m`) | no       | no         | query `interval`   |
 | `--since <since>`           | string                                        | no       | no         | query `since`      |
+| `--from <from>`             | string                                        | no       | no         | query `from`       |
 | `--to <to>`                 | string                                        | no       | no         | query `to`         |
+| `--attributes <attributes>` | string                                        | no       | no         | query `attributes` |
+| `--interval <interval>`     | string (`1m`, `5m`, `10m`, `30m`, `1h`, `1d`) | no       | no         | query `interval`   |
 
 ## `supabase warehouse replication add`
 

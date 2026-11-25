@@ -14878,9 +14878,6 @@ export const V2GetWarehouseConnectionOutput = Schema.Struct({
   }),
 });
 export const V2GetWarehouseIngestionStatsInput = Schema.Struct({
-  attributes: Schema.optionalKey(Schema.String),
-  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  interval: Schema.optionalKey(Schema.Literals(["10m", "1d", "1h", "1m", "30m", "5m"])),
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
@@ -14899,7 +14896,10 @@ export const V2GetWarehouseIngestionStatsInput = Schema.Struct({
       }),
     ),
   ),
+  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   to: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  attributes: Schema.optionalKey(Schema.String),
+  interval: Schema.optionalKey(Schema.Literals(["1m", "5m", "10m", "30m", "1h", "1d"])),
 });
 export const V2GetWarehouseIngestionStatsOutput = Schema.Struct({
   data: Schema.Array(
@@ -15931,9 +15931,6 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
   }),
 });
 export const V2GetWarehouseStorageStatsInput = Schema.Struct({
-  attributes: Schema.optionalKey(Schema.String),
-  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  interval: Schema.optionalKey(Schema.Literals(["10m", "1d", "1h", "1m", "30m", "5m"])),
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
   )
@@ -15952,7 +15949,10 @@ export const V2GetWarehouseStorageStatsInput = Schema.Struct({
       }),
     ),
   ),
+  from: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   to: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  attributes: Schema.optionalKey(Schema.String),
+  interval: Schema.optionalKey(Schema.Literals(["1m", "5m", "10m", "30m", "1h", "1d"])),
 });
 export const V2GetWarehouseStorageStatsOutput = Schema.Struct({
   data: Schema.Array(
@@ -25515,7 +25515,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/ingestion-stats",
     pathParams: ["ref"],
-    queryParams: ["attributes", "from", "interval", "since", "to"],
+    queryParams: ["since", "from", "to", "attributes", "interval"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -25571,7 +25571,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/storage-stats",
     pathParams: ["ref"],
-    queryParams: ["attributes", "from", "interval", "since", "to"],
+    queryParams: ["since", "from", "to", "attributes", "interval"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
