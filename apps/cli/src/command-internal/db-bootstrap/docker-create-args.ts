@@ -172,13 +172,13 @@ function shellQuoteArg(arg: string): string {
  * Converts a healthcheck `Test` array into the single string `docker create --health-cmd`
  * expects — there's no CLI equivalent for an exec-form test, so a `["CMD-SHELL", script]` test
  * forwards unmodified, and a `["CMD", ...args]` test has each argument shell-quoted (see
- * {@link shellQuoteArg}) and joined with spaces so Docker's own `/bin/sh -c` re-splits it back
- * into the same argv.
+ * {@link shellQuoteArg}) and joined with spaces after `exec` so Docker's own `/bin/sh -c`
+ * re-splits it back into the same argv and replaces itself with the probe.
  */
 export function buildHealthCmdArg(test: ReadonlyArray<string>): string {
   const [mode, ...rest] = test;
   if (mode === "CMD-SHELL") return rest[0] ?? "";
-  return rest.map(shellQuoteArg).join(" ");
+  return `exec ${rest.map(shellQuoteArg).join(" ")}`;
 }
 
 function formatPortBindingFlag(port: StartPortBindingSpec): string {
