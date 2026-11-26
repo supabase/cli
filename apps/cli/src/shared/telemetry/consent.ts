@@ -17,7 +17,6 @@ import {
   PersistedNumberSchema,
   TelemetryConfigSchema,
   type TelemetryConfig,
-  type TelemetryOptOutVariable,
 } from "./types.ts";
 
 export const getConfigDir = CliSettings.useSync((cliSettings) => cliSettings.supabaseHome);
@@ -190,25 +189,17 @@ function contextualRenameError(
   });
 }
 
-/** The environment variable that opts this run out of telemetry, when one is set to `1`. */
-export const telemetryOptOutVariable = Effect.gen(function* () {
-  const cliSettings = yield* CliSettings;
-  const telemetryDisabled = cliSettings.telemetryDisabled;
-  if (Option.isSome(telemetryDisabled) && telemetryDisabled.value === "1") {
-    return "SUPABASE_TELEMETRY_DISABLED" satisfies TelemetryOptOutVariable;
-  }
-
-  const doNotTrack = cliSettings.doNotTrack;
-  if (Option.isSome(doNotTrack) && doNotTrack.value === "1") {
-    return "DO_NOT_TRACK" satisfies TelemetryOptOutVariable;
-  }
-  return undefined;
-});
-
 export const getEffectiveConsent = Effect.fnUntraced(function* (
   config: Option.Option<TelemetryConfig>,
 ) {
-  if ((yield* telemetryOptOutVariable) !== undefined) return "denied" as const;
+  const cliSettings = yield* CliSettings;
+  const telemetryDisabled = cliSettings.telemetryDisabled;
+  if (Option.isSome(telemetryDisabled) && telemetryDisabled.value === "1") {
+    return "denied" as const;
+  }
+
+  const doNotTrack = cliSettings.doNotTrack;
+  if (Option.isSome(doNotTrack) && doNotTrack.value === "1") return "denied" as const;
 
   return Option.match(config, {
     onNone: () => "granted" as const,

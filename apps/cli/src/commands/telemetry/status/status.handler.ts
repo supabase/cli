@@ -9,6 +9,5 @@ export const telemetryStatus = Effect.fn("telemetry.status")(function* (
   const output = yield* Output;
   const runtime = yield* TelemetryRuntime;
   const state = runtime.consent === "granted" ? "enabled" : "disabled";
-  const reason = runtime.optOutVariable === undefined ? "" : ` (${runtime.optOutVariable}=1)`;
-  yield* output.raw(`Telemetry is ${state}${reason}.\n`);
+  yield* output.raw(`Telemetry is ${state}.\n`);
 });

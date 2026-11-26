@@ -151,13 +151,13 @@ describe("telemetry integration", () => {
   });
 
   for (const variable of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
-    it.live(`status names ${variable}=1 as the opt-out and leaves no state file`, () => {
+    it.live(`status reports ${variable}=1 as disabled and leaves no state file`, () => {
       const dir = tempRoot.current;
       const { out, layer } = setup(dir, { [variable]: "1" });
 
       return Effect.gen(function* () {
         yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(layer));
-        expect(out.stdoutText).toBe(`Telemetry is disabled (${variable}=1).\n`);
+        expect(out.stdoutText).toBe("Telemetry is disabled.\n");
         expect(yield* telemetryConfigExists(dir)).toBe(false);
       });
     });

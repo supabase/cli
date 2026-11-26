@@ -9,8 +9,6 @@ export const PersistedNumberSchema = Schema.declare(Predicate.isNumber);
 const ConsentStateSchema = Schema.Literals(["granted", "denied"] as const);
 export type ConsentState = Schema.Schema.Type<typeof ConsentStateSchema>;
 
-export type TelemetryOptOutVariable = "SUPABASE_TELEMETRY_DISABLED" | "DO_NOT_TRACK";
-
 export const TelemetryConfigSchema = Schema.Struct({
   consent: ConsentStateSchema,
   device_id: Schema.String,

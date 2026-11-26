@@ -1,12 +1,10 @@
 import { Context } from "effect";
 import type { TelemetryIdentity } from "./identity.ts";
-import type { ConsentState, TelemetryOptOutVariable } from "./types.ts";
+import type { ConsentState } from "./types.ts";
 
 interface TelemetryRuntimeShape {
   readonly configDir: string;
   readonly consent: ConsentState;
-  /** The environment variable that opted this run out, when one did. */
-  readonly optOutVariable?: TelemetryOptOutVariable | undefined;
   readonly deviceId: string;
   readonly sessionId: string;
   readonly identity: TelemetryIdentity;
