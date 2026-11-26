@@ -29,7 +29,7 @@ FROM supabase/edge-runtime:v1.80.0 AS edgeruntime
 
 FROM timberio/vector:0.58.0-alpine AS vector
 
-FROM supabase/supavisor:2.10.1 AS supavisor
+FROM supabase/supavisor:2.10.2 AS supavisor
 
 FROM supabase/gotrue:v2.199.0 AS gotrue
 
