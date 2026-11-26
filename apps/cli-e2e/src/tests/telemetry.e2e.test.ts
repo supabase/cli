@@ -2,8 +2,9 @@ import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
 import { runE2e, testBehaviour } from "./test-context.ts";
 
-// The harness opts every run out by env var, which `status` reports ahead of the file's state.
-const withoutEnvOptOut = { env: { SUPABASE_TELEMETRY_DISABLED: "" } };
+// The harness opts every run out by env var, and the caller's shell can too. `status` reports
+// either ahead of the file's state.
+const withoutEnvOptOut = { env: { SUPABASE_TELEMETRY_DISABLED: "", DO_NOT_TRACK: "" } };
 
 describe("telemetry", () => {
   describe("telemetry:enable", () => {
