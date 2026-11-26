@@ -1,0 +1,33 @@
+{
+  "name": "@supabase/ui-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "pnpm exec turbo run @supabase/ui-terminal#test:unit:run --",
+    "test:unit:run": "vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "test:integration": "pnpm exec turbo run @supabase/ui-terminal#test:integration:run --",
+    "test:integration:run": "vitest run --project integration && bun --bun vitest run --project integration",
+    "types:check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b",
+    "effect": "catalog:",
+    "yoga-layout": "3.2.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@xterm/addon-unicode-graphemes": "0.4.0",
+    "@xterm/headless": "6.0.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

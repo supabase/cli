@@ -136,12 +136,13 @@ pnpm run test:unit && pnpm run test:integration
 
 Useful source entry points:
 
-| Path              | Purpose                              |
-| ----------------- | ------------------------------------ |
-| `apps/cli`        | TypeScript/Bun CLI package           |
-| `packages/stack`  | Local Supabase stack runtime         |
-| `packages/config` | Config schema and generated types    |
-| `packages/api`    | Typed Supabase Management API client |
+| Path                   | Purpose                              |
+| ---------------------- | ------------------------------------ |
+| `apps/cli`             | TypeScript/Bun CLI package           |
+| `packages/stack`       | Local Supabase stack runtime         |
+| `packages/config`      | Config schema and generated types    |
+| `packages/api`         | Typed Supabase Management API client |
+| `packages/ui-terminal` | Terminal host for Effect UI          |
 
 After a fresh clone, install the reference repositories used for agent and developer inspection:
 

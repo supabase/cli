@@ -116,6 +116,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning CLI subprocesses in tests. |
 | `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                        |
 | `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                          |
+| `packages/ui-terminal`          | Terminal host for Effect UI, rendering inline CLI views with Yoga layout.                     |
 | `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                          |
 | `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                            |
 | `packages/cli-linux-arm64`      | Published native CLI binary wrapper for Linux arm64 (glibc).                                  |

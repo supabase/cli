@@ -9,6 +9,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 - `packages/api` — typed Management API client
 - `packages/config` — published config schema and generated types
 - `packages/stack` — local Supabase stack runtime
+- `packages/ui-terminal` — terminal host for Effect UI
 - `packages/cli-*` — published platform binary wrappers
 
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
