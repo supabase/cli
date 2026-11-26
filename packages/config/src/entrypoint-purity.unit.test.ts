@@ -6,6 +6,12 @@ import * as defaultEntrypoint from "./index.ts";
 import * as effectEntrypoint from "./effect.ts";
 import * as convertEntrypoint from "./convert.ts";
 import * as internalEntrypoint from "./internal.ts";
+import * as ioEffectBrowser from "./io-browser.ts";
+import * as deprecatedIoBrowser from "./io-deprecated-browser.ts";
+import * as deprecatedIoBun from "./io-deprecated-bun.ts";
+import * as deprecatedIoNode from "./io-deprecated-node.ts";
+import * as ioEffectBun from "./bun.ts";
+import * as ioEffectNode from "./node.ts";
 
 // `src/index.ts` is the entrypoint Studio (a browser bundle) imports directly. It must stay
 // bundlable with no Node/Bun runtime underneath it — no `@effect/platform-*` package, no
@@ -35,6 +41,13 @@ interface TypesBunDefaultExport {
   readonly default: string;
 }
 
+interface IoExport {
+  readonly bun: string;
+  readonly node: DistConditions;
+  readonly browser: DistConditions;
+  readonly default: DistConditions;
+}
+
 const packageJson = JSON.parse(
   await runPlatform(
     FileSystem.FileSystem.use((fs) => fs.readFileString(join(packageRoot, "package.json"))),
@@ -44,12 +57,9 @@ const packageJson = JSON.parse(
     readonly ".": TypesBunDefaultExport;
     readonly "./internal": TypesBunDefaultExport;
     readonly "./convert": TypesBunDefaultExport;
-    readonly "./io": {
-      readonly bun: string;
-      readonly node: DistConditions;
-      readonly browser: DistConditions;
-      readonly default: DistConditions;
-    };
+    readonly "./io": IoExport;
+    readonly "./io-effect": IoExport;
+    readonly "./io-promises": TypesBunDefaultExport;
     readonly "./effect": TypesBunDefaultExport;
     readonly "./schema.json": string;
     readonly "./project-schema.json": string;
@@ -590,6 +600,39 @@ describe("src/internal.ts export surface", () => {
 
 const convertGraph = await runPlatform(collectImportGraph(join(srcDir, "convert.ts")));
 
+describe("the deprecated ./io entry", () => {
+  test.each([
+    ["node", deprecatedIoNode, ioEffectNode],
+    ["bun", deprecatedIoBun, ioEffectBun],
+    ["browser", deprecatedIoBrowser, ioEffectBrowser],
+  ])("%s exposes the same runtime names as ./io-effect", (_platform, deprecated, current) => {
+    expect(Object.keys(deprecated).sort()).toEqual(Object.keys(current).sort());
+  });
+});
+
+const ioPromisesGraph = await runPlatform(collectImportGraph(join(srcDir, "io-promises.ts")));
+
+describe("src/io-promises.ts stays effect-free", () => {
+  test("no effect or platform package is reachable as a bare dependency", () => {
+    const bare = [...ioPromisesGraph.bareSpecifiers].sort();
+    expect(bare).toEqual([
+      "ajv",
+      "jsonc-parser",
+      "node:crypto",
+      "node:fs/promises",
+      "node:path",
+      "smol-toml",
+    ]);
+  });
+
+  test("none of the effect-backed modules are reachable", () => {
+    const reached = [...ioPromisesGraph.visitedFiles].map((file) => file.slice(srcDir.length + 1));
+    for (const forbidden of ["index.ts", "io.ts", "node.ts", "bun.ts", "promise-facade.ts"]) {
+      expect(reached).not.toContain(forbidden);
+    }
+  });
+});
+
 describe("src/convert.ts stays effect-free", () => {
   test("only smol-toml and jsonc-parser are reachable as bare dependencies", () => {
     expect([...convertGraph.bareSpecifiers].sort()).toEqual(["jsonc-parser", "smol-toml"]);
@@ -607,9 +650,10 @@ describe("src/convert.ts stays effect-free", () => {
 });
 
 describe("package.json exports map", () => {
-  test("./io exposes exactly the bun/node/browser/default conditions, in that order", () => {
-    const ioExports = packageJson.exports["./io"];
-    expect(Object.keys(ioExports)).toEqual(["bun", "node", "browser", "default"]);
+  test("./io and ./io-effect expose exactly the bun/node/browser/default conditions, in that order", () => {
+    for (const key of ["./io", "./io-effect"] as const) {
+      expect(Object.keys(packageJson.exports[key])).toEqual(["bun", "node", "browser", "default"]);
+    }
   });
 
   // `.`/`./effect`/`./internal` lead with `bun`: `tsc` under this repo's `customConditions:
@@ -622,9 +666,12 @@ describe("package.json exports map", () => {
       packageJson.exports["./effect"],
       packageJson.exports["./internal"],
       packageJson.exports["./convert"],
-      packageJson.exports["./io"].node,
-      packageJson.exports["./io"].browser,
-      packageJson.exports["./io"].default,
+      packageJson.exports["./io-promises"],
+      ...(["./io", "./io-effect"] as const).flatMap((key) => [
+        packageJson.exports[key].node,
+        packageJson.exports[key].browser,
+        packageJson.exports[key].default,
+      ]),
     ];
     for (const conditions of conditionObjects) {
       const keys = Object.keys(conditions);
@@ -632,8 +679,8 @@ describe("package.json exports map", () => {
     }
   });
 
-  test("'.', './effect', './internal', and './convert' lead with the 'bun' condition (CLI-2234)", () => {
-    for (const key of [".", "./effect", "./internal", "./convert"] as const) {
+  test("'.', './effect', './internal', './convert', and './io-promises' lead with the 'bun' condition", () => {
+    for (const key of [".", "./effect", "./internal", "./convert", "./io-promises"] as const) {
       expect(Object.keys(packageJson.exports[key])[0]).toBe("bun");
     }
   });
@@ -645,6 +692,8 @@ describe("package.json exports map", () => {
         "./internal",
         "./convert",
         "./io",
+        "./io-effect",
+        "./io-promises",
         "./effect",
         "./schema.json",
         "./project-schema.json",
@@ -655,22 +704,24 @@ describe("package.json exports map", () => {
   // The `types`/`default` conditions all point at `dist/` build outputs, which only exist after
   // `pnpm run build` — intentionally not checked here so this test stays build-independent.
   // `scripts/build.ts`'s tree-shake/Node-consumer smoke test owns dist correctness instead.
-  test("the ./io bun condition target exists on disk (its only src target)", () =>
+  test("the ./io and ./io-effect bun condition targets exist on disk (their only src target)", () =>
     runPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const read = yield* Effect.exit(
-          fs.readFile(join(packageRoot, packageJson.exports["./io"].bun)),
-        );
-        expect(Exit.isSuccess(read)).toBe(true);
+        for (const key of ["./io", "./io-effect"] as const) {
+          const read = yield* Effect.exit(
+            fs.readFile(join(packageRoot, packageJson.exports[key].bun)),
+          );
+          expect(Exit.isSuccess(read)).toBe(true);
+        }
       }),
     ));
 
-  test("the '.', './effect', './internal', and './convert' bun condition targets exist on disk", () =>
+  test("the '.', './effect', './internal', './convert', and './io-promises' bun condition targets exist on disk", () =>
     runPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        for (const key of [".", "./effect", "./internal", "./convert"] as const) {
+        for (const key of [".", "./effect", "./internal", "./convert", "./io-promises"] as const) {
           const target = packageJson.exports[key].bun;
           const read = yield* Effect.exit(fs.readFile(join(packageRoot, target)));
           expect(Exit.isSuccess(read)).toBe(true);

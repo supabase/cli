@@ -5,9 +5,9 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 
 ## Entrypoints
 
-Seven supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): five
-module entrypoints (`.`, `./io`, `./effect`, `./convert`, `./internal`) plus two generated JSON Schema
-artifacts (`./schema.json`, `./project-schema.json`).
+Nine supported import paths total (see ADR 0009's 2026-08-24 decision for the full rationale): seven
+module entrypoints (`.`, `./io`, `./io-effect`, `./io-promises`, `./effect`, `./convert`, `./internal`)
+plus two generated JSON Schema artifacts (`./schema.json`, `./project-schema.json`).
 
 - `@supabase/config` (`.`) — pure, browser/edge-safe surface. `CliConfigSchema`/`ProjectConfigSchema`
   and their derived types, config encoding, sparse-config defaults, the `ProjectConfig` converters
@@ -28,9 +28,19 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `_tag`, `reason`, `detail`, `sourceLine?`), plus the `CliConfigConverted`/`CliConfigConvertedToml`
   and `MovedTomlComment`/`MovedJsoncComment` types. Its import graph reaches only
   `smol-toml` and `jsonc-parser` (pinned by `src/entrypoint-purity.unit.test.ts`).
-- `@supabase/config/io` — a Promise-based file-IO facade for **external, non-Effect Node/Bun
-  consumers only**. Resolved via package.json exports conditions (`bun`/`node`/`browser`/`default`).
-  Has zero internal consumers by design — nothing inside this monorepo should import it.
+- `@supabase/config/io` — **deprecated** alias of `./io-effect` (each export carries `@deprecated`, via
+  `src/io-deprecated-*.ts`); it will stop depending on Effect in a future release. Same runtime, same
+  export conditions. Has zero internal consumers by design.
+- `@supabase/config/io-effect` — a Promise-based file-IO facade, backed by an Effect runtime, for
+  **external, non-Effect Node/Bun consumers only**. Resolved via package.json exports conditions
+  (`bun`/`node`/`browser`/`default`). Has zero internal consumers by design — nothing inside this
+  monorepo should import it.
+- `@supabase/config/io-promises` — the effect-free Promise file-IO entry (`src/io-promises.ts`, logic
+  in `src/promise-io.ts`): `node:fs/promises` plus the published `schema.json` validated with `ajv`,
+  returning plain documents instead of decoded `CliConfig` values. Its import graph reaches only
+  `ajv`, `jsonc-parser`, `smol-toml`, and `node:` builtins (pinned by
+  `src/entrypoint-purity.unit.test.ts`; `scripts/build.ts` also loads it from a packed tarball with no
+  `effect` resolvable). Do not import `.`/`./effect` code into it.
 - `@supabase/config/effect` — the Effect-native superset. Re-exports everything from `.` plus the
   Effect-returning config-loading/saving programs, `CliConfigStore`/`cliConfigStoreLayer`,
   project-environment resolution, and `inferFunctionsManifest` (discovers and validates
@@ -76,14 +86,14 @@ artifacts (`./schema.json`, `./project-schema.json`).
   importing the same package's default entrypoint in the same file.
 - A file that needs only pure symbols (the schema, types, encoding, sparse defaults, errors) imports
   from `@supabase/config`.
-- `@supabase/config/io` is exclusively for external consumers outside this monorepo that aren't
-  Effect-native. Do not add an internal consumer of it.
+- `@supabase/config/io`, `./io-effect`, and `./io-promises` are exclusively for external consumers
+  outside this monorepo that aren't Effect-native. Do not add an internal consumer of them.
 - `@supabase/config/internal` is for `apps/cli`'s own config-loading entrypoints and contract-guard
   tests only — a symbol that needs the internal-only `cliCompat` typings, or the internal
   registry data, imports it from there; every other symbol in the same import statement stays on
   its public specifier (`.`/`./effect`). Enforced: every `@supabase/config/internal` occurrence
   outside this package must be under `apps/cli/`.
-- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the six
+- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the
   entrypoints above are supported import paths.
 
 ## Pure-graph invariant

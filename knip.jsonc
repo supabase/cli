@@ -54,7 +54,7 @@
     },
     "packages/config": {
       // Run from workflow steps; declared for the same cross-workspace reason as apps/cli.
-      "entry": ["scripts/*.ts"],
+      "entry": ["scripts/*.ts", "src/io-deprecated-{node,browser}.ts"],
     },
     "packages/stack": {
       "entry": [

@@ -579,6 +579,19 @@
       "rules": {
         "effecttsgo/node-builtin-import": "off"
       }
+    },
+    {
+      /* The effect-free `@supabase/config/io-promises` entry is plain Promise code by contract. */
+      "files": [
+        "packages/config/src/io-promises.ts",
+        "packages/config/src/promise-io.ts",
+        "packages/config/src/promise-io.unit.test.ts"
+      ],
+      "rules": {
+        "effecttsgo/async-function": "off",
+        "effecttsgo/global-date": "off",
+        "effecttsgo/node-builtin-import": "off"
+      }
     }
   ]
 }

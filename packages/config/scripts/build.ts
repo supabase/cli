@@ -253,6 +253,32 @@ const SMOKE_TEST_RUNTIME_DEPS = [
 
 const CONVERT_SMOKE_TEST_RUNTIME_DEPS = ["jsonc-parser", "smol-toml"] as const;
 
+const IO_PROMISES_SMOKE_TEST_RUNTIME_DEPS = ["ajv", "jsonc-parser", "smol-toml"] as const;
+
+function buildIoPromisesSmokeTestScript(): string {
+  return [
+    'import assert from "node:assert/strict";',
+    'import { mkdtemp, mkdir, rm } from "node:fs/promises";',
+    'import { tmpdir } from "node:os";',
+    'import { join } from "node:path";',
+    "",
+    'const io = await import("@supabase/config/io-promises");',
+    'const root = await mkdtemp(join(tmpdir(), "supabase-config-io-promises-"));',
+    "try {",
+    '  await mkdir(join(root, "supabase"));',
+    '  await io.saveCliConfig({ cwd: root, config: { api: { port: 54321 } }, format: "toml" });',
+    "  const loaded = await io.loadCliConfig(root);",
+    '  assert.equal(loaded?.config.api.port, 54321, "io-promises did not round-trip a config");',
+    '  assert.deepEqual(await io.validateCliConfig({ api: { port: "x" } }).then((issues) => issues.map((issue) => issue.path)), ["api.port"]);',
+    '  await assert.rejects(io.saveCliConfig({ cwd: root, config: { nope: 1 } }), (error) => error instanceof io.CliConfigIoError && error.reason === "invalid_config");',
+    "} finally {",
+    "  await rm(root, { recursive: true, force: true });",
+    "}",
+    "",
+    'console.log("[build] pack-and-install smoke test: ./io-promises loaded with no effect resolvable");',
+  ].join("\n");
+}
+
 function buildConvertSmokeTestScript(): string {
   return [
     'import assert from "node:assert/strict";',
@@ -289,6 +315,9 @@ function buildSmokeTestScript(): string {
     'const ioMod = await import("@supabase/config/io");',
     "assert.ok(ioMod.loadCliConfig, \"loadCliConfig missing from './io'\");",
     "assert.ok(ioMod.inferFunctionsManifest, \"inferFunctionsManifest missing from './io'\");",
+    'const ioEffectMod = await import("@supabase/config/io-effect");',
+    "assert.ok(ioEffectMod.loadCliConfig, \"loadCliConfig missing from './io-effect'\");",
+    "assert.ok(ioEffectMod.inferFunctionsManifest, \"inferFunctionsManifest missing from './io-effect'\");",
     "",
     'const internalMod = await import("@supabase/config/internal");',
     "assert.ok(internalMod.projectConfigMappingRows, \"projectConfigMappingRows missing from './internal'\");",
@@ -391,30 +420,44 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
     const consumerDir = yield* installConsumer("consumer", SMOKE_TEST_RUNTIME_DEPS);
     yield* runCommand([nodePath, "--input-type=module", "-e", buildSmokeTestScript()], consumerDir);
 
-    const convertConsumerDir = yield* installConsumer(
-      "consumer-convert",
-      CONVERT_SMOKE_TEST_RUNTIME_DEPS,
-    );
-    const packedManifest = yield* decodePackageJson(
-      yield* fs.readFileString(
-        path.join(convertConsumerDir, "node_modules", "@supabase", "config", "package.json"),
-      ),
-    ).pipe(buildInputError("packed package.json"));
-    const declared = isRecord(packedManifest) ? packedManifest.dependencies : undefined;
-    const undeclared = CONVERT_SMOKE_TEST_RUNTIME_DEPS.filter(
-      (dep) => !isRecord(declared) || typeof declared[dep] !== "string",
-    );
-    if (undeclared.length > 0) {
-      return yield* Effect.die(
-        new Error(
-          `the packed package.json does not list ${undeclared.join(", ")} under dependencies, ` +
-            "but ./convert imports them at runtime",
+    const smokeWithoutEffect = Effect.fnUntraced(function* (
+      name: string,
+      entry: string,
+      deps: ReadonlyArray<string>,
+      script: string,
+    ) {
+      const consumer = yield* installConsumer(name, deps);
+      const packedManifest = yield* decodePackageJson(
+        yield* fs.readFileString(
+          path.join(consumer, "node_modules", "@supabase", "config", "package.json"),
         ),
+      ).pipe(buildInputError("packed package.json"));
+      const declared = isRecord(packedManifest) ? packedManifest.dependencies : undefined;
+      const undeclared = deps.filter(
+        (dep) => !isRecord(declared) || typeof declared[dep] !== "string",
       );
-    }
-    yield* runCommand(
-      [nodePath, "--input-type=module", "-e", buildConvertSmokeTestScript()],
-      convertConsumerDir,
+      if (undeclared.length > 0) {
+        return yield* Effect.die(
+          new Error(
+            `the packed package.json does not list ${undeclared.join(", ")} under dependencies, ` +
+              `but ${entry} imports them at runtime`,
+          ),
+        );
+      }
+      yield* runCommand([nodePath, "--input-type=module", "-e", script], consumer);
+    });
+
+    yield* smokeWithoutEffect(
+      "consumer-convert",
+      "./convert",
+      CONVERT_SMOKE_TEST_RUNTIME_DEPS,
+      buildConvertSmokeTestScript(),
+    );
+    yield* smokeWithoutEffect(
+      "consumer-io-promises",
+      "./io-promises",
+      IO_PROMISES_SMOKE_TEST_RUNTIME_DEPS,
+      buildIoPromisesSmokeTestScript(),
     );
   });
 
