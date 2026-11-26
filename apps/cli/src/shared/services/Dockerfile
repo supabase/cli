@@ -31,7 +31,7 @@ FROM timberio/vector:0.58.0-alpine AS vector
 
 FROM supabase/supavisor:2.10.1 AS supavisor
 
-FROM supabase/gotrue:v2.198.0 AS gotrue
+FROM supabase/gotrue:v2.199.0 AS gotrue
 
 FROM supabase/realtime:v2.178.1 AS realtime
 
