@@ -17892,26 +17892,19 @@ export const V2OrganizationsSlugWebhooksEndpointsGetInput = Schema.Struct({
       expected: "a string matching the RegExp ^[\\w-]+$",
     }),
   ),
-  page: Schema.optionalKey(
-    Schema.Struct({
-      offset: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
-        }).check(
-          Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^\\d+$",
-          }),
-        ),
-      ),
-      limit: Schema.optionalKey(
-        Schema.String.annotate({ description: "Up to how many records to return." }).check(
-          Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^\\d+$",
-          }),
-        ),
-      ),
-    }),
+  "page[offset]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+  "page[limit]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
   ),
 });
 export const V2OrganizationsSlugWebhooksEndpointsGetOutput = Schema.Struct({
@@ -18199,52 +18192,38 @@ export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetInput = Schema.S
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  page: Schema.optionalKey(
-    Schema.Struct({
-      before: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
-          format: "uuid",
-        }).check(
-          Schema.isPattern(
-            new RegExp(
-              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              "u",
-            ),
-          ).annotate({
-            expected:
-              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-          }),
+  "page[before]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
-      ),
-      after: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
-          format: "uuid",
-        }).check(
-          Schema.isPattern(
-            new RegExp(
-              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              "u",
-            ),
-          ).annotate({
-            expected:
-              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-          }),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[after]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
-      ),
-      size: Schema.optionalKey(
-        Schema.String.annotate({
-          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
-        }).check(
-          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^-?\\d+$",
-          }),
-        ),
-      ),
-    }),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[size]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
   ),
 });
 export const V2OrganizationsSlugWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct({
@@ -19388,26 +19367,19 @@ export const V2ProjectsRefWebhooksEndpointsGetInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  page: Schema.optionalKey(
-    Schema.Struct({
-      offset: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
-        }).check(
-          Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^\\d+$",
-          }),
-        ),
-      ),
-      limit: Schema.optionalKey(
-        Schema.String.annotate({ description: "Up to how many records to return." }).check(
-          Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^\\d+$",
-          }),
-        ),
-      ),
-    }),
+  "page[offset]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
+  ),
+  "page[limit]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
   ),
 });
 export const V2ProjectsRefWebhooksEndpointsGetOutput = Schema.Struct({
@@ -19707,52 +19679,38 @@ export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetInput = Schema.Struct(
         "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
     }),
   ),
-  page: Schema.optionalKey(
-    Schema.Struct({
-      before: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
-          format: "uuid",
-        }).check(
-          Schema.isPattern(
-            new RegExp(
-              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              "u",
-            ),
-          ).annotate({
-            expected:
-              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-          }),
+  "page[before]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
-      ),
-      after: Schema.optionalKey(
-        Schema.String.annotate({
-          description:
-            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
-          format: "uuid",
-        }).check(
-          Schema.isPattern(
-            new RegExp(
-              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-              "u",
-            ),
-          ).annotate({
-            expected:
-              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-          }),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[after]": Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "u",
         ),
-      ),
-      size: Schema.optionalKey(
-        Schema.String.annotate({
-          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
-        }).check(
-          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
-            expected: "a string matching the RegExp ^-?\\d+$",
-          }),
-        ),
-      ),
-    }),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+  ),
+  "page[size]": Schema.optionalKey(
+    Schema.String.check(
+      Schema.isPattern(new RegExp("^\\d+$", "u")).annotate({
+        expected: "a string matching the RegExp ^\\d+$",
+      }),
+    ),
   ),
 });
 export const V2ProjectsRefWebhooksEndpointsIdDeliveriesGetOutput = Schema.Struct({
@@ -25793,7 +25751,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/organizations/{slug}/webhooks/endpoints",
     pathParams: ["slug"],
-    queryParams: ["page"],
+    queryParams: ["page[offset]", "page[limit]"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -25821,7 +25779,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/organizations/{slug}/webhooks/endpoints/{id}/deliveries",
     pathParams: ["slug", "id"],
-    queryParams: ["page"],
+    queryParams: ["page[before]", "page[after]", "page[size]"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -25942,7 +25900,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/projects/{ref}/webhooks/endpoints",
     pathParams: ["ref"],
-    queryParams: ["page"],
+    queryParams: ["page[offset]", "page[limit]"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
@@ -25970,7 +25928,7 @@ export const operationDefinitions = {
     method: "GET",
     path: "/v2/projects/{ref}/webhooks/endpoints/{id}/deliveries",
     pathParams: ["ref", "id"],
-    queryParams: ["page"],
+    queryParams: ["page[before]", "page[after]", "page[size]"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
