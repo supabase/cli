@@ -18177,25 +18177,23 @@
           },
           {
             "in": "query",
-            "name": "page",
+            "name": "page[offset]",
             "schema": {
-              "type": "object",
-              "properties": {
-                "offset": {
-                  "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
-                  "default": "0",
-                  "type": "string",
-                  "pattern": "^\\d+$"
-                },
-                "limit": {
-                  "description": "Up to how many records to return.",
-                  "default": "20",
-                  "type": "string",
-                  "pattern": "^\\d+$"
-                }
-              }
+              "default": "0",
+              "type": "string",
+              "pattern": "^\\d+$"
             },
-            "style": "deepObject"
+            "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend."
+          },
+          {
+            "in": "query",
+            "name": "page[limit]",
+            "schema": {
+              "default": "20",
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "description": "Up to how many records to return."
           }
         ],
         "tags": ["Project webhooks"],
@@ -23130,32 +23128,33 @@
           },
           {
             "in": "query",
-            "name": "page",
+            "name": "page[before]",
             "schema": {
-              "type": "object",
-              "properties": {
-                "before": {
-                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "after": {
-                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "size": {
-                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
-                  "example": "10",
-                  "default": "20",
-                  "type": "string",
-                  "pattern": "^-?\\d+$"
-                }
-              }
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             },
-            "style": "deepObject"
+            "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param."
+          },
+          {
+            "in": "query",
+            "name": "page[after]",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param."
+          },
+          {
+            "in": "query",
+            "name": "page[size]",
+            "schema": {
+              "default": "20",
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "description": "Up to how many records to return."
           }
         ],
         "tags": ["Project webhooks"],
@@ -26582,25 +26581,23 @@
           },
           {
             "in": "query",
-            "name": "page",
+            "name": "page[offset]",
             "schema": {
-              "type": "object",
-              "properties": {
-                "offset": {
-                  "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
-                  "default": "0",
-                  "type": "string",
-                  "pattern": "^\\d+$"
-                },
-                "limit": {
-                  "description": "Up to how many records to return.",
-                  "default": "20",
-                  "type": "string",
-                  "pattern": "^\\d+$"
-                }
-              }
+              "default": "0",
+              "type": "string",
+              "pattern": "^\\d+$"
             },
-            "style": "deepObject"
+            "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend."
+          },
+          {
+            "in": "query",
+            "name": "page[limit]",
+            "schema": {
+              "default": "20",
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "description": "Up to how many records to return."
           }
         ],
         "tags": ["Organization webhooks"],
@@ -31523,32 +31520,33 @@
           },
           {
             "in": "query",
-            "name": "page",
+            "name": "page[before]",
             "schema": {
-              "type": "object",
-              "properties": {
-                "before": {
-                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "after": {
-                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
-                  "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                },
-                "size": {
-                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
-                  "example": "10",
-                  "default": "20",
-                  "type": "string",
-                  "pattern": "^-?\\d+$"
-                }
-              }
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             },
-            "style": "deepObject"
+            "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param."
+          },
+          {
+            "in": "query",
+            "name": "page[after]",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param."
+          },
+          {
+            "in": "query",
+            "name": "page[size]",
+            "schema": {
+              "default": "20",
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "description": "Up to how many records to return."
           }
         ],
         "tags": ["Organization webhooks"],
