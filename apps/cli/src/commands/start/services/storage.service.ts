@@ -104,7 +104,6 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
     AUTH_JWT_SECRET: input.jwtSecret,
     JWT_JWKS: input.jwks,
     DATABASE_URL: startInternalDbUrl("supabase_storage_admin", input.dbHost, input.dbPassword),
-    FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
     FILE_STORAGE_BACKEND_PATH: STORAGE_DOCKER_PATH,
     TENANT_ID: "stub",
@@ -120,7 +119,7 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
     S3_PROTOCOL_ACCESS_KEY_ID: input.s3AccessKeyId,
     S3_PROTOCOL_ACCESS_KEY_SECRET: input.s3SecretAccessKey,
     S3_PROTOCOL_PREFIX: "/storage/v1",
-    UPLOAD_FILE_SIZE_LIMIT: "52428800000",
+    UPLOAD_FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
     UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
     SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
   };

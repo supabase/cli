@@ -5531,7 +5531,8 @@ content_path = "./supabase/templates/custom_notice.html"
               (s) =>
                 s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
             );
-            expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            expect(storageCreate?.env["UPLOAD_FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            expect(storageCreate?.env).not.toHaveProperty("FILE_SIZE_LIMIT");
 
             // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
             const migrateJobs = child.spawned.filter(
