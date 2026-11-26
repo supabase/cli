@@ -21,6 +21,7 @@ import {
   type EnvSchemaNavigator,
   type EnvWalkOptions,
 } from "./lib/env-core.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import { normalizeDeprecatedProviderSignupKeys } from "./lib/provider-signup.ts";
 import { cliConfigServiceVersionIssues, memoryIssueMessage } from "./local-rules.ts";
 import {
@@ -263,7 +264,7 @@ function validateCliConfigDocument(
   const { remotes: rawRemotes, ...rawRoot } = folded;
   const root = structuredClone(rawRoot);
   const rawChecks = childObject(rawRoot, "db", "migrations", "checks");
-  const remotes: unknown = structuredClone(rawRemotes ?? {});
+  const remotes: unknown = rawRemotes === undefined ? {} : structuredClone(rawRemotes);
 
   const checkIssues =
     rawChecks === undefined
@@ -504,6 +505,23 @@ export function decodeParsedCliConfig(input: {
   };
 }
 
+/** `value` minus the keys validation stripped from `kept`: only what the caller supplied remains, with no defaults. */
+function keepValidatedKeys(value: unknown, kept: unknown): unknown {
+  if (Array.isArray(value) && Array.isArray(kept)) {
+    return value.map((item, index) => keepValidatedKeys(item, kept[index]));
+  }
+  if (isObject(value) && isObject(kept)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (Object.hasOwn(kept, key)) {
+        setOwnProperty(result, key, keepValidatedKeys(child, kept[key]));
+      }
+    }
+    return result;
+  }
+  return value;
+}
+
 /** The sparse config document as text: `config` minus the schema defaults, as JSON or TOML. */
 export function encodeCliConfigText(
   config: CliConfigDocument,
@@ -516,7 +534,10 @@ export function encodeCliConfigText(
     throw invalidConfigError(path, format, result.issues, undefined);
   }
   const { remotes } = normalizeDeprecatedProviderSignupKeys(config).document;
-  const encoded = { ...result.config, remotes: structuredClone(remotes ?? {}) };
+  const encoded = {
+    ...result.config,
+    remotes: remotes === undefined ? {} : keepValidatedKeys(remotes, result.config["remotes"]),
+  };
   const document = toSparseConfigDocument(encoded, defaultCliConfigDocument(), schemaRef);
   const text = format === "json" ? JSON.stringify(document, null, 2) : SmolToml.stringify(document);
   return `${text}\n`;

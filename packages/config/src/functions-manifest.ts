@@ -12,6 +12,7 @@ import {
   functionSlugPattern,
 } from "./functions-manifest-core.ts";
 import { loadCliConfig } from "./io.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import { findCliProjectPaths } from "./paths.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -49,9 +50,13 @@ export const inferFunctionsManifest = Effect.fn("FunctionsManifest.infer")(funct
         continue;
       }
 
-      filesystemFunctions[slug] = filesystemFunctionConfig(
+      setOwnProperty(
+        filesystemFunctions,
         slug,
-        yield* fs.exists(path.join(functionsDir, slug, edgeFunctionDenoConfigFileName)),
+        filesystemFunctionConfig(
+          slug,
+          yield* fs.exists(path.join(functionsDir, slug, edgeFunctionDenoConfigFileName)),
+        ),
       );
     }
   }

@@ -52,8 +52,7 @@ rule.)
 
 ## The `/io` facade
 
-`@supabase/config` (`.`), `@supabase/config/effect`, `@supabase/config/io`, and
-`@supabase/config/convert` are the package's four published module entrypoints (see the package README's "Entrypoints" section for the full
+`@supabase/config` publishes several module entrypoints (see the package README's "Entrypoints" section for the list and the full
 contract). `./io` (deprecated; also published as `./io-effect`) is the one whose names diverge from the
 vocabulary above: it is a Promise-based facade over `./effect`'s programs, for non-Effect consumers, and its seven exports (verified
 against `packages/config/src/node.ts`/`bun.ts`) are:
@@ -66,7 +65,7 @@ against `packages/config/src/node.ts`/`bun.ts`) are:
 - `loadCliProjectEnvironment`
 - `inferFunctionsManifest`
 
-`@supabase/config/io-promises` exposes the same seven functions without an Effect runtime and loads configs identically; only the error classes (plain `Error` subclasses) and the loosely typed `config` differ.
+`@supabase/config/io-promises` exposes the same seven functions without an Effect runtime and behaves the same except for the differences listed in the package README's "`./io-promises`" section.
 
 Every name here matches its `./effect` counterpart one-to-one (only the return type changes,
 `Effect` to `Promise`) — the subpath itself (`/io` vs `/effect`) is what conveys Promise-vs-Effect.

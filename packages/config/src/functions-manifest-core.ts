@@ -4,6 +4,7 @@ import {
   edgeFunctionsDirectoryName,
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 
 export const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
 
@@ -21,6 +22,10 @@ export function filesystemFunctionConfig(
     static_files: [],
     env: {},
   };
+}
+
+function ownValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function defaultFunctionConfig(slug: string): ResolvedFunctionConfig {
@@ -67,17 +72,17 @@ export function buildFunctionsManifest(
   const manifest: Record<string, ResolvedFunctionConfig> = {};
 
   for (const slug of slugs) {
-    const override = configFunctions[slug];
-    const base = filesystemFunctions[slug] ?? defaultFunctionConfig(slug);
-    if (
-      filesystemFunctions[slug] === undefined &&
-      override !== undefined &&
-      !hasFunctionOverride(override)
-    ) {
+    const override = ownValue(configFunctions, slug);
+    const discovered = ownValue(filesystemFunctions, slug);
+    if (discovered === undefined && override !== undefined && !hasFunctionOverride(override)) {
       continue;
     }
 
-    manifest[slug] = applyFunctionOverride(base, override);
+    setOwnProperty(
+      manifest,
+      slug,
+      applyFunctionOverride(discovered ?? defaultFunctionConfig(slug), override),
+    );
   }
 
   return manifest;

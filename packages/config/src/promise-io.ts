@@ -1,5 +1,15 @@
 import { randomBytes } from "node:crypto";
-import { access, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ConfigFormat } from "./config-format.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -17,6 +27,7 @@ import {
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
 import { isObject } from "./lib/document-value.ts";
+import { setOwnProperty } from "./lib/own-property.ts";
 import {
   layerProjectEnvironment,
   parseDotEnvText,
@@ -106,18 +117,31 @@ export interface CliConfigIo {
 
 const DEFAULT_FILE_MODE = 0o644;
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+
+async function probe(path: string, isAbsent: (error: unknown) => boolean): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (isAbsent(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+const exists = (path: string) =>
+  probe(
+    path,
+    (error) =>
+      isNotFound(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR"),
+  );
+
+/** Discovery reads any probe failure as "no config here", as the Effect entries do. */
+const discoveryExists = (path: string) => probe(path, () => true);
 
 async function findConfigInRoot(root: string): Promise<CliProjectPaths | null> {
   const supabaseDir = join(root, "supabase");
@@ -125,9 +149,9 @@ async function findConfigInRoot(root: string): Promise<CliProjectPaths | null> {
   const jsoncPath = join(supabaseDir, "config.jsonc");
   const tomlPath = join(supabaseDir, "config.toml");
   const [jsonExists, jsoncExists, tomlExists] = await Promise.all([
-    exists(jsonPath),
-    exists(jsoncPath),
-    exists(tomlPath),
+    discoveryExists(jsonPath),
+    discoveryExists(jsoncPath),
+    discoveryExists(tomlPath),
   ]);
   if (!jsonExists && !jsoncExists && !tomlExists) {
     return null;
@@ -261,18 +285,21 @@ async function loadConfig(
 }
 
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  const mode = await stat(filePath).then(
+  const existingMode = await stat(filePath).then(
     (info) => info.mode & 0o7777,
     (error: unknown) => {
       if (isNotFound(error)) {
-        return DEFAULT_FILE_MODE;
+        return undefined;
       }
       throw error;
     },
   );
   const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
   try {
-    await writeFile(tmpPath, content, { mode });
+    await writeFile(tmpPath, content, { mode: existingMode ?? DEFAULT_FILE_MODE });
+    if (existingMode !== undefined) {
+      await chmod(tmpPath, existingMode);
+    }
     await rename(tmpPath, filePath);
   } finally {
     await rm(tmpPath, { force: true });
@@ -418,9 +445,13 @@ async function inferManifest(cwd: string): Promise<FunctionsManifest> {
       ) {
         continue;
       }
-      filesystemFunctions[slug] = filesystemFunctionConfig(
+      setOwnProperty(
+        filesystemFunctions,
         slug,
-        await exists(join(functionsDir, slug, edgeFunctionDenoConfigFileName)),
+        filesystemFunctionConfig(
+          slug,
+          await exists(join(functionsDir, slug, edgeFunctionDenoConfigFileName)),
+        ),
       );
     }
   }

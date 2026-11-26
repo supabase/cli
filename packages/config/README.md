@@ -79,7 +79,7 @@ for the full vocabulary.
 | `./convert`             | `convertCliConfigTomlToJsonc(source)` and `convertCliConfigJsoncToToml(source)`, `CliConfigConvertError`, and the `CliConfigConverted`/`CliConfigConvertedToml`/`MovedTomlComment`/`MovedJsoncComment` types: plain, synchronous, effect-free `config.toml` ↔ `config.jsonc` converters that throw `CliConfigConvertError` on refusal                                                                                       | Loads only `smol-toml` and `jsonc-parser`, so a consumer needs no `effect` to call it. `./internal` keeps an Effect-returning wrapper of the same function for the CLI                                                                                                                                     |
 | `./io`                  | **Deprecated** alias of `./io-effect` — it will stop depending on Effect in a future release. A Promise-based facade over the same file-IO/Effect programs as `./effect`                                                                                                                                                                                                                                                    | Resolved automatically via package.json export conditions (`bun`/`node`/`browser`/`default`). Requires one of the optional platform peers — `@effect/platform-bun` under Bun, `@effect/platform-node` under Node — installed at runtime; see "Installing" below for the failure mode when it's missing     |
 | `./io-effect`           | The Effect-backed Promise facade `./io` exposes today (same seven functions, plus every pure export from `.`)                                                                                                                                                                                                                                                                                                               | Same requirements as `./io`: `effect` plus one platform peer (`@effect/platform-node` or `@effect/platform-bun`)                                                                                                                                                                                           |
-| `./io-promises`         | Effect-free Promise file IO for Node/Bun with the same seven functions and the same behaviour as `./io` — defaults, `env(NAME)` interpolation, `[remotes.*]` merge, schema-version checks, and default-stripping saves — but plain `Error` subclasses and no Effect types. See "`./io-promises`" below                                                                                                                      | No `effect` and no platform peer — only this package's own dependencies (`jsonc-parser`, `smol-toml`); validation is compiled into the package at build time                                                                                                                                               |
+| `./io-promises`         | Effect-free Promise file IO for Node/Bun with the same seven functions and the same behaviour as `./io` — defaults, `env(NAME)` interpolation, `[remotes.*]` merge, schema-version checks, and default-stripping saves — but plain `Error` subclasses and no Effect types. See "`./io-promises`" below                                                                                                                      | Never imports or resolves `effect` or a platform peer at runtime — only this package's own dependencies (`jsonc-parser`, `smol-toml`); validation is compiled into the package at build time. The package-level `effect` peer stays declared for its other entrypoints                                     |
 | `./effect`              | Effect-native superset of `.`: `CliConfigStore`/`cliConfigStoreLayer`, config loading/saving, project-environment resolution, functions-manifest inference                                                                                                                                                                                                                                                                  | Requires `effect`; requires a platform peer only for the file-IO programs, exactly like `./io`                                                                                                                                                                                                             |
 | `./internal`            | `ENV_CAPTURE_REGEX`, `AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`, `projectConfigMappingRows`, the `ProjectConfigMappingRow`/`ProjectConfigApiAttributes`/`InternalLoadCliConfigOptions` types, plus `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` re-typed to additionally accept the internal-only `cliCompat` option — the SAME runtime functions `./effect` exports, not independent implementations | **Not covered by semver, and only `apps/cli` may import it** (enforced by `src/monorepo-import-contract.unit.test.ts`). Exists solely for the Supabase CLI's own use and its contract-guard tests — any export here (its existence, shape, or behavior) can change or vanish in any release without notice |
 | `./schema.json`         | Generated JSON Schema for `CliConfig`                                                                                                                                                                                                                                                                                                                                                                                       | Draft-07 — a language-agnostic contract for non-TypeScript consumers                                                                                                                                                                                                                                       |
@@ -291,16 +291,18 @@ specific, narrower validation contract — what it does and does not promise:
 
 ## `./io-promises`
 
-For Node and Bun tools that want `./io`'s behaviour without installing Effect:
+For Node and Bun tools that want `./io`'s behaviour without Effect in their runtime. The entry never imports or resolves `effect` or a platform peer, but the package-level `effect` peer is still declared for the other entrypoints:
 
 ```ts
 import { loadCliConfig, saveCliConfig } from "@supabase/config/io-promises";
 
 const loaded = await loadCliConfig(process.cwd());
-if (loaded !== null) {
-  await saveCliConfig({ cwd: process.cwd(), config: loaded.config });
-}
+console.log(loaded?.config.project_id);
+
+await saveCliConfig({ cwd: process.cwd(), config: { project_id: "my-project" } });
 ```
+
+A loaded config has its `env()` references already resolved, so never round-trip `loaded.config` into `saveCliConfig`: it would write those secrets into the config file in plaintext.
 
 - **Same surface and behaviour as `./io`.** `loadCliConfig`, `loadCliConfigFile`,
   `findCliProjectRoot`, `findCliProjectPaths`, `loadCliProjectEnvironment`, `saveCliConfig`, and
@@ -316,8 +318,8 @@ if (loaded !== null) {
 - **Plain errors.** Failures are `Error` subclasses (`CliConfigParseError`,
   `CliConfigRemovedKeyError`, `CliConfigFileConflictError`, `CliConfigSchemaVersionError`,
   `CliProjectEnvParseError`) carrying the same `_tag` and fields as their `./io` counterparts, with
-  `issues` listing every schema violation by dotted path rather than only the first. OS errors
-  reject with the native error. Messages never quote document text.
+  `issues` listing the structural violations by dotted path rather than only the first. Table rules (cross-field rules such as service versions) run once the structure validates, and a service-version rule reports its first violation, as in `./io`. OS errors
+  reject with the native error. Ajv-generated messages name key paths and constraints only; a few rule messages name the offending value (these are not credentials).
 - **Typing.** `config` is a plain, loosely typed document rather than a `CliConfig`; import `.` for
   the decoded type if you need it.
 - **Known differences from `./io`.** Unknown keys are stripped rather than rejected. A numeric

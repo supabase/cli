@@ -209,6 +209,7 @@ export function toCliConfigRuntimeSchemas(): { readonly root: Node; readonly rem
 
 export const CLI_CONFIG_AJV_OPTIONS = {
   strict: false,
+  strictNumbers: true,
   allErrors: true,
   useDefaults: true,
   removeAdditional: true,

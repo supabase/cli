@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
@@ -216,7 +226,6 @@ enabled = true
       toml('[remotes."Bad Name"]\nproject_id = "aaaaaaaaaaaaaaaaaaaa"\n'),
     ],
     ["a bucket with an invalid name", toml('[storage.buckets."bad name!"]\npublic = true\n')],
-    ["the legacy fixture", { "supabase/config.toml": "" }],
   ];
 
   const validCases = valid.map(([name, files, options]) => ({ name, files, options }));
@@ -494,16 +503,61 @@ describe("loadCliConfigFile parity", () => {
     expect(scrub(fromPlain, plainRoot)).toEqual(scrub(fromEffect, effectRoot));
   });
 
-  test("rejects a missing file with the native error in both", async () => {
+  test("rejects a missing file with the platform's not-found error", async () => {
     const root = await project({ "x.txt": "" });
     const missing = join(root, "supabase", "config.toml");
 
     const fromPlain = await outcome(() => promiseIo.loadCliConfigFile(missing));
     const fromEffect = await outcome(() => effectIo.loadCliConfigFile(missing));
 
-    expect(fromPlain.ok).toBe(false);
-    expect(fromEffect.ok).toBe(false);
+    expect(fromPlain).toMatchObject({ ok: false, error: { code: "ENOENT", path: missing } });
+    expect(fromEffect).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "PlatformError",
+        reason: { _tag: "NotFound", pathOrDescriptor: missing },
+      },
+    });
   });
+
+  test("an env() reference outside any project resolves against nothing in both", async () => {
+    vi.stubEnv("PARITY_OUTSIDE", "from-ambient");
+    const [effectRoot, plainRoot] = await bothProjects({
+      "loose/config.toml": 'project_id = "env(PARITY_OUTSIDE)"\n',
+    });
+
+    const fromEffect = await effectIo.loadCliConfigFile(join(effectRoot, "loose", "config.toml"));
+    const fromPlain = await promiseIo.loadCliConfigFile(join(plainRoot, "loose", "config.toml"));
+
+    expect(fromPlain.config["project_id"]).toBe(fromEffect.config["project_id"]);
+    expect(scrub(fromPlain, plainRoot)).toEqual(scrub(fromEffect, effectRoot));
+  });
+
+  const canDenyAccess = process.platform !== "win32" && process.getuid?.() !== 0;
+
+  test.skipIf(!canDenyAccess)(
+    "an unreadable project .env is an error in both, not an absent file",
+    async () => {
+      const files: Files = { ...toml(""), "locked/.env": "PARITY_ID=hidden\n" };
+      const [effectRoot, plainRoot] = await bothProjects(files);
+      for (const root of [effectRoot, plainRoot]) {
+        await symlink(join(root, "locked", ".env"), join(root, "supabase", ".env"));
+        await chmod(join(root, "locked"), 0o000);
+      }
+
+      try {
+        const fromEffect = await outcome(() => effectIo.loadCliConfig(effectRoot));
+        const fromPlain = await outcome(() => promiseIo.loadCliConfig(plainRoot));
+
+        expect(fromEffect.ok).toBe(false);
+        expect(fromPlain).toMatchObject({ ok: false, error: { code: "EACCES" } });
+      } finally {
+        for (const root of [effectRoot, plainRoot]) {
+          await chmod(join(root, "locked"), 0o755);
+        }
+      }
+    },
+  );
 });
 
 describe("inferFunctionsManifest parity", () => {
@@ -526,6 +580,28 @@ describe("inferFunctionsManifest parity", () => {
 
     expect(fromPlain).toEqual(fromEffect);
     expect(Object.keys(fromPlain)).toEqual(Object.keys(fromEffect));
+  });
+
+  test("infers functions named after Object.prototype members", async () => {
+    const files: Files = {
+      ...toml("[functions.toString]\nverify_jwt = false\n"),
+      "supabase/functions/constructor/index.ts": "",
+      "supabase/functions/toString/index.ts": "",
+      "supabase/functions/__proto__/index.ts": "",
+    };
+    const [effectRoot, plainRoot] = await bothProjects(files);
+
+    const fromEffect = await effectIo.inferFunctionsManifest(effectRoot);
+    const fromPlain = await promiseIo.inferFunctionsManifest(plainRoot);
+
+    expect(JSON.stringify(fromPlain)).toBe(JSON.stringify(fromEffect));
+    expect(Object.keys(fromPlain)).toEqual(["__proto__", "constructor", "toString"]);
+    expect(Object.hasOwn(fromPlain, "constructor")).toBe(true);
+    expect(fromPlain["constructor"]).toMatchObject({
+      enabled: true,
+      entrypoint: "./functions/constructor/index.ts",
+    });
+    expect(fromPlain["toString"]).toMatchObject({ verify_jwt: false });
   });
 
   test("falls back to the empty config when there is no project", async () => {
@@ -559,6 +635,31 @@ describe("saveCliConfig parity", () => {
       files: {},
       load: toml(""),
       given: { remotes: { a: { project_id: "aaaaaaaaaaaaaaaaaaaa", api: { port: 7 } } } },
+    },
+    {
+      name: "a remote with unknown keys",
+      files: {},
+      load: toml(""),
+      given: {
+        remotes: {
+          a: {
+            project_id: "aaaaaaaaaaaaaaaaaaaa",
+            bogus: 1,
+            api: { port: 7, nope: { deep: true } },
+          },
+        },
+      },
+    },
+    {
+      name: "a remote named outside the key pattern",
+      files: {},
+      load: toml(""),
+      given: {
+        remotes: {
+          "Bad Name": { project_id: "bbbbbbbbbbbbbbbbbbbb" },
+          ok: { project_id: "aaaaaaaaaaaaaaaaaaaa" },
+        },
+      },
     },
     {
       name: "duplicate migration check exclusions",
@@ -605,6 +706,12 @@ describe("saveCliConfig parity", () => {
       load: toml('project_id = "old"\n'),
       options: { format: "toml" },
       edit: withPort,
+    },
+    {
+      name: "an existing toml saved as json leaves its #:schema directive behind",
+      files: toml('#:schema https://supabase.com/schemas/config/v1.json\nproject_id = "old"\n'),
+      load: toml('project_id = "old"\n'),
+      options: { format: "json" },
     },
     {
       name: "switching format removes the sibling file",
@@ -691,9 +798,25 @@ describe("saveCliConfig parity", () => {
     }
   });
 
-  test("rejects an invalid config without writing it, in both", async () => {
-    const [effectRoot, plainRoot] = await bothProjects({});
-    const invalid = { api: { port: "not a number" } };
+  const invalidSaves: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ["a wrongly typed port", { api: { port: "not a number" } }],
+    [
+      "an infinite cpus limit",
+      { local: { services: { auth: { container: { cpus: Infinity } } } } },
+    ],
+    [
+      "a negative infinite cpus limit",
+      { local: { services: { auth: { container: { cpus: -Infinity } } } } },
+    ],
+    ["a NaN port", { api: { port: NaN } }],
+    ["an explicit null remotes", { remotes: null }],
+  ];
+
+  test.each(invalidSaves)("rejects %s without writing it, in both", async (_name, invalid) => {
+    const existing = config("config.toml", 'project_id = "old"\n');
+    const [effectRoot, plainRoot] = await bothProjects(existing);
+    const effectBefore = await snapshot(effectRoot);
+    const plainBefore = await snapshot(plainRoot);
 
     const fromEffect = await outcome(() =>
       effectIo.saveCliConfig({ cwd: effectRoot, config: invalid as never }),
@@ -703,8 +826,10 @@ describe("saveCliConfig parity", () => {
     );
 
     expect(fromEffect.ok).toBe(false);
-    expect(fromPlain.ok).toBe(false);
-    expect(await snapshot(plainRoot)).toEqual(await snapshot(effectRoot));
+    expect(fromPlain).toMatchObject({ ok: false, error: { _tag: "CliConfigParseError" } });
+    expect(await snapshot(effectRoot)).toEqual(effectBefore);
+    expect(await snapshot(plainRoot)).toEqual(plainBefore);
+    expect(Object.keys(plainBefore)).toEqual(["config.toml"]);
   });
 
   test("keeps the existing file mode", async () => {
@@ -725,6 +850,25 @@ describe("saveCliConfig parity", () => {
       ),
     );
     expect(modes).toEqual([0o600, 0o600]);
+  });
+
+  test("keeps group-writable bits that the process umask would strip", async () => {
+    const plainRoot = await project(config("config.toml", 'project_id = "old"\n'));
+    const target = join(plainRoot, "supabase", "config.toml");
+    await chmod(target, 0o664);
+    const previousUmask = process.umask(0o022);
+
+    try {
+      await promiseIo.saveCliConfig({
+        cwd: plainRoot,
+        config: { project_id: "new" },
+        format: "toml",
+      });
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect((await stat(target)).mode & 0o777).toBe(0o664);
   });
 
   test("refuses to save when json and jsonc both exist", async () => {

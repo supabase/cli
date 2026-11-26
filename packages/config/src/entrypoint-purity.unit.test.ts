@@ -648,7 +648,7 @@ describe("src/io-promises.ts stays effect-free", () => {
     }
   });
 
-  test("the generated validators are self-contained", () => {
+  test("the generated validators are reachable as a single file", () => {
     const generated = [...ioPromisesGraph.visitedFiles].filter((file) =>
       file.endsWith("cli-config-validators.js"),
     );
