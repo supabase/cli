@@ -61,10 +61,6 @@ function legacyConfigToTelemetryConfig(
   };
 }
 
-function configWithIdentity(config: TelemetryConfig): TelemetryConfig | undefined {
-  return config.device_id === "" || config.session_id === "" ? undefined : config;
-}
-
 const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) {
   const config = yield* decodeCurrentTelemetryConfigFile(content).pipe(
     Effect.catch(() =>
@@ -74,7 +70,8 @@ const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) 
       }),
     ),
   );
-  return yield* Effect.fromNullishOr(configWithIdentity(config));
+  const hasIdentity = config.device_id !== "" && config.session_id !== "";
+  return yield* Effect.fromNullishOr(hasIdentity ? config : undefined);
 });
 
 // A file that cannot be read or decoded may hold an opt-out, so it reads as one.
