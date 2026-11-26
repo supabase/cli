@@ -1,4 +1,4 @@
-import { DateTime, Effect, FileSystem, Layer, Path } from "effect";
+import { Cause, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { homedir } from "node:os";
 
@@ -508,7 +508,13 @@ export const telemetryStateLayer = Layer.effect(
       );
 
     return TelemetryState.of({
-      flush: provide(loadOrCreateTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
+      flush: provide(loadOrCreateTelemetryState()).pipe(
+        Effect.asVoid,
+        Effect.ignore,
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+        ),
+      ),
       stitchLogin: (distinctId: string) =>
         // The in-memory stamp always happens so subsequent captures in this process carry the
         // user's id; the alias (which merges pre-login history) and the `telemetry.json` write

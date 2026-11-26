@@ -1,6 +1,6 @@
 import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { DateTime, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Cause, DateTime, Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 
 import { useTempWorkdir, withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { mockAnalytics } from "../../tests/helpers/mocks.ts";
@@ -91,6 +91,46 @@ const seedState = (distinctId?: string) =>
       schema_version: 1,
     });
   });
+
+describe("telemetryStateLayer.flush", () => {
+  it.effect("leaves the command's result alone when the state load dies", () => {
+    const dyingFileSystem = FileSystem.layerNoop({
+      exists: () => Effect.die("state file defect"),
+    });
+    const layer = telemetryStateLayer.pipe(
+      Layer.provide(dyingFileSystem),
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+      Layer.provide(mockAnalytics().layer),
+      Layer.provide(makeRuntime().layer),
+      Layer.provideMerge(cliConfigProviderLayer),
+    );
+    return Effect.gen(function* () {
+      const state = yield* TelemetryState;
+      const result = yield* Effect.exit(
+        Effect.succeed("deleted").pipe(Effect.ensuring(state.flush)),
+      );
+      expect(result).toEqual(Exit.succeed("deleted"));
+    }).pipe(Effect.provide(layer), withTempHome);
+  });
+
+  it.effect("propagates an interruption that lands during the state load", () => {
+    const interruptingFileSystem = FileSystem.layerNoop({
+      exists: () => Effect.interrupt,
+    });
+    const layer = telemetryStateLayer.pipe(
+      Layer.provide(interruptingFileSystem),
+      Layer.provide([BunServices.layer, BunCrypto.layer]),
+      Layer.provide(mockAnalytics().layer),
+      Layer.provide(makeRuntime().layer),
+      Layer.provideMerge(cliConfigProviderLayer),
+    );
+    return Effect.gen(function* () {
+      const state = yield* TelemetryState;
+      const result = yield* Effect.exit(state.flush);
+      expect(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)).toBe(true);
+    }).pipe(Effect.provide(layer), withTempHome);
+  });
+});
 
 describe("telemetryStateLayer.stitchLogin / clearDistinctId", () => {
   it.effect("stitchLogin in a persistent runtime aliases, persists, and stamps", () => {

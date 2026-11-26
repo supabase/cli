@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
@@ -238,6 +238,71 @@ describe("linkedProjectCacheLayer", () => {
           yield* fs.exists(path.join(workdir, "supabase", ".temp", "linked-project.json")),
         ).toBe(false);
         expect(analytics.groupIdentified).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves the command's result alone when the project lookup dies", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-defect-" });
+      const analytics = mockAnalytics();
+      const api = mockCommandPlatformApi({ handler: () => Effect.die("project lookup defect") });
+      const identityStitch = identityStitchLayer.pipe(
+        Layer.provide(analytics.layer),
+        Layer.provide(
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
+        ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockCommandSettings({ workdir })),
+        Layer.provide(mockCommandCredentialsLayer),
+        Layer.provide(identityStitch),
+        Layer.provide(analytics.layer),
+        Layer.provide(BunServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const cache = yield* LinkedProjectCache;
+        const result = yield* Effect.exit(
+          Effect.succeed("deleted").pipe(Effect.ensuring(cache.cache(VALID_REF, workdir))),
+        );
+        expect(result).toEqual(Exit.succeed("deleted"));
+        expect(
+          yield* fs.exists(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("propagates an interruption that lands during the project lookup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-interrupt-" });
+      const analytics = mockAnalytics();
+      const api = mockCommandPlatformApi({ handler: () => Effect.interrupt });
+      const identityStitch = identityStitchLayer.pipe(
+        Layer.provide(analytics.layer),
+        Layer.provide(
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
+        ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockCommandSettings({ workdir })),
+        Layer.provide(mockCommandCredentialsLayer),
+        Layer.provide(identityStitch),
+        Layer.provide(analytics.layer),
+        Layer.provide(BunServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const cache = yield* LinkedProjectCache;
+        const result = yield* Effect.exit(cache.cache(VALID_REF, workdir));
+        expect(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)).toBe(true);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
