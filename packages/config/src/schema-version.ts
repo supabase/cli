@@ -1,5 +1,6 @@
 import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
 import type { ConfigFormat } from "./config-format.ts";
+import { SUPPORTED_CLI_CONFIG_SCHEMA_VERSION } from "./schema-metadata.ts";
 
 export interface CliConfigSchemaDeclaration {
   readonly ref: string;
@@ -52,4 +53,12 @@ export function readCliConfigSchemaDeclaration(
   const key = isObject(document) ? document[cliConfigSchemaKey] : undefined;
   const ref = directive ?? (typeof key === "string" ? key : undefined);
   return ref === undefined ? undefined : { ref, version: versionOfSchemaRef(ref) };
+}
+
+/** Whether `declaration` names a config schema version newer than this package reads. */
+export function isSchemaTooNew(declaration: CliConfigSchemaDeclaration | undefined): boolean {
+  return (
+    declaration?.version !== undefined &&
+    declaration.version > BigInt(SUPPORTED_CLI_CONFIG_SCHEMA_VERSION)
+  );
 }

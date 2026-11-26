@@ -3,6 +3,7 @@
     ".repos/",
     "apps/cli/src/shared/feedback/database.types.ts",
     "packages/stack/src/functions/generated/",
+    "packages/config/src/generated/",
     "apps/cli-e2e/fixtures/",
     "apps/cli/schemas/",
     "**/testdata/"

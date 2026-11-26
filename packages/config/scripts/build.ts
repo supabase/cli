@@ -242,6 +242,47 @@ const verifyTreeShaking = Effect.fnUntraced(function* () {
   yield* withTempDirectory(makeProbeDir, probeInDirectory);
 });
 
+/** Minifies the generated Ajv standalone validators into `dist/`, asserting they stay import-free. */
+const bundleGeneratedValidators = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* packageRoot;
+  const source = path.join(root, "src", "generated");
+  const target = path.join(root, "dist", "generated");
+
+  const result = yield* Effect.promise(() =>
+    Bun.build({
+      entrypoints: [path.join(source, "cli-config-validators.js")],
+      target: "node",
+      format: "esm",
+      minify: true,
+    }),
+  );
+  const [output] = result.outputs;
+  if (!result.success || output === undefined) {
+    return yield* Effect.die(
+      new Error(
+        `bundling the generated validators failed:\n${result.logs.map((log) => log.message).join("\n")}`,
+      ),
+    );
+  }
+  const code = yield* Effect.promise(() => output.text());
+  if (new Bun.Transpiler({ loader: "js" }).scanImports(code).length > 0) {
+    return yield* Effect.die(
+      new Error("the bundled validators import or require a module; they must be self-contained"),
+    );
+  }
+
+  yield* fs.makeDirectory(target, { recursive: true });
+  yield* fs.writeFileString(path.join(target, "cli-config-validators.js"), code);
+  const declarations = yield* fs.readFileString(path.join(source, "cli-config-validators.d.ts"));
+  yield* fs.writeFileString(
+    path.join(target, "cli-config-validators.d.ts"),
+    declarations.replaceAll('.ts";', '.js";'),
+  );
+  yield* Console.log(`[build] bundled validators (${code.length} bytes).`);
+});
+
 const SMOKE_TEST_RUNTIME_DEPS = [
   "effect",
   "@effect/platform-node",
@@ -253,29 +294,54 @@ const SMOKE_TEST_RUNTIME_DEPS = [
 
 const CONVERT_SMOKE_TEST_RUNTIME_DEPS = ["jsonc-parser", "smol-toml"] as const;
 
-const IO_PROMISES_SMOKE_TEST_RUNTIME_DEPS = ["ajv", "jsonc-parser", "smol-toml"] as const;
+const IO_PROMISES_SMOKE_TEST_RUNTIME_DEPS = ["jsonc-parser", "smol-toml"] as const;
 
 function buildIoPromisesSmokeTestScript(): string {
   return [
     'import assert from "node:assert/strict";',
-    'import { mkdtemp, mkdir, rm } from "node:fs/promises";',
+    'import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";',
+    'import { createRequire } from "node:module";',
     'import { tmpdir } from "node:os";',
     'import { join } from "node:path";',
+    'import { fileURLToPath } from "node:url";',
+    "",
+    'const entry = fileURLToPath(import.meta.resolve("@supabase/config/io-promises"));',
+    "const fromPackage = createRequire(entry);",
+    'for (const absent of ["ajv", "effect"]) {',
+    "  assert.throws(",
+    "    () => fromPackage.resolve(absent),",
+    '    (error) => error.code === "MODULE_NOT_FOUND",',
+    "    `${absent} must not be resolvable from the packed ./io-promises entry`,",
+    "  );",
+    "}",
     "",
     'const io = await import("@supabase/config/io-promises");',
     'const root = await mkdtemp(join(tmpdir(), "supabase-config-io-promises-"));',
     "try {",
     '  await mkdir(join(root, "supabase"));',
-    '  await io.saveCliConfig({ cwd: root, config: { api: { port: 54321 } }, format: "toml" });',
+    '  const configPath = join(root, "supabase", "config.toml");',
+    '  await writeFile(configPath, "[api]\\nport = 54399\\n[studio]\\nenabled = \\"env(SMOKE_STUDIO)\\"\\n");',
+    '  process.env.SMOKE_STUDIO = "false";',
     "  const loaded = await io.loadCliConfig(root);",
-    '  assert.equal(loaded?.config.api.port, 54321, "io-promises did not round-trip a config");',
-    '  assert.deepEqual(await io.validateCliConfig({ api: { port: "x" } }).then((issues) => issues.map((issue) => issue.path)), ["api.port"]);',
-    '  await assert.rejects(io.saveCliConfig({ cwd: root, config: { nope: 1 } }), (error) => error instanceof io.CliConfigIoError && error.reason === "invalid_config");',
+    '  assert.equal(loaded?.config.api.port, 54399, "io-promises did not load the port");',
+    '  assert.equal(loaded?.config.api.enabled, true, "io-promises did not apply defaults");',
+    '  assert.equal(loaded?.config.studio.enabled, false, "io-promises did not coerce env()");',
+    "",
+    "  await io.saveCliConfig({ cwd: root, config: { ...loaded.config, api: { ...loaded.config.api, port: 54400 } } });",
+    '  const saved = await readFile(configPath, "utf8");',
+    '  assert.ok(saved.includes("54400"), "io-promises did not save the edit");',
+    '  assert.ok(!saved.includes("enabled = true"), "io-promises did not strip defaults on save");',
+    "",
+    '  await writeFile(configPath, "[api]\\nport = \\"x\\"\\n");',
+    "  await assert.rejects(",
+    "    io.loadCliConfig(root),",
+    '    (error) => error instanceof io.CliConfigParseError && error.issues.some((issue) => issue.path === "api.port"),',
+    "  );",
     "} finally {",
     "  await rm(root, { recursive: true, force: true });",
     "}",
     "",
-    'console.log("[build] pack-and-install smoke test: ./io-promises loaded with no effect resolvable");',
+    'console.log("[build] pack-and-install smoke test: ./io-promises ran with neither effect nor ajv resolvable");',
   ].join("\n");
 }
 
@@ -425,6 +491,7 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
       entry: string,
       deps: ReadonlyArray<string>,
       script: string,
+      forbiddenDeps: ReadonlyArray<string> = [],
     ) {
       const consumer = yield* installConsumer(name, deps);
       const packedManifest = yield* decodePackageJson(
@@ -444,6 +511,17 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
           ),
         );
       }
+      const peers = isRecord(packedManifest) ? packedManifest.peerDependencies : undefined;
+      for (const runtimeOnly of forbiddenDeps) {
+        if (
+          (isRecord(declared) && runtimeOnly in declared) ||
+          (isRecord(peers) && runtimeOnly in peers)
+        ) {
+          return yield* Effect.die(
+            new Error(`the packed package.json must not depend on ${runtimeOnly} for ${entry}`),
+          );
+        }
+      }
       yield* runCommand([nodePath, "--input-type=module", "-e", script], consumer);
     });
 
@@ -458,6 +536,7 @@ const runPackAndInstallSmokeTest = Effect.fnUntraced(function* () {
       "./io-promises",
       IO_PROMISES_SMOKE_TEST_RUNTIME_DEPS,
       buildIoPromisesSmokeTestScript(),
+      ["ajv"],
     );
   });
 
@@ -557,6 +636,9 @@ const build = Effect.gen(function* () {
 
   yield* Console.log("[build] compiling TypeScript project (tsconfig.build.json)...");
   yield* runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
+
+  yield* Console.log("[build] bundling the generated validators...");
+  yield* bundleGeneratedValidators();
 
   yield* Console.log("[build] rendering JSON Schema artifacts...");
   yield* renderJsonSchema(

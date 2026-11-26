@@ -2,10 +2,8 @@ import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
-import { cliConfigSchemaKey, isObject } from "./lib/document-value.ts";
-import { setOwnProperty } from "./lib/own-property.ts";
-import { writeProviderSignupPreferredKeys } from "./lib/provider-signup.ts";
-import { getDefaultCliConfig, subtractValue } from "./sparse.ts";
+import { toSparseConfigDocument } from "./config-encode-core.ts";
+import { getDefaultCliConfig } from "./sparse.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 
 export type CliConfigValueSource = "environment" | "local" | "remote";
@@ -130,49 +128,11 @@ function getDefaultEncodedCliConfig(): ReturnType<typeof encodeCliConfig> {
   return defaultEncodedCliConfig;
 }
 
-const defaultEncodedFunctionConfig = {
-  enabled: true,
-  verify_jwt: true,
-  import_map: "",
-  entrypoint: "",
-  static_files: [],
-  env: {},
-};
-
-function stripFunctionRecordDefaults(value: unknown): unknown {
-  if (!isObject(value)) {
-    return value;
-  }
-
-  const functionsValue = value.functions;
-  if (!isObject(functionsValue)) {
-    return value;
-  }
-
-  const functions: Record<string, unknown> = {};
-  for (const [name, functionConfig] of Object.entries(functionsValue)) {
-    setOwnProperty(
-      functions,
-      name,
-      subtractValue(functionConfig, defaultEncodedFunctionConfig) ?? {},
-    );
-  }
-
-  return { ...value, functions };
-}
-
-function encodeMinimalCliConfig(config: CliConfig): Record<string, unknown> {
-  const encoded = stripFunctionRecordDefaults(encodeCliConfig(config));
-  const stripped = subtractValue(encoded, getDefaultEncodedCliConfig());
-  return isObject(stripped) ? stripped : {};
-}
-
 function toConfigDocument(
   config: CliConfig,
   schemaRef: string | undefined,
 ): Record<string, unknown> {
-  const encoded = writeProviderSignupPreferredKeys(encodeMinimalCliConfig(config));
-  return schemaRef === undefined ? encoded : { [cliConfigSchemaKey]: schemaRef, ...encoded };
+  return toSparseConfigDocument(encodeCliConfig(config), getDefaultEncodedCliConfig(), schemaRef);
 }
 
 export function encodeCliConfigToJson(config: CliConfig): string {

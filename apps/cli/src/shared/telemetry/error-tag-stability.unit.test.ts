@@ -183,6 +183,13 @@ describe("error tag stability", () => {
       // validate a `<slug>` argument the same way and intentionally report
       // it as the same fingerprint.
       "InvalidFunctionSlugError",
+      // The effect-free promise entry of `@supabase/config` throws plain-Error twins
+      // of these Effect errors; they keep the same tag so both entries report one fingerprint.
+      "CliConfigParseError",
+      "CliConfigRemovedKeyError",
+      "CliConfigFileConflictError",
+      "CliConfigSchemaVersionError",
+      "CliProjectEnvParseError",
     ]);
 
     const filesByTag = new Map<string, Set<string>>();

@@ -1,10 +1,7 @@
 import { Schema } from "effect";
+import type { CliConfigTableRuleIssue } from "./table-rule-issue.ts";
 
-/** A table-level rule violation, with `path` relative to the table the rule checks. */
-export interface CliConfigTableRuleIssue {
-  readonly path: ReadonlyArray<string | number>;
-  readonly message: string;
-}
+export type { CliConfigTableRuleIssue } from "./table-rule-issue.ts";
 
 /** Wraps a table rule as a schema check so the schema and direct callers share one function. */
 export function tableRuleFilter<T>(

@@ -36,11 +36,13 @@ plus two generated JSON Schema artifacts (`./schema.json`, `./project-schema.jso
   (`bun`/`node`/`browser`/`default`). Has zero internal consumers by design — nothing inside this
   monorepo should import it.
 - `@supabase/config/io-promises` — the effect-free Promise file-IO entry (`src/io-promises.ts`, logic
-  in `src/promise-io.ts`): `node:fs/promises` plus the published `schema.json` validated with `ajv`,
-  returning plain documents instead of decoded `CliConfig` values. Its import graph reaches only
-  `ajv`, `jsonc-parser`, `smol-toml`, and `node:` builtins (pinned by
-  `src/entrypoint-purity.unit.test.ts`; `scripts/build.ts` also loads it from a packed tarball with no
-  `effect` resolvable). Do not import `.`/`./effect` code into it.
+  in `src/promise-io.ts` and `src/plain-config.ts`) with the same seven functions and behaviour as
+  `./io`. Validation is the Ajv standalone module in `src/generated/` (regenerate with
+  `pnpm --filter @supabase/config generate:validators`; a unit test catches drift), so `ajv` stays a
+  dev dependency. Its import graph reaches only `jsonc-parser`, `smol-toml`, and `node:` builtins
+  (pinned by `src/entrypoint-purity.unit.test.ts`; `scripts/build.ts` also loads it from a packed
+  tarball with neither `effect` nor `ajv` resolvable). Shared logic lives in effect-free `*-core.ts`
+  / `*-rules.ts` modules that the Effect side imports too; do not import `.`/`./effect` code into it.
 - `@supabase/config/effect` — the Effect-native superset. Re-exports everything from `.` plus the
   Effect-returning config-loading/saving programs, `CliConfigStore`/`cliConfigStoreLayer`,
   project-environment resolution, and `inferFunctionsManifest` (discovers and validates

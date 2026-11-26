@@ -30,14 +30,26 @@ import { findCliProjectPaths } from "./paths.ts";
 import { rejectRemovedConfigKeys, stripRemovedConfigKeys } from "./removed-config-keys.ts";
 import { SUPPORTED_CLI_CONFIG_SCHEMA_VERSION } from "./schema-metadata.ts";
 import {
+  isSchemaTooNew,
   readCliConfigSchemaDeclaration,
   SCHEMA_DIRECTIVE_LINE,
   versionOfSchemaRef,
   type CliConfigSchemaDeclaration,
 } from "./schema-version.ts";
-import { setOwnProperty } from "./lib/own-property.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
+import {
+  collectLeafPaths,
+  duplicateRemoteProjectIdMessage,
+  invalidRemoteProjectIdMessage,
+  mergeRemoteBlock,
+  pathKey,
+  remoteNameForProjectRef,
+  remoteProjectIdEntries,
+  selectRemoteName,
+} from "./remotes-core.ts";
 import { validateCliConfig } from "./validate.ts";
+
+export { remoteNameForProjectRef, remoteProjectIdEntries };
 
 function configJsonPathWith(path: Path.Path, cwd: string): string {
   return path.join(cwd, "supabase", "config.json");
@@ -57,54 +69,6 @@ export function cliConfigFormatForPath(filePath: string): ConfigFormat {
 }
 
 /**
- * Deep-merges a `[remotes.*]` subtree over the base document: nested objects merge recursively,
- * arrays and scalars replace wholesale. Operates on the raw, pre-decode document so only keys
- * the remote block actually declares override the base — the remote section's schema defaults
- * never leak in.
- */
-function mergeRemoteSubtree(
-  base: Record<string, unknown>,
-  remote: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(remote)) {
-    const existing = Object.hasOwn(result, key) ? result[key] : undefined;
-    setOwnProperty(
-      result,
-      key,
-      isObject(existing) && isObject(value) ? mergeRemoteSubtree(existing, value) : value,
-    );
-  }
-  return result;
-}
-
-/** Whether a remote subtree explicitly declares `db.seed.enabled`. */
-function remoteSetsDbSeedEnabled(remote: Record<string, unknown>): boolean {
-  const db = remote["db"];
-  const seed = isObject(db) ? db["seed"] : undefined;
-  return isObject(seed) && "enabled" in seed;
-}
-
-/** Forces `db.seed.enabled = false`, immutably. */
-function withDbSeedDisabled(document: Record<string, unknown>): Record<string, unknown> {
-  const db = isObject(document["db"]) ? document["db"] : {};
-  const seed = isObject(db["seed"]) ? db["seed"] : {};
-  return { ...document, db: { ...db, seed: { ...seed, enabled: false } } };
-}
-
-function collectLeafPaths(value: unknown, prefix: ReadonlyArray<string> = []): Array<string[]> {
-  if (!isObject(value)) {
-    return [Array.from(prefix)];
-  }
-
-  return Object.entries(value).flatMap(([key, child]) => collectLeafPaths(child, [...prefix, key]));
-}
-
-function pathKey(path: ReadonlyArray<string>): string {
-  return JSON.stringify(path);
-}
-
-/**
  * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]` block, failing on
  * the first duplicate. {@link applyRemoteOverride} only invokes this when `validateRemotes` is
  * set, so it runs even for callers that don't request a specific `projectRef`. A missing
@@ -113,56 +77,11 @@ function pathKey(path: ReadonlyArray<string>): string {
 const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
   remotes: Record<string, unknown>,
 ) {
-  const idToName = new Map<string, string>();
-  for (const [remoteName, remote] of Object.entries(remotes)) {
-    const projectId =
-      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
-    const other = idToName.get(projectId);
-    if (other !== undefined) {
-      return yield* new DuplicateRemoteProjectIdError({
-        message: `duplicate project_id for [remotes.${remoteName}] and ${other}`,
-      });
-    }
-    idToName.set(projectId, `[remotes.${remoteName}]`);
+  const message = duplicateRemoteProjectIdMessage(remotes);
+  if (message !== undefined) {
+    return yield* new DuplicateRemoteProjectIdError({ message });
   }
 });
-
-/**
- * Extracts `project_id` for every `[remotes.<name>]` block, in document order, reading a
- * missing field as `""`. Returns `[]` for anything that isn't a `remotes` table.
- */
-export function remoteProjectIdEntries(
-  remotes: unknown,
-): ReadonlyArray<{ readonly name: string; readonly projectId: string }> {
-  if (!isObject(remotes)) {
-    return [];
-  }
-  return Object.entries(remotes).map(([name, remote]) => ({
-    name,
-    projectId:
-      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "",
-  }));
-}
-
-/**
- * The name of the `[remotes.<name>]` block whose `project_id` equals `projectRef`, or
- * `undefined` when none matches (including when `projectRef` itself is `undefined`). Matches
- * against the raw, pre-`env()` literal — callers must pass `LoadedCliConfig.rawDocument`'s
- * `remotes`, never `LoadedCliConfig.document`, so a `project_id = "env(REF)"` that resolves to
- * `REF` doesn't match a caller-supplied, already-resolved `REF`.
- */
-export function remoteNameForProjectRef(
-  remotes: unknown,
-  projectRef: string | undefined,
-): string | undefined {
-  if (projectRef === undefined) {
-    return undefined;
-  }
-  return remoteProjectIdEntries(remotes).find((entry) => entry.projectId === projectRef)?.name;
-}
-
-/** Valid project ref format: exactly 20 lowercase ASCII letters. */
-const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
 
 /**
  * Rejects the first `[remotes.*]` block whose `project_id` is not a valid project ref, across
@@ -171,14 +90,9 @@ const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
  * valid ref passes here even though the raw literal doesn't match the pattern.
  */
 const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<string, unknown>) {
-  for (const [remoteName, remote] of Object.entries(remotes)) {
-    const projectId =
-      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
-    if (!REMOTE_PROJECT_ID_PATTERN.test(projectId)) {
-      return yield* new InvalidRemoteProjectIdError({
-        message: `Invalid config for remotes.${remoteName}.project_id. Must be like: abcdefghijklmnopqrst`,
-      });
-    }
+  const message = invalidRemoteProjectIdMessage(remotes);
+  if (message !== undefined) {
+    return yield* new InvalidRemoteProjectIdError({ message });
   }
 });
 
@@ -208,13 +122,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
-  const selected = selectRemote?.(remotes);
-  const name =
-    selectRemote === undefined
-      ? remoteNameForProjectRef(remotes, projectRef)
-      : selected !== undefined && Object.hasOwn(remotes, selected)
-        ? selected
-        : undefined;
+  const name = selectRemoteName(remotes, projectRef, selectRemote);
   if (name === undefined) {
     return {
       document: rawDocument,
@@ -224,13 +132,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   }
   const remoteSubtree = remotes[name];
   const remoteLeafPaths = collectLeafPaths(remoteSubtree);
-  let merged = isObject(remoteSubtree)
-    ? mergeRemoteSubtree(rawDocument, remoteSubtree)
-    : { ...rawDocument };
-  if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
-    merged = withDbSeedDisabled(merged);
-  }
-  delete merged["remotes"];
+  const merged = mergeRemoteBlock(rawDocument, remoteSubtree);
   return { document: merged, appliedRemote: name, remoteLeafPaths };
 });
 
@@ -331,14 +233,7 @@ function mergeSelectedRemoteForValidation(
   if (remoteName === undefined || !isObject(remotes) || !Object.hasOwn(remotes, remoteName)) {
     return { document, appliedRemote: undefined };
   }
-  const remoteSubtree = remotes[remoteName];
-  let merged = isObject(remoteSubtree)
-    ? mergeRemoteSubtree(document, remoteSubtree)
-    : { ...document };
-  if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
-    merged = withDbSeedDisabled(merged);
-  }
-  delete merged["remotes"];
+  const merged = mergeRemoteBlock(document, remotes[remoteName]);
   return { document: merged, appliedRemote: remoteName };
 }
 
@@ -395,10 +290,7 @@ const failIfSchemaTooNew = Effect.fnUntraced(function* (
   format: ConfigFormat,
   declaration: CliConfigSchemaDeclaration | undefined,
 ) {
-  if (
-    declaration?.version !== undefined &&
-    declaration.version > BigInt(SUPPORTED_CLI_CONFIG_SCHEMA_VERSION)
-  ) {
+  if (declaration?.version !== undefined && isSchemaTooNew(declaration)) {
     return yield* new CliConfigSchemaVersionError({
       path: filePath,
       format,

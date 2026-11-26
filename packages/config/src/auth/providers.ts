@@ -1,49 +1,21 @@
 import dedent from "dedent";
 import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
-import { type CliConfigTableRuleIssue, tableRuleFilter } from "../lib/table-rule.ts";
+import { tableRuleFilter } from "../lib/table-rule.ts";
+import {
+  cliConfigExternalProviderIssues,
+  type ExternalProviderInput,
+  secretOptional,
+} from "./providers-rules.ts";
+
+export { cliConfigExternalProviderIssues } from "./providers-rules.ts";
 
 const tags = ["auth"];
-
-interface ExternalProviderInput {
-  readonly enabled: boolean;
-  readonly client_id: string;
-  readonly secret?: string;
-}
-
-const secretOptional = (id: string) => id === "apple" || id === "google";
-
-function providerRequirements(id: string) {
-  return [
-    ["client_id", (value: ExternalProviderInput) => value.client_id !== ""],
-    ...(secretOptional(id)
-      ? []
-      : [
-          [
-            "secret",
-            (value: ExternalProviderInput) => value.secret !== undefined && value.secret !== "",
-          ] as const,
-        ]),
-  ] as const;
-}
 
 const providerRequirementFilter = (id: string, key: "client_id" | "secret") =>
   tableRuleFilter((value: ExternalProviderInput) =>
     cliConfigExternalProviderIssues(id, value, key),
   );
-
-/** The required-when-enabled issues of the `[auth.external.<id>]` table; paths are relative to it. */
-export function cliConfigExternalProviderIssues(
-  id: string,
-  value: ExternalProviderInput,
-  only?: "client_id" | "secret",
-): ReadonlyArray<CliConfigTableRuleIssue> {
-  return providerRequirements(id).flatMap(([key, isPresent]) =>
-    (only !== undefined && key !== only) || !value.enabled || isPresent(value)
-      ? []
-      : [{ path: [key], message: `Missing required field in config: auth.external.${id}.${key}` }],
-  );
-}
 
 const provider = (providerConfig: {
   id: string;

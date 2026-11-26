@@ -352,6 +352,15 @@ const expectedPureGraphFiles = [
   "studio.ts",
   "compute.ts",
   "local.ts",
+  "auth/email-rules.ts",
+  "auth/providers-rules.ts",
+  "auth/sms-rules.ts",
+  "config-encode-core.ts",
+  "db-migration-checks-rules.ts",
+  "errors-core.ts",
+  "lib/env-core.ts",
+  "local-rules.ts",
+  "sparse-core.ts",
 ]
   .map((relativePath) => join(srcDir, relativePath))
   .sort();
@@ -613,10 +622,8 @@ describe("the deprecated ./io entry", () => {
 const ioPromisesGraph = await runPlatform(collectImportGraph(join(srcDir, "io-promises.ts")));
 
 describe("src/io-promises.ts stays effect-free", () => {
-  test("no effect or platform package is reachable as a bare dependency", () => {
-    const bare = [...ioPromisesGraph.bareSpecifiers].sort();
-    expect(bare).toEqual([
-      "ajv",
+  test("only smol-toml, jsonc-parser and node builtins are reachable as bare dependencies", () => {
+    expect([...ioPromisesGraph.bareSpecifiers].sort()).toEqual([
       "jsonc-parser",
       "node:crypto",
       "node:fs/promises",
@@ -625,11 +632,27 @@ describe("src/io-promises.ts stays effect-free", () => {
     ]);
   });
 
-  test("none of the effect-backed modules are reachable", () => {
+  test("none of the effect-backed or build-time modules are reachable", () => {
     const reached = [...ioPromisesGraph.visitedFiles].map((file) => file.slice(srcDir.length + 1));
-    for (const forbidden of ["index.ts", "io.ts", "node.ts", "bun.ts", "promise-facade.ts"]) {
+    for (const forbidden of [
+      "index.ts",
+      "io.ts",
+      "node.ts",
+      "bun.ts",
+      "base.ts",
+      "promise-facade.ts",
+      "cli-config-runtime-schema.ts",
+      "cli-config-schema-index.ts",
+    ]) {
       expect(reached).not.toContain(forbidden);
     }
+  });
+
+  test("the generated validators are self-contained", () => {
+    const generated = [...ioPromisesGraph.visitedFiles].filter((file) =>
+      file.endsWith("cli-config-validators.js"),
+    );
+    expect(generated).toHaveLength(1);
   });
 });
 

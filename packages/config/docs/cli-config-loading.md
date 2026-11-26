@@ -66,6 +66,8 @@ against `packages/config/src/node.ts`/`bun.ts`) are:
 - `loadCliProjectEnvironment`
 - `inferFunctionsManifest`
 
+`@supabase/config/io-promises` exposes the same seven functions without an Effect runtime and loads configs identically; only the error classes (plain `Error` subclasses) and the loosely typed `config` differ.
+
 Every name here matches its `./effect` counterpart one-to-one (only the return type changes,
 `Effect` to `Promise`) — the subpath itself (`/io` vs `/effect`) is what conveys Promise-vs-Effect.
 `findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor`/

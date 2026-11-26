@@ -1,48 +1,16 @@
 import { Schema } from "effect";
-import { type CliConfigTableRuleIssue, tableRuleFilter } from "./lib/table-rule.ts";
+import { tableRuleFilter } from "./lib/table-rule.ts";
+import {
+  cliConfigServiceVersionIssues,
+  memoryOutOfRangeMessage,
+  memoryPatternMessage,
+  sizePattern,
+} from "./local-rules.ts";
+
+export { cliConfigServiceVersionIssues } from "./local-rules.ts";
 
 const tags = ["local"];
 
-const upstreamVersion = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
-const malformedRevision = /-r(?:0\d+)?$/u;
-const orioledbMarker = /-orioledb(?:-|$)/u;
-
-function versionIssue(key: string, version: string): string | undefined {
-  if (version === "linked" || version === "bundled") {
-    return undefined;
-  }
-  if (key === "default") {
-    return `local.services.default.version "${version}" must be "linked" or "bundled"`;
-  }
-  if (version === "default" || !upstreamVersion.test(version) || malformedRevision.test(version)) {
-    return `local.services.${key}.version "${version}" must be "linked", "bundled", or an upstream version optionally followed by -r<N> (N a non-negative integer without leading zeros)`;
-  }
-  if (orioledbMarker.test(version) && key !== "database") {
-    return `local.services.${key}.version "${version}" uses the -orioledb marker, which is only valid for the database service`;
-  }
-  return undefined;
-}
-
-const sizeUnits: Readonly<Record<string, number>> = {
-  "": 1,
-  k: 1024,
-  m: 1024 ** 2,
-  g: 1024 ** 3,
-  t: 1024 ** 4,
-  p: 1024 ** 5,
-};
-const sizePattern = /^(\d+(?:\.\d+)?) ?(?:([kmgtp])(?:i?b)?|b)?$/iu;
-
-function sizeInBytes(text: string): number | undefined {
-  const match = sizePattern.exec(text);
-  const amount = match?.[1];
-  return amount === undefined
-    ? undefined
-    : Math.trunc(Number(amount) * (sizeUnits[(match?.[2] ?? "").toLowerCase()] ?? 1));
-}
-
-/** The smallest limits Docker accepts. */
-const minMemoryBytes = 6 * 1024 ** 2;
 const minCpus = 0.01;
 
 const memory = Schema.String.annotate({
@@ -51,13 +19,8 @@ const memory = Schema.String.annotate({
   examples: ["512MiB", "1GiB"],
   tags,
 }).check(
-  Schema.isPattern(sizePattern, { message: "must be a size such as 512MiB or 1GiB" }),
-  Schema.makeFilter((value: string) => {
-    const bytes = sizeInBytes(value);
-    return bytes === undefined || (bytes >= minMemoryBytes && Number.isSafeInteger(bytes))
-      ? undefined
-      : "must be at least 6MiB and less than 8PiB";
-  }),
+  Schema.isPattern(sizePattern, { message: memoryPatternMessage }),
+  Schema.makeFilter((value: string) => memoryOutOfRangeMessage(value)),
 );
 
 const cpus = Schema.Finite.annotate({
@@ -98,17 +61,6 @@ const defaultEntry = Schema.Struct({
 });
 
 const entry = Schema.optionalKey(serviceEntry);
-
-/** One issue per `[local.services.*]` entry whose version is invalid; paths are relative to the services table. */
-export function cliConfigServiceVersionIssues(value: {
-  readonly [key: string]: { readonly version?: string } | undefined;
-}): ReadonlyArray<CliConfigTableRuleIssue> {
-  return Object.entries(value).flatMap(([key, serviceEntry]) => {
-    const version = serviceEntry?.version;
-    const message = version === undefined ? undefined : versionIssue(key, version);
-    return message === undefined ? [] : [{ path: [key, "version"], message }];
-  });
-}
 
 const services = Schema.Struct({
   default: Schema.optionalKey(defaultEntry),

@@ -1,5 +1,12 @@
 import { Data } from "effect";
 import type { ConfigFormat } from "./config-format.ts";
+import {
+  fileConflictMessage,
+  removedKeyMessage,
+  removedKeySuggestion,
+  schemaVersionMessage,
+} from "./errors-core.ts";
+import type { RemovedConfigKey } from "./removed-config-keys-core.ts";
 
 export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")<{
   readonly path: string;
@@ -22,32 +29,15 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
 export class CliConfigRemovedKeyError extends Data.TaggedError("CliConfigRemovedKeyError")<{
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly removedKeys: ReadonlyArray<{
-    readonly key: string;
-    readonly replacement: string;
-    readonly path: ReadonlyArray<string>;
-    readonly replacementPath: ReadonlyArray<string>;
-    /** True when the removed key is a whole table, such as `inbucket`. */
-    readonly table: boolean;
-    readonly remote?: string;
-  }>;
+  readonly removedKeys: ReadonlyArray<RemovedConfigKey>;
 }> {
   override get message(): string {
-    const file = this.path.split(/[\\/]/).slice(-2).join("/");
-    const [only, ...rest] = this.removedKeys;
-    if (only !== undefined && rest.length === 0) {
-      return `${only.key} in ${file} is no longer supported. Use ${only.replacement} instead.`;
-    }
-    return [
-      `${file} uses config keys that are no longer supported:`,
-      ...this.removedKeys.map(({ key, replacement }) => `  ${key}: use ${replacement} instead.`),
-    ].join("\n");
+    return removedKeyMessage(this.path, this.removedKeys);
   }
 
   /** The edit that clears this error, for commands that print a remediation next to the message. */
   get suggestion(): string {
-    const file = this.path.split(/[\\/]/).slice(-2).join("/");
-    return `Update ${file}, then rerun the command.`;
+    return removedKeySuggestion(this.path);
   }
 }
 
@@ -56,8 +46,7 @@ export class CliConfigFileConflictError extends Data.TaggedError("CliConfigFileC
   readonly paths: ReadonlyArray<string>;
 }> {
   override get message(): string {
-    const files = this.paths.map((path) => path.split(/[\\/]/).slice(-2).join("/"));
-    return `Found both ${files.join(" and ")}. Keep one and delete the other.`;
+    return fileConflictMessage(this.paths);
   }
 }
 
@@ -71,8 +60,7 @@ export class CliConfigSchemaVersionError extends Data.TaggedError("CliConfigSche
   readonly supportedVersion: number;
 }> {
   override get message(): string {
-    const file = this.path.split(/[\\/]/).slice(-2).join("/");
-    return `${file} declares config schema v${this.declaredVersion}, but this version of the Supabase CLI only reads up to v${this.supportedVersion}. Upgrade the Supabase CLI to use this config.`;
+    return schemaVersionMessage(this.path, this.declaredVersion, this.supportedVersion);
   }
 }
 
