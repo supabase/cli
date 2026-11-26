@@ -589,7 +589,9 @@
         "packages/config/src/promise-io.ts",
         "packages/config/src/promise-errors.ts",
         "packages/config/src/plain-config.ts",
-        "packages/config/src/io-promises.parity.unit.test.ts"
+        "packages/config/src/io-promises.parity.unit.test.ts",
+        "packages/config/src/io-promises.unit.test.ts",
+        "packages/config/src/promise-io.atomic-write.unit.test.ts"
       ],
       "rules": {
         "effecttsgo/async-function": "off",

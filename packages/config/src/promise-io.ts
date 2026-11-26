@@ -1,15 +1,5 @@
 import { randomBytes } from "node:crypto";
-import {
-  access,
-  chmod,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ConfigFormat } from "./config-format.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -116,9 +106,14 @@ export interface CliConfigIo {
 }
 
 const DEFAULT_FILE_MODE = 0o644;
+const TEMP_FILE_ATTEMPTS = 5;
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
 }
 
 async function probe(path: string, isAbsent: (error: unknown) => boolean): Promise<boolean> {
@@ -284,6 +279,19 @@ async function loadConfig(
   };
 }
 
+async function openExclusiveTempFile(filePath: string, mode: number) {
+  for (let attempt = 1; ; attempt++) {
+    const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
+    try {
+      return { tmpPath, handle: await open(tmpPath, "wx", mode) };
+    } catch (error) {
+      if (attempt === TEMP_FILE_ATTEMPTS || !isAlreadyExists(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
 async function writeFileAtomic(filePath: string, content: string): Promise<void> {
   const existingMode = await stat(filePath).then(
     (info) => info.mode & 0o7777,
@@ -294,15 +302,23 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
       throw error;
     },
   );
-  const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
+  const { tmpPath, handle } = await openExclusiveTempFile(
+    filePath,
+    existingMode ?? DEFAULT_FILE_MODE,
+  );
   try {
-    await writeFile(tmpPath, content, { mode: existingMode ?? DEFAULT_FILE_MODE });
-    if (existingMode !== undefined) {
-      await chmod(tmpPath, existingMode);
+    try {
+      await handle.writeFile(content);
+      if (existingMode !== undefined) {
+        await handle.chmod(existingMode);
+      }
+    } finally {
+      await handle.close();
     }
     await rename(tmpPath, filePath);
-  } finally {
+  } catch (error) {
     await rm(tmpPath, { force: true });
+    throw error;
   }
 }
 
@@ -371,9 +387,13 @@ async function saveConfig(options: SaveCliConfigOptions): Promise<LoadedCliConfi
     if (format === "json") {
       content = updateJsonDocument(existingText, parseJsonc(content)) ?? content;
     } else {
-      const directive = SCHEMA_DIRECTIVE_LINE.exec(existingText)?.[0];
-      if (directive !== undefined && !content.startsWith("#:schema")) {
-        content = `${directive}\n${content}`;
+      const directive = SCHEMA_DIRECTIVE_LINE.exec(existingText);
+      if (directive !== null && !content.startsWith("#:schema")) {
+        const replacement =
+          options.schemaRef !== undefined && directive[1] !== options.schemaRef
+            ? `#:schema ${options.schemaRef}`
+            : directive[0];
+        content = `${replacement}\n${content}`;
       }
     }
   }

@@ -40,29 +40,31 @@ const upstreamVersion = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const malformedRevision = /-r(?:0\d+)?$/u;
 const orioledbMarker = /-orioledb(?:-|$)/u;
 
-function versionIssue(key: string, version: string): string | undefined {
+function versionIssue(key: string, version: string, includeValues: boolean): string | undefined {
+  const shown = includeValues ? ` "${version}"` : "";
   if (version === "linked" || version === "bundled") {
     return undefined;
   }
   if (key === "default") {
-    return `local.services.default.version "${version}" must be "linked" or "bundled"`;
+    return `local.services.default.version${shown} must be "linked" or "bundled"`;
   }
   if (version === "default" || !upstreamVersion.test(version) || malformedRevision.test(version)) {
-    return `local.services.${key}.version "${version}" must be "linked", "bundled", or an upstream version optionally followed by -r<N> (N a non-negative integer without leading zeros)`;
+    return `local.services.${key}.version${shown} must be "linked", "bundled", or an upstream version optionally followed by -r<N> (N a non-negative integer without leading zeros)`;
   }
   if (orioledbMarker.test(version) && key !== "database") {
-    return `local.services.${key}.version "${version}" uses the -orioledb marker, which is only valid for the database service`;
+    return `local.services.${key}.version${shown} uses the -orioledb marker, which is only valid for the database service`;
   }
   return undefined;
 }
 
-/** One issue per `[local.services.*]` entry whose version is invalid; paths are relative to the services table. */
-export function cliConfigServiceVersionIssues(value: {
-  readonly [key: string]: { readonly version?: string } | undefined;
-}): ReadonlyArray<CliConfigTableRuleIssue> {
+/** One issue per `[local.services.*]` entry whose version is invalid, relative to the services table; `includeValues: false` omits the rejected version. */
+export function cliConfigServiceVersionIssues(
+  value: { readonly [key: string]: { readonly version?: string } | undefined },
+  { includeValues = true }: { readonly includeValues?: boolean } = {},
+): ReadonlyArray<CliConfigTableRuleIssue> {
   return Object.entries(value).flatMap(([key, serviceEntry]) => {
     const version = serviceEntry?.version;
-    const message = version === undefined ? undefined : versionIssue(key, version);
+    const message = version === undefined ? undefined : versionIssue(key, version, includeValues);
     return message === undefined ? [] : [{ path: [key, "version"], message }];
   });
 }

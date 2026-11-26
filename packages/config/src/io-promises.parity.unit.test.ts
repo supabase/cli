@@ -42,13 +42,13 @@ const scrub = (value: unknown, root: string): unknown =>
   JSON.parse(JSON.stringify(value ?? null).replaceAll(root, "<root>"));
 
 type Outcome =
-  | { readonly ok: true; readonly value: unknown; readonly ordered: string }
+  | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: Error & Record<string, unknown> };
 
 async function outcome(run: () => Promise<unknown>): Promise<Outcome> {
   try {
     const value = await run();
-    return { ok: true, value, ordered: JSON.stringify(value) };
+    return { ok: true, value };
   } catch (error) {
     if (error instanceof Error) {
       return { ok: false, error: Object.assign(error) };

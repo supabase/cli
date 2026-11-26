@@ -28,7 +28,7 @@ plus two generated JSON Schema artifacts (`./schema.json`, `./project-schema.jso
   `_tag`, `reason`, `detail`, `sourceLine?`), plus the `CliConfigConverted`/`CliConfigConvertedToml`
   and `MovedTomlComment`/`MovedJsoncComment` types. Its import graph reaches only
   `smol-toml` and `jsonc-parser` (pinned by `src/entrypoint-purity.unit.test.ts`).
-- `@supabase/config/io` — **deprecated** alias of `./io-effect` (each export carries `@deprecated`, via
+- `@supabase/config/io` — **deprecated** alias of `./io-effect` (its seven I/O functions carry `@deprecated`, via
   `src/io-deprecated-*.ts`); it will stop depending on Effect in a future release. Same runtime, same
   export conditions. Has zero internal consumers by design.
 - `@supabase/config/io-effect` — a Promise-based file-IO facade, backed by an Effect runtime, for

@@ -309,17 +309,17 @@ A loaded config has its `env()` references already resolved, so never round-trip
   `inferFunctionsManifest` take the same options and resolve to the same values: defaults are
   filled in, `env(NAME)` references are interpolated and coerced to the key's type, the matching
   `[remotes.*]` block is merged, and a config declaring a newer schema version is refused. Saves
-  strip defaults and keep an existing `$schema`/`#:schema` reference and JSONC comments.
+  strip defaults and keep an existing `$schema`/`#:schema` reference (unless `schemaRef` names a different one) and JSONC comments.
   `src/io-promises.parity.unit.test.ts` runs both entries over the same projects.
 - **No runtime validator dependency.** Validation is an Ajv-compiled module generated from the
-  schema and shipped in `dist/`; `ajv` is a dev dependency. After changing a config schema, run
+  schema and shipped in `dist/`; `ajv` is a dev dependency. The validator ships twice, as a source copy for Bun and a bundled copy in `dist` for Node (about 1.2 MB unpacked together). After changing a config schema, run
   `pnpm --filter @supabase/config generate:validators` — a unit test fails when the committed
   `src/generated/cli-config-validators.js` is stale.
 - **Plain errors.** Failures are `Error` subclasses (`CliConfigParseError`,
   `CliConfigRemovedKeyError`, `CliConfigFileConflictError`, `CliConfigSchemaVersionError`,
   `CliProjectEnvParseError`) carrying the same `_tag` and fields as their `./io` counterparts, with
   `issues` listing the structural violations by dotted path rather than only the first. Table rules (cross-field rules such as service versions) run once the structure validates, and a service-version rule reports its first violation, as in `./io`. OS errors
-  reject with the native error. Ajv-generated messages name key paths and constraints only; a few rule messages name the offending value (these are not credentials).
+  reject with the native error. Messages and `issues` name key paths and constraints only and never include the offending value, since a resolved `env()` secret can land in any field.
 - **Typing.** `config` is a plain, loosely typed document rather than a `CliConfig`; import `.` for
   the decoded type if you need it.
 - **Known differences from `./io`.** Unknown keys are stripped rather than rejected. A numeric

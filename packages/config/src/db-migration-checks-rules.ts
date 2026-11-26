@@ -73,7 +73,13 @@ interface RawIssue {
   readonly issue: string;
 }
 
-const severityIssues = (section: Readonly<Record<string, unknown>>): Array<RawIssue> =>
+const received = (value: unknown, includeValues: boolean): string =>
+  includeValues ? ` (got ${JSON.stringify(value)})` : "";
+
+const severityIssues = (
+  section: Readonly<Record<string, unknown>>,
+  includeValues: boolean,
+): Array<RawIssue> =>
   Object.entries(section).flatMap(([key, value]): Array<RawIssue> => {
     if (key === "exclude") return [];
     if (!isRule(key)) {
@@ -84,12 +90,12 @@ const severityIssues = (section: Readonly<Record<string, unknown>>): Array<RawIs
       : [
           {
             path: [key],
-            issue: `${key} must be "error", "warn" or "off" (got ${JSON.stringify(value)})`,
+            issue: `${key} must be "error", "warn" or "off"${received(value, includeValues)}`,
           },
         ];
   });
 
-const exclusionIssues = (exclude: unknown): Array<RawIssue> => {
+const exclusionIssues = (exclude: unknown, includeValues: boolean): Array<RawIssue> => {
   if (exclude === undefined) return [];
   if (!isPlainObject(exclude)) {
     return [{ path: ["exclude"], issue: "[db.migrations.checks.exclude] must be a table" }];
@@ -114,18 +120,19 @@ const exclusionIssues = (exclude: unknown): Array<RawIssue> => {
         : [
             {
               path: [...path, index],
-              issue: `exclude entries are "schema.name", for example "public.countries" (got ${JSON.stringify(entry)})`,
+              issue: `exclude entries are "schema.name", for example "public.countries"${received(entry, includeValues)}`,
             },
           ],
     );
   });
 };
 
-/** Rule-name, severity and exclusion issues of the raw `[db.migrations.checks]` table, before decoding drops unknown keys. */
+/** Rule-name, severity and exclusion issues of the raw `[db.migrations.checks]` table; `includeValues: false` omits the rejected values. */
 export const cliConfigMigrationChecksIssues = (
   section: Readonly<Record<string, unknown>>,
+  { includeValues = true }: { readonly includeValues?: boolean } = {},
 ): ReadonlyArray<CliConfigTableRuleIssue> =>
-  [...severityIssues(section), ...exclusionIssues(section["exclude"])].map(({ path, issue }) => ({
-    path,
-    message: issue,
-  }));
+  [
+    ...severityIssues(section, includeValues),
+    ...exclusionIssues(section["exclude"], includeValues),
+  ].map(({ path, issue }) => ({ path, message: issue }));

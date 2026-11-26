@@ -66,7 +66,7 @@ export interface LoadedCliConfig {
   readonly deprecatedPaths: ReadonlyArray<string>;
   /** The post-`env()` document `config` was decoded from, with any matching `[remotes.*]` override merged in. */
   readonly document?: Record<string, unknown>;
-  /** The document as parsed from disk, before `env()` interpolation and the `[remotes.*]` merge. */
+  /** The document with removed keys filtered and provider signup aliases folded, before `env()` interpolation and the `[remotes.*]` merge. */
   readonly rawDocument?: Record<string, unknown>;
   /** The exact file text `rawDocument` and `config` were parsed from; absent from `saveCliConfig`. */
   readonly rawText?: string;
@@ -196,7 +196,10 @@ function rootTableRuleIssues(
   const services = childObject(config, "local", "services");
   if (services !== undefined && isServiceVersions(services)) {
     issues.push(
-      ...tableRuleIssues("local.services", cliConfigServiceVersionIssues(services).slice(0, 1)),
+      ...tableRuleIssues(
+        "local.services",
+        cliConfigServiceVersionIssues(services, { includeValues: false }).slice(0, 1),
+      ),
     );
     for (const [name, entry] of Object.entries(services)) {
       const memory = childObject(entry, "container")?.["memory"];
@@ -245,6 +248,30 @@ function runValidator(
   return validator(data) ? [] : issuesFrom(prefix, validator.errors ?? []);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!isObject(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(record)) {
+    setOwnProperty(copy, key, cloneDocumentValue(child));
+  }
+  return copy;
+}
+
+/** Copies plain objects and arrays so validation can mutate them; any other value is shared and left for the validator's type checks to reject. */
+function cloneDocumentValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(cloneDocumentValue);
+  }
+  return isPlainRecord(value) ? cloneRecord(value) : value;
+}
+
 type CliConfigValidation =
   | { readonly ok: true; readonly config: Record<string, unknown> }
   | { readonly ok: false; readonly issues: ReadonlyArray<CliConfigValidationIssue> };
@@ -262,14 +289,17 @@ function validateCliConfigDocument(
     return { ok: false, issues: [{ path: "", message: "must be a table of settings" }] };
   }
   const { remotes: rawRemotes, ...rawRoot } = folded;
-  const root = structuredClone(rawRoot);
+  const root = cloneRecord(rawRoot);
   const rawChecks = childObject(rawRoot, "db", "migrations", "checks");
-  const remotes: unknown = rawRemotes === undefined ? {} : structuredClone(rawRemotes);
+  const remotes: unknown = rawRemotes === undefined ? {} : cloneDocumentValue(rawRemotes);
 
   const checkIssues =
     rawChecks === undefined
       ? []
-      : tableRuleIssues("db.migrations.checks", cliConfigMigrationChecksIssues(rawChecks));
+      : tableRuleIssues(
+          "db.migrations.checks",
+          cliConfigMigrationChecksIssues(rawChecks, { includeValues: false }),
+        );
   const rootIssues = runValidator(validateRoot, "", root);
   const issues: Array<CliConfigValidationIssue> = [
     ...(checkIssues.length === 0
