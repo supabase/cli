@@ -2948,6 +2948,38 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    deleteEnvironmentSecret: (
+      input: typeof operationDefinitions.v2DeleteEnvironmentSecret.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteEnvironmentSecret.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteEnvironmentSecret">(
+          operationDefinitions.v2DeleteEnvironmentSecret,
+          input,
+          options,
+        );
+      }),
+    deleteEnvironmentVariable: (
+      input: typeof operationDefinitions.v2DeleteEnvironmentVariable.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteEnvironmentVariable.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteEnvironmentVariable">(
+          operationDefinitions.v2DeleteEnvironmentVariable,
+          input,
+          options,
+        );
+      }),
     deleteLogDrain: (
       input: typeof operationDefinitions.v2DeleteLogDrain.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3332,6 +3364,38 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    listEnvironmentSecrets: (
+      input: typeof operationDefinitions.v2ListEnvironmentSecrets.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListEnvironmentSecrets.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListEnvironmentSecrets">(
+          operationDefinitions.v2ListEnvironmentSecrets,
+          input,
+          options,
+        );
+      }),
+    listEnvironmentVariables: (
+      input: typeof operationDefinitions.v2ListEnvironmentVariables.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListEnvironmentVariables.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListEnvironmentVariables">(
+          operationDefinitions.v2ListEnvironmentVariables,
+          input,
+          options,
+        );
+      }),
     listLogDrains: (
       input: typeof operationDefinitions.v2ListLogDrains.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3652,6 +3716,22 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    projectGetDownloadableBackups: (
+      input: typeof operationDefinitions.v2ProjectGetDownloadableBackups.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ProjectGetDownloadableBackups.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ProjectGetDownloadableBackups">(
+          operationDefinitions.v2ProjectGetDownloadableBackups,
+          input,
+          options,
+        );
+      }),
     projectsRefWebhooksDeliveriesIdGet: (
       input: typeof operationDefinitions.v2ProjectsRefWebhooksDeliveriesIdGet.inputSchema.Type,
       options?: SupabaseApiRequestOptions,
@@ -3888,6 +3968,38 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2RunProjectAdvisors">(
           operationDefinitions.v2RunProjectAdvisors,
+          input,
+          options,
+        );
+      }),
+    setEnvironmentSecret: (
+      input: typeof operationDefinitions.v2SetEnvironmentSecret.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2SetEnvironmentSecret.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2SetEnvironmentSecret">(
+          operationDefinitions.v2SetEnvironmentSecret,
+          input,
+          options,
+        );
+      }),
+    setEnvironmentVariable: (
+      input: typeof operationDefinitions.v2SetEnvironmentVariable.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2SetEnvironmentVariable.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2SetEnvironmentVariable">(
+          operationDefinitions.v2SetEnvironmentVariable,
           input,
           options,
         );

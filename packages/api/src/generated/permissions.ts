@@ -395,6 +395,7 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
   },
   "v2-run-project-advisors": { fga: [["advisors_read"]] },
   "v2-download-project-backup": { fga: [["backups_write"]], oauthScope: "database:write" },
+  "v2-project-get-downloadable-backups": { fga: [["backups_read"]], oauthScope: "database:read" },
   "v2-create-a-branch": {
     fga: [["branching_development_create"], ["branching_production_create"]],
     oauthScope: "environment:write",
@@ -436,6 +437,30 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "edge_functions:write",
   },
   "v2-deploy-a-compute-instance": { fga: [["workers_write"]], oauthScope: "edge_functions:write" },
+  "v2-list-environment-variables": {
+    fga: [["environment_variables_read"]],
+    oauthScope: "environment:read",
+  },
+  "v2-set-environment-variable": {
+    fga: [["environment_variables_write"]],
+    oauthScope: "environment:write",
+  },
+  "v2-delete-environment-variable": {
+    fga: [["environment_variables_write"]],
+    oauthScope: "environment:write",
+  },
+  "v2-list-environment-secrets": {
+    fga: [["environment_secrets_read"]],
+    oauthScope: "secrets:read",
+  },
+  "v2-set-environment-secret": {
+    fga: [["environment_secrets_write"]],
+    oauthScope: "secrets:write",
+  },
+  "v2-delete-environment-secret": {
+    fga: [["environment_secrets_write"]],
+    oauthScope: "secrets:write",
+  },
   "v2-list-organization-roles": { fga: [["members_read"]], oauthScope: "organizations:read" },
   "v2-create-organization-invitations": {
     fga: [["members_write"]],
