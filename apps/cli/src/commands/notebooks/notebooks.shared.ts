@@ -58,7 +58,7 @@ export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
 const notebookFileExtension = ".json";
 
 /** Page size for the list walk — the API's maximum, so the walk is one call in practice. */
-const NOTEBOOK_PAGE_SIZE = 100;
+const NOTEBOOK_PAGE_SIZE = "100";
 
 const updateAttributes = V2UpdateNotebookInput.fields.data.fields.attributes.fields;
 const notebookIdSchema = V2GetNotebookInput.fields.id;
