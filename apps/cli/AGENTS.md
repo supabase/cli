@@ -222,19 +222,9 @@ stack-started after health succeeds, and upgrade-suggested billing-gate events w
 envelope and payload semantics. Use the catalog and the telemetry tests for the complete current
 event contract.
 
-An opt-out (`supabase telemetry disable`, `SUPABASE_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1`) holds
-on every path:
-
-- Every send goes through the `Analytics` layer. Nothing else constructs a PostHog client or calls
-  an analytics host.
-- A command that opts the user out sends nothing.
-- A `telemetry.json` that cannot be read, or whose content does not decode, is an opt-out. Only a
-  missing or empty file is a first run.
-- Every reader and writer of `telemetry.json` resolves it from `TelemetryRuntime.configDir`.
-- While the user is opted out, only `telemetry enable` and `telemetry disable` create
-  `telemetry.json`. An existing file may be updated with its opt-out written back unchanged.
-- Event and group properties carry no user-chosen names. Project groups send the organization
-  slug only.
+Telemetry opt-out: every send goes through the `Analytics` layer, every reader and writer of
+`telemetry.json` resolves it from `TelemetryRuntime.configDir`, and event and group properties
+carry no user-chosen names.
 
 ## Error classification
 

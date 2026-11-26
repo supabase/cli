@@ -205,8 +205,7 @@ Analytics follows the shared CLI telemetry consent model:
 - environment overrides can still disable telemetry in CI or sandboxed runs, primarily
   `SUPABASE_TELEMETRY_DISABLED=1`
 
-The CLI also honors `DO_NOT_TRACK=1` as a broader system-level opt-out signal. Both variables opt
-out only when set to `1`; any other value leaves telemetry on.
+The CLI also honors `DO_NOT_TRACK=1` as a broader system-level opt-out signal.
 
 The telemetry commands:
 
@@ -214,30 +213,13 @@ The telemetry commands:
 - `supabase telemetry disable`
 - `supabase telemetry status`
 
-read and update that same `telemetry.json` file. `status` reports what the current run does, so
-it names the environment variable when one opts the run out.
+read and update that same `telemetry.json` file.
 
-An opt-out holds on every path:
-
-- with consent denied the analytics layer builds no PostHog client, so nothing is captured,
-  aliased, or group-identified
-- `supabase telemetry disable` sends no event of its own
-- a `telemetry.json` that cannot be read, or whose content does not decode, is read as an
-  opt-out. Undecodable content is rewritten as one. A missing or empty file is a first run.
-- the telemetry commands write to the same `SUPABASE_HOME` the CLI reads consent from, including
-  one set in a project `.env`
-- while opted out, the CLI updates an existing `telemetry.json` but does not create one
-- an opt-out applies to commands started after it. State writes take no lock, so a command that
-  is already running can write its earlier state back.
+A `telemetry.json` that cannot be read or decoded is treated as an opt-out, and
+`supabase telemetry disable` sends no event of its own.
 
 On the first interactive run the CLI prints the telemetry notice and sends nothing in that
-invocation. Sending starts with the next one, so `is_first_run` is only ever true on events from
-non-interactive first runs. A first interactive `supabase login` persists `distinct_id` without
-sending the alias: the device has no earlier events to merge. Non-interactive first runs print no
-notice.
-
-The release check after each command is not analytics and is not covered by the telemetry
-opt-out. `SUPABASE_NO_UPDATE_NOTIFIER` turns it off; see [supabase-home.md](supabase-home.md).
+invocation, so `is_first_run` is only true on events from non-interactive first runs.
 
 ## Comparison: Vercel CLI
 
