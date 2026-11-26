@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -186,20 +186,20 @@ function setup(
     Layer.provide(Layer.succeed(ExperimentalFlag, false)),
     Layer.provide(Layer.succeed(DebugFlag, false)),
     Layer.provide(Layer.succeed(CliArgs, { args: [] })),
-    // The fake `ChildProcessSpawner` must be provided before the real `BunServices.layer` and
-    // `BunCrypto.layer` fallback below, so it wins for whatever `ChildProcessSpawner` `seam`
+    // The fake `ChildProcessSpawner` must be provided before the real `NodeServices.layer` and
+    // `NodeCrypto.layer` fallback below, so it wins for whatever `ChildProcessSpawner` `seam`
     // resolves — `Layer.provide` resolves each requirement as it's applied, so the fallback only
     // fills the remaining platform services (`FileSystem`, `Path`) and crypto (`Digest`, `SecureRandom`).
     Layer.provide(shadowSpawner.layer),
     Layer.provide(engine),
     Layer.provide(opts.stackApi ?? Layer.empty),
     Layer.provide(unusedStackServices),
-    Layer.provide([BunServices.layer, BunCrypto.layer]),
+    Layer.provide([NodeServices.layer, NodeCrypto.layer]),
   );
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     out.layer,
     shadowSpawner.layer,
     dbConnection.layer,

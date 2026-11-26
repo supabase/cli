@@ -1,5 +1,5 @@
 import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { holdLock } from "@supabase/stack/effect";
 import { TestClock } from "effect/testing";
@@ -237,7 +237,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
   const configValues = cliConfigValuesLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        BunServices.layer,
+        NodeServices.layer,
         out.layer,
         configProvider,
         Layer.succeed(
@@ -265,8 +265,8 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
   const loginCrypto = mockLoginCrypto();
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
-    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+    NodeServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
     out.layer,
     api.layer,
     api.factoryLayer,
@@ -345,7 +345,7 @@ describe("bootstrap integration", () => {
       expect(s.out.stderrText).toContain("Using workdir");
       expect(s.out.stderrText).toContain("Created a new project at");
       expect(s.out.stderrText).toContain("To start your app:");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -361,7 +361,7 @@ describe("bootstrap integration", () => {
         const content = yield* fs.readFileString(path.join(s.workdir, "supabase", "config.jsonc"));
         expect(content).toContain('"stack": true');
         expect(content).not.toMatch(/^\s*"port": 54321,?$/m);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -405,7 +405,7 @@ describe("bootstrap integration", () => {
             properties: { name: CREATED.name, organization_slug: CREATED.organization_slug },
           },
         ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails on a busy project lease without publishing supabase/.link.json", () =>
@@ -434,7 +434,7 @@ describe("bootstrap integration", () => {
 
       expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
       expect(Option.isNone(yield* readProjectLink(s.workdir))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK", () =>
@@ -450,7 +450,7 @@ describe("bootstrap integration", () => {
       );
       expect(error._tag).toBe("ExperimentalFeatureFlagError");
       expect(s.createBodies).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -474,7 +474,7 @@ describe("bootstrap integration", () => {
         }
         expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(false);
         expect(s.out.stderrText).not.toContain("Created a new project at");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("downloads a named template matched by argument", () =>
@@ -489,7 +489,7 @@ describe("bootstrap integration", () => {
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
@@ -503,7 +503,7 @@ describe("bootstrap integration", () => {
         Effect.provide(s.layer),
       );
       expect(s.downloads).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects an unknown template argument", () =>
@@ -521,7 +521,7 @@ describe("bootstrap integration", () => {
         expect(causeText).toContain("BootstrapInvalidTemplateError");
         expect(causeText).toContain("Invalid template: nope");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("prompts for a template when none is given", () =>
@@ -534,7 +534,7 @@ describe("bootstrap integration", () => {
         "Which starter template do you want to use?",
       );
       expect(s.downloads).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("asks for hosted-mutation consent once for the whole bootstrap", () =>
@@ -546,7 +546,7 @@ describe("bootstrap integration", () => {
       );
       expect(s.out.promptConfirmCalls).toHaveLength(1);
       expect(s.createBodies).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("prompts for a workdir prefilled with the current directory", () =>
@@ -568,7 +568,7 @@ describe("bootstrap integration", () => {
         },
       ]);
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("bootstraps into the current directory when the prefilled path is accepted", () =>
@@ -592,7 +592,7 @@ describe("bootstrap integration", () => {
       ]);
       expect(yield* fs.exists(path.join(tempRoot.current, "supabase", "config.jsonc"))).toBe(true);
       expect(s.out.stderrText).not.toContain("Using workdir");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("uses the SUPABASE_WORKDIR env value without prompting", () =>
@@ -607,7 +607,7 @@ describe("bootstrap integration", () => {
       );
       expect(s.out.promptTextCalls).toEqual([]);
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("aborts when the user declines to overwrite a non-empty workdir", () =>
@@ -625,7 +625,7 @@ describe("bootstrap integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("BootstrapOverwriteDeclinedError");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("proceeds past a non-empty workdir with --yes", () =>
@@ -640,7 +640,7 @@ describe("bootstrap integration", () => {
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("runs the browser login flow when no token is present (one cli_login_completed)", () =>
@@ -654,7 +654,7 @@ describe("bootstrap integration", () => {
       expect(
         s.analytics.captured.map((c) => c.event).filter((e) => e === "cli_login_completed"),
       ).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("skips login when already authenticated (no login event, no project-linked event)", () =>
@@ -667,7 +667,7 @@ describe("bootstrap integration", () => {
       const events = s.analytics.captured.map((c) => c.event);
       expect(events).not.toContain("cli_login_completed");
       expect(events).not.toContain("cli_project_linked");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("retries fetching api keys until they are available", () =>
@@ -680,7 +680,7 @@ describe("bootstrap integration", () => {
       expect(s.apiKeysCalls).toBe(3);
       const linkingLines = s.out.stderrText.match(/Linking project\.\.\./g) ?? [];
       expect(linkingLines.length).toBeGreaterThanOrEqual(3);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("retries the native push connection until it succeeds", () =>
@@ -695,7 +695,7 @@ describe("bootstrap integration", () => {
       // (`debug: true` above) catches both attempts with only 2 failures here.
       const retryLines = s.out.stderrText.match(/connection refused\nRetry \(\d\/8\): /g) ?? [];
       expect(retryLines.length).toBe(2);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fails when a service stays unhealthy", () =>
@@ -713,7 +713,7 @@ describe("bootstrap integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("Service not healthy: db (UNHEALTHY)");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fails with an Error status when the health endpoint returns non-200", () =>
@@ -729,7 +729,7 @@ describe("bootstrap integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("Error status 503");
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("merges .env.example derived keys", () =>
@@ -748,7 +748,7 @@ describe("bootstrap integration", () => {
       const env = yield* fs.readFileString(path.join(s.workdir, ".env"));
       expect(env).toContain('POSTGRES_USER="postgres"');
       expect(env).toContain('NEXT_PUBLIC_SUPABASE_ANON_KEY="anon-key"');
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("continues (non-fatal) when the .env.example is malformed", () =>
@@ -764,7 +764,7 @@ describe("bootstrap integration", () => {
       expect(s.out.stderrText).toContain("Failed to create .env file:");
       // Bootstrap still completes through the native db push step.
       expect(s.pushConnectCalls).toHaveLength(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -782,7 +782,7 @@ describe("bootstrap integration", () => {
         expect(s.pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(s.pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -806,7 +806,7 @@ describe("bootstrap integration", () => {
           sslrootcertInline: rootCaBundle(),
         });
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("pushes with the flag-sourced password (used as the create password too)", () =>
@@ -818,7 +818,7 @@ describe("bootstrap integration", () => {
         FAST_BACKOFF,
       ).pipe(Effect.provide(s.layer));
       expect(s.pushConnectCalls[0]?.password).toBe("pw123");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("pushes with the prompted password when --password is empty", () =>
@@ -837,7 +837,7 @@ describe("bootstrap integration", () => {
         ).pipe(Effect.provide(s.layer)),
       );
       expect(s.pushConnectCalls[0]?.password).toBe("prompted-pw");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("pushes with the SUPABASE_DB_PASSWORD password when no flag is given", () =>
@@ -849,7 +849,7 @@ describe("bootstrap integration", () => {
         FAST_BACKOFF,
       ).pipe(Effect.provide(s.layer));
       expect(s.pushConnectCalls[0]?.password).toBe("env-pw");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("seeds the project create request with the SUPABASE_DB_PASSWORD password", () =>
@@ -862,7 +862,7 @@ describe("bootstrap integration", () => {
       ).pipe(Effect.provide(s.layer));
       expect(s.createBodies).toHaveLength(1);
       expect(s.createBodies[0]).toMatchObject({ db_pass: "settings-pw" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("flushes telemetry and caches the linked project via ensuring", () =>
@@ -874,7 +874,7 @@ describe("bootstrap integration", () => {
       );
       expect(s.telemetry.flushed).toBe(true);
       expect(s.linkedCache.cached).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("emits a single structured result in json mode", () =>
@@ -893,7 +893,7 @@ describe("bootstrap integration", () => {
         workdir: s.workdir,
       });
       expect(s.out.stdoutText).not.toContain("To start your app:");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("reports env_file: null in the json result when the .env write fails", () =>
@@ -908,7 +908,7 @@ describe("bootstrap integration", () => {
       );
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ env_file: null });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

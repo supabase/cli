@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -27,6 +27,6 @@ describe("updateDeclarativeSchemaPathsConfig", () => {
       expect(config).toContain('"schema_paths"');
       expect(config).toContain('"schemas"');
       expect(yield* fs.exists(path.join(tmp.current, "supabase", "config.toml"))).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
 import { Effect, FileSystem, Layer, Option, Path, PlatformError } from "effect";
@@ -24,7 +24,7 @@ import { stackPruneCommand } from "./prune.command.ts";
 import { StackCommandPruneError } from "./prune.errors.ts";
 import { stackPrune } from "./prune.handler.ts";
 
-const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(NodeServices.layer, NodeCrypto.layer));
 
 const fixture = Effect.fn("StackPruneTest.fixture")(function* () {
   const fs = yield* FileSystem.FileSystem;

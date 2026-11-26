@@ -5,6 +5,7 @@ import { FetchHttpClient } from "effect/http";
 import { DnsResolverFlag } from "./global-flags.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import { resolveHostsOverHttps } from "./db-dns.ts";
+import { pinAddressInit, runsOnBun, type TlsFetchRequestInit } from "./fetch-tls.ts";
 
 /**
  * The result of rewriting an HTTPS request URL so the TCP connection dials
@@ -86,8 +87,9 @@ const interruptOnAbort = (signal: AbortSignal) =>
 
 /**
  * Produces a custom `fetch` implementation that DNS-over-HTTPS-resolves the
- * request hostname before dialing, then passes `tls.serverName` so Bun
- * validates the TLS certificate against the original hostname — not the IP.
+ * request hostname before dialing. Bun gets the IP as the URL authority plus
+ * `tls.serverName`, so it validates the TLS certificate against the original
+ * hostname; Node keeps the original URL and pins the IP through an undici dispatcher.
  *
  * Returns a standard `fetch` function suitable for use as
  * `FetchHttpClient.Fetch`'s context value.
@@ -127,6 +129,12 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
           return yield* Effect.promise(() => innerFetch(input, init));
         }
 
+        if (!runsOnBun) {
+          return yield* Effect.promise(() =>
+            innerFetch(input, { ...init, ...pinAddressInit(host, firstIp) }),
+          );
+        }
+
         const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
 
         // `init.headers` may be a plain record, a WHATWG `Headers` instance
@@ -140,7 +148,7 @@ export function dohFetch(opts: DohFetchOptions): typeof globalThis.fetch {
         // Bun's fetch sends `tls.serverName` as the SNI extension and validates
         // the peer certificate against it, not against the IP used as the URL
         // authority.
-        const rewrittenInit: BunFetchRequestInit = {
+        const rewrittenInit: TlsFetchRequestInit = {
           ...init,
           headers,
           tls: { serverName },

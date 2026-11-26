@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -814,7 +814,7 @@ describe("sso add integration", () => {
         const req = api.requests.find((r) => r.method === "POST");
         expect(req?.body).toHaveProperty("metadata_xml", expect.stringContaining("<md/>"));
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects non-UTF8 metadata file", () =>
@@ -832,7 +832,7 @@ describe("sso add integration", () => {
           expect(Cause.pretty(exit.cause)).toContain("SsoAddMetadataFileError");
         }
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("sends metadata_url verbatim when --skip-url-validation", () => {
@@ -911,7 +911,7 @@ describe("sso add integration", () => {
         const req = api.requests.find((r) => r.method === "POST");
         expect(req?.body).toHaveProperty("attribute_mapping.keys.a.default", 3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("sends domains array verbatim", () => {
@@ -1062,7 +1062,7 @@ describe("sso add integration", () => {
         const req = api.requests.find((r) => r.method === "POST");
         expect(req?.body).toHaveProperty("attribute_mapping.keys.a.default", 42);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("metadata URL fetch failure surfaces as add metadata file error", () => {
@@ -1203,7 +1203,7 @@ describe("sso add integration", () => {
           expect(Cause.pretty(exit.cause)).toContain("SsoAddAttributeMappingFileError");
         }
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("an attribute mapping with an unknown key fails before the POST", () =>
@@ -1224,7 +1224,7 @@ describe("sso add integration", () => {
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a transport failure surfaces as a network error naming the operation", () => {
@@ -1289,7 +1289,7 @@ describe("sso add integration", () => {
           expect(posts[0]?.body).toHaveProperty("domains", ["--profile"]);
           expect(cache.cachedApiUrl).toBe("http://reconciled.example");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -1340,7 +1340,7 @@ describe("sso add integration", () => {
           `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -1409,7 +1409,7 @@ describe("sso add integration", () => {
             `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

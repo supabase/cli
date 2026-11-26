@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -34,7 +34,7 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
   networkBansRemoveDbUnbanIpFlag.parse({ flags: { "db-unban-ip": rawValues }, arguments: [] }).pipe(
     Effect.map(([, values]) => values),
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
   );
 
 const consentApproved = Layer.mergeAll(

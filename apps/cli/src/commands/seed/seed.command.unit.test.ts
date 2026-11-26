@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -37,7 +37,7 @@ const parseProjectRef = (args: ReadonlyArray<string>) => {
     ]),
   );
   return Command.runWith(seed, { version: "0.0.0-test" })(args).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(silentFormatter))),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, CliOutput.layer(silentFormatter))),
     Effect.map(() => seen[0]),
   );
 };

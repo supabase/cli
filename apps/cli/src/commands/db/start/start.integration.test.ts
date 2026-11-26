@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -484,7 +484,7 @@ function setup(opts: SetupOpts = {}) {
         yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
       }
     }),
-  ).pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
+  ).pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer]));
   const out = mockOutput({ format: opts.format ?? "text" });
   const http = alwaysReadyHttpClient();
   const telemetry = mockTelemetryStateTracked();
@@ -535,8 +535,8 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     out.layer,
     configValuesLayer({ output: out.layer }),
     cliSettings,
@@ -588,13 +588,13 @@ const readCurrentBranch = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.readFileString(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const currentBranchExists = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.exists(yield* currentBranchPath(workdir));
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 describe("db start", () => {
   beforeEach(() => {
@@ -1282,7 +1282,7 @@ describe("db start", () => {
             expect(stateAtConnect.length).toBeGreaterThan(1);
             expect(stateAtConnect.every((state) => state === "busy")).toBe(true);
             expect(yield* gateState(gate)).toBe("free");
-          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+          }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
         },
       );
     }
@@ -1935,7 +1935,7 @@ describe("db start", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "config.toml"));
-          }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+          }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
           expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }

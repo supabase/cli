@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
@@ -443,7 +443,7 @@ project_id = "env(STAGING_REF)"
           expect(Cause.pretty(exit.cause)).toContain("StorageMissingProjectConfigError");
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -471,7 +471,7 @@ project_id = "env(STAGING_REF)"
         expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
           true,
         );
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -497,7 +497,7 @@ project_id = "env(STAGING_REF)"
           expect(Cause.pretty(exit.cause)).toContain(`Did you mean --workdir ${tmp.current}?`);
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -519,7 +519,7 @@ project_id = "env(STAGING_REF)"
           expect(causeText).toContain("failed to change workdir: chdir");
         }
         expect(requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
   it.effect("fetches the revealed api keys and fills the cache through the real layers", () =>
@@ -544,7 +544,7 @@ project_id = "env(STAGING_REF)"
           activeFlags: { remote: true },
           requests: managementRequests,
         });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
@@ -606,7 +606,7 @@ project_id = "env(STAGING_REF)"
             ],
           }),
         ).toThrow(/condition doesn't hold/);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 });

@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -42,7 +42,7 @@ const testSources = await Effect.gen(function* () {
         source,
       })),
   );
-}).pipe(Effect.provide(BunServices.layer), Effect.runPromise);
+}).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
 
 const callsByLeaf = new Map<string, Array<string>>();
 const nonLiteralCallSites: Array<string> = [];

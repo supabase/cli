@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer } from "effect";
 
@@ -9,7 +9,7 @@ import { parsePgDeltaNextEndpoint } from "./pgdelta-engine.next.layer.ts";
 import { PgDeltaEngineError } from "./pgdelta-engine.service.ts";
 
 const endpointLayer = Layer.merge(
-  BunServices.layer,
+  NodeServices.layer,
   ConfigProvider.layer(ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true })),
 );
 

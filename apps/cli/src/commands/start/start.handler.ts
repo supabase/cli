@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { inferFunctionsManifest } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -418,7 +418,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const posixPath = yield* Effect.provide(Path.Path, NodePath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
   // Threaded into every `dockerRemoveAll` teardown below — `--debug`
   // gates that function's `Pruned …:` stderr reports.

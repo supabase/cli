@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 
@@ -110,7 +110,7 @@ const readKey = (scenario: Scenario, shell: Readonly<Record<string, string>>) =>
       values.load({ workdir: root, projectRef: Option.some(LINKED) }),
     ).pipe(Effect.provide(layer));
     return yield* resolvedConfig.get(scenario.key);
-  }).pipe(Effect.provide(BunServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("CliConfigValues env versus a matched remote", () => {
   for (const scenario of scenarios) {

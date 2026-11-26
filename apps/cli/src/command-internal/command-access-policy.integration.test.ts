@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Console, Effect, Layer, Schema } from "effect";
 import { CliOutput, Command, Flag } from "effect/cli";
@@ -30,7 +30,7 @@ describe("command access policy", () => {
           ),
           access.annotate,
         );
-        const layer = Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()));
+        const layer = Layer.mergeAll(NodeServices.layer, CliOutput.layer(textCliOutputFormatter()));
         expect(
           yield* Command.runWith(command, { version: "0" })(["--enabled=false"]).pipe(
             Effect.flip,
@@ -71,7 +71,7 @@ describe("command access policy", () => {
       const { console, calls } = fakeConsole();
       const formatterLayer = (formatter: CliOutput.Formatter) =>
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           CliOutput.layer(formatter),
           Layer.succeed(Console.Console, console),
         );

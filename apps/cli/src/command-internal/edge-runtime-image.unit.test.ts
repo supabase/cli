@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { vi } from "vitest";
@@ -25,7 +25,7 @@ const resolve = (denoVersion: number, pin?: string) =>
       yield* fs.writeFileString(path.join(tempDir, "edge-runtime-version"), pin);
     }
     return yield* resolveEdgeRuntimeImage(fs, path, dir, denoVersion);
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("resolveEdgeRuntimeImage", () => {
   it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () =>

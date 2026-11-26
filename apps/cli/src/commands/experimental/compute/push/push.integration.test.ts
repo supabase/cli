@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Predicate, Schedule, FileSystem, Path, Schema } from "effect";
 import {
@@ -188,7 +188,7 @@ describe("compute push", () => {
         // The build settled, so there is nothing left to follow up on.
         expect(out.stderrText).not.toContain("supabase compute status api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns once the deploy is accepted when --no-wait is passed", () =>
@@ -228,7 +228,7 @@ describe("compute push", () => {
         expect(out.stdoutText).not.toContain("Image");
         expect(out.stderrText).toContain("supabase compute status api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("picks the project, deploys the compute and records the linked project", () =>
@@ -270,7 +270,7 @@ describe("compute push", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `V2DeployAWorkerOutput` permits a terminal state on the deploy response
@@ -309,7 +309,7 @@ describe("compute push", () => {
           expect(out.stdoutText).toContain("Deployed Compute api");
           expect(out.stdoutText).toContain("v1");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fails on a deploy that came back already failed", () =>
@@ -323,7 +323,7 @@ describe("compute push", () => {
           expect(error).toBeInstanceOf(ComputeBuildFailedError);
           expect(http.routeKeys).not.toContain(`GET ${computeRoute("/api")}`);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -358,7 +358,7 @@ describe("compute push", () => {
         });
         expect(attributes.context_upload_id).toBe(UPLOAD_ID);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("guesses the runtime for a directory with no config entry and says so", () =>
@@ -387,7 +387,7 @@ describe("compute push", () => {
           "all",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses an unconfigured source without an explicit exposure", () =>
@@ -403,7 +403,7 @@ describe("compute push", () => {
         expect(http.requests).toHaveLength(0);
         expect(out.stderrText).not.toContain("guessed");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -454,7 +454,7 @@ describe("compute push", () => {
           const body = yield* decodeDeploy(deployments[0]?.body ?? "{}");
           expect(body.data.attributes.spec.exposure).toBe("public");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `[compute.*] runtime` and `size` are plain strings in the config schema, so
@@ -478,7 +478,7 @@ describe("compute push", () => {
         });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the sizes on offer when config records one it does not know", () =>
@@ -498,7 +498,7 @@ describe("compute push", () => {
         });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("sends the recorded size and the requested instance count", () =>
@@ -520,7 +520,7 @@ describe("compute push", () => {
           instances: 3,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a compute scaled at the count recorded in config", () =>
@@ -536,7 +536,7 @@ describe("compute push", () => {
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.instances).toBe(4);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lets --instances override the recorded count for one deploy", () =>
@@ -552,7 +552,7 @@ describe("compute push", () => {
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.instances).toBe(1);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The whole point of recording it: every deploy sends a complete spec, so a
@@ -573,7 +573,7 @@ describe("compute push", () => {
           "private",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Hand-written config, so the casing is the user's own — `PRIVATE` plainly
@@ -593,7 +593,7 @@ describe("compute push", () => {
           "private",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lets --exposure override the recorded exposure for one deploy", () =>
@@ -611,7 +611,7 @@ describe("compute push", () => {
           "public",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `[compute.*] exposure` is a plain string in the config schema, so a typo
@@ -634,7 +634,7 @@ describe("compute push", () => {
         });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The blank case, which reads as "not recorded" if the config reader collapses
@@ -661,7 +661,7 @@ describe("compute push", () => {
         // Nothing was packaged, uploaded or deployed — least of all publicly.
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `--exposure` decides one deploy and nothing writes it down. Every deploy
@@ -690,7 +690,7 @@ describe("compute push", () => {
           // The exact line to set, the way the runtime guess names its own.
           expect(out.stderrText).toContain('[compute.api] exposure = "private"');
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("nudges when the config records the opposite", () =>
@@ -706,7 +706,7 @@ describe("compute push", () => {
           expect(out.stderrText).toContain('records exposure = "public"');
           expect(out.stderrText).toContain('exposure = "private"');
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // A recorded value the CLI cannot read is not `chosen` either: the next bare
@@ -723,7 +723,7 @@ describe("compute push", () => {
 
           expect(out.stderrText).toContain('records exposure = "privat"');
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // Nothing drifts, so nothing to say — the flag restated what the config
@@ -740,7 +740,7 @@ describe("compute push", () => {
 
           expect(out.stderrText).not.toContain("applies to this deploy only");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // The same non-drift, reached the other way: no recorded exposure and a flag
@@ -757,7 +757,7 @@ describe("compute push", () => {
 
           expect(out.stderrText).not.toContain("applies to this deploy only");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -778,7 +778,7 @@ describe("compute push", () => {
           "private",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads the compute secrets_scope defined on config", () =>
@@ -796,7 +796,7 @@ describe("compute push", () => {
           "none",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads the compute secrets_scope defined on config as array", () =>
@@ -814,7 +814,7 @@ describe("compute push", () => {
           (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
         ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lets --secrets-scope overrided the defined secrets_scope", () =>
@@ -832,7 +832,7 @@ describe("compute push", () => {
           "supabase",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lets --secrets-scope overrided the defined secrets_scope as array", () =>
@@ -850,7 +850,7 @@ describe("compute push", () => {
           (yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec.secrets_scope,
         ).toStrictEqual([{ secret_name: "STRIPE_KEY" }, { secret_name: "ANTHROPIC_KEY" }]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses an invalid secrets_scope defined on config", () =>
@@ -870,7 +870,7 @@ describe("compute push", () => {
         });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("polls until the build leaves `building`", () =>
@@ -904,7 +904,7 @@ describe("compute push", () => {
         const polls = http.routeKeys.filter((key) => key === `GET ${computeRoute("/api")}`);
         expect(polls).toHaveLength(3);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with the build's own reason when the build fails", () =>
@@ -935,7 +935,7 @@ describe("compute push", () => {
           suggestion: expect.stringContaining("supabase compute push api"),
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The reason is optional in the API contract, so the detail has to read as a
@@ -959,7 +959,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeBuildFailedError);
         expect(error).toMatchObject({ detail: `The build for "api" failed.` });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The accepted spec is the platform's answer, not the request echoed back — so
@@ -994,7 +994,7 @@ describe("compute push", () => {
         expect(out.stdoutText).not.toContain("https://");
         expect(out.stdoutText).not.toContain("URL");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The schedules every other test injects are a seam: the command itself calls
@@ -1011,7 +1011,7 @@ describe("compute push", () => {
         expect(http.routeKeys).toContain(`POST ${computeRoute("/api/deploy")}`);
         expect(out.stdoutText).toContain("Deployed Compute api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops waiting on a build that never settles, and says where to look", () =>
@@ -1037,7 +1037,7 @@ describe("compute push", () => {
           suggestion: expect.stringContaining("supabase compute status api"),
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describe("carries an explicit --remote=<ref> into its hints", () => {
@@ -1063,7 +1063,7 @@ describe("compute push", () => {
             `supabase compute status api --remote=${COMPUTE_PROJECT_REF}`,
           );
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("in the failed-build retry suggestion", () =>
@@ -1086,7 +1086,7 @@ describe("compute push", () => {
             ),
           });
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("in the give-up-waiting suggestion", () =>
@@ -1111,7 +1111,7 @@ describe("compute push", () => {
             ),
           });
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // The mirror image: when the link supplied the ref, repeating it back is
@@ -1127,7 +1127,7 @@ describe("compute push", () => {
           expect(out.stderrText).toContain("supabase compute status api");
           expect(out.stderrText).not.toContain("--remote");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1145,7 +1145,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeUploadFailedError);
         expect(http.routeKeys).not.toContain(`POST ${computeRoute("/api/deploy")}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `config.json` is a supported project format. `push` only reads the compute
@@ -1171,7 +1171,7 @@ describe("compute push", () => {
         expect(http.routeKeys).toContain("PUT /deploy-context/api.tar.gz");
         expect(http.routeKeys).toContain(`POST ${computeRoute("/api/deploy")}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("deploys a compute configured in config.json, not just config.toml", () =>
@@ -1199,7 +1199,7 @@ describe("compute push", () => {
         // Every value came from config, so nothing was inferred from the files.
         expect(out.stderrText).not.toContain("guessed");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The presigned URL's query string is a write-capable credential, so it must
@@ -1225,7 +1225,7 @@ describe("compute push", () => {
         expect(error.detail).not.toContain(UPLOAD_URL);
         expect(http.routeKeys).not.toContain(`POST ${computeRoute("/api/deploy")}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // These all arrive as a 404 on the same route; only `error.code` separates
@@ -1258,7 +1258,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeUnavailableError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("private alpha") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
@@ -1285,7 +1285,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeUnavailableError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("private alpha") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("points at the project ref when no such project exists", () =>
@@ -1308,7 +1308,7 @@ describe("compute push", () => {
         expect(error.suggestion).not.toContain("private alpha");
         expect(error.suggestion).toContain("supabase link");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the unserved route instead of the project when the API has no such route", () =>
@@ -1336,7 +1336,7 @@ describe("compute push", () => {
         expect(error.suggestion).not.toContain("supabase link");
         expect(error.suggestion).not.toContain("private alpha");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps the enrolment answer for a 404 body it does not recognize", () =>
@@ -1354,7 +1354,7 @@ describe("compute push", () => {
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails when the compute has no source on disk", () =>
@@ -1378,7 +1378,7 @@ describe("compute push", () => {
         expect(error.suggestion).toContain("supabase/compute/api and add your compute's code");
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses an empty source directory instead of deploying nothing", () =>
@@ -1403,7 +1403,7 @@ describe("compute push", () => {
         expect(error.suggestion).not.toContain("compute new");
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The one case `compute new` really does answer: a name that reached `push`
@@ -1430,7 +1430,7 @@ describe("compute push", () => {
         });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A compute whose `source` points somewhere that is not there: the path in
@@ -1458,7 +1458,7 @@ describe("compute push", () => {
         expect(error.suggestion).toContain("source");
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A file sitting where the source directory should be is not a missing
@@ -1484,7 +1484,7 @@ describe("compute push", () => {
         expect(error.suggestion).not.toContain("compute new");
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // "Cannot read it" and "it is not there" want opposite things from the user,
@@ -1510,7 +1510,7 @@ describe("compute push", () => {
         expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Same rule one line down: `orElseSucceed([])` on the read reported a
@@ -1546,7 +1546,7 @@ describe("compute push", () => {
         expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Packaging stores symlinks rather than following them, so a link out of the
@@ -1571,7 +1571,7 @@ describe("compute push", () => {
         expect(error).toMatchObject({ detail: expect.stringContaining("escape.toml") });
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rides out a transient failure while polling the build", () =>
@@ -1598,7 +1598,7 @@ describe("compute push", () => {
           http.routeKeys.filter((key) => key === `GET ${computeRoute("/api")}`).length,
         ).toBeGreaterThan(1);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces a permanent poll failure on the first read instead of retrying it", () =>
@@ -1632,7 +1632,7 @@ describe("compute push", () => {
           1,
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("acts on the workdir's project, not the process's directory", () =>
@@ -1653,7 +1653,7 @@ describe("compute push", () => {
 
         expect(http.routeKeys).toContain(`POST ${computeRoute("/api/deploy")}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("deploys every compute in the project when none are named", () =>
@@ -1698,7 +1698,7 @@ describe("compute push", () => {
           `Deployed 2 Compute to project ${COMPUTE_PROJECT_REF}: api, web`,
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The other half of that stat: an entry that is there but cannot be read is a
@@ -1735,7 +1735,7 @@ describe("compute push", () => {
         expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A dangling link in the compute root is listed by the directory read but has
@@ -1755,7 +1755,7 @@ describe("compute push", () => {
         expect(http.routeKeys).toContain(`POST ${computeRoute("/api/deploy")}`);
         expect(http.routeKeys.some((key) => key.includes("/ghost"))).toBe(false);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A bare `push` promises to deploy every compute in the project, and a compute
@@ -1790,7 +1790,7 @@ describe("compute push", () => {
           expect(http.requests).toHaveLength(0);
         }
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the compute a failed run never got to", () =>
@@ -1829,7 +1829,7 @@ describe("compute push", () => {
         // Nothing was left running: a waiting run has no build in flight to name.
         expect(out.stderrText).not.toContain("Still building");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `runCli` drains success trailers only on exit code 0, so a later failure
@@ -1871,7 +1871,7 @@ describe("compute push", () => {
         );
         expect(http.routeKeys).not.toContain(`POST ${computeRoute("/zap/deploy")}`);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails when there are no compute to deploy at all", () =>
@@ -1891,7 +1891,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(NoComputeToDeployError);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("requires a linked project or an explicit --remote=<ref>", () =>
@@ -1904,7 +1904,7 @@ describe("compute push", () => {
 
         expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("packages a --source compute from where its code actually lives", () =>
@@ -1927,7 +1927,7 @@ describe("compute push", () => {
         expect(out.stdoutText).toContain("Deployed Compute api");
         expect(out.stdoutText).toContain("Runtime");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a structured result in json mode", () =>
@@ -1960,7 +1960,7 @@ describe("compute push", () => {
           },
         ]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `image_version` is optional-but-permitted on the deploy response, so a
@@ -2000,7 +2000,7 @@ describe("compute push", () => {
           expect(out.stdoutText).not.toContain("v7");
           expect(out.stdoutText).not.toContain("Image");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("omits image_version from the payload a script reads", () =>
@@ -2028,7 +2028,7 @@ describe("compute push", () => {
             },
           ]);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("still reports the image once the build has settled", () =>
@@ -2042,7 +2042,7 @@ describe("compute push", () => {
           // The mirror case: blanking is tied to `building`, not to re-pushes.
           expect(out.stdoutText).toContain("v1");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2076,7 +2076,7 @@ describe("compute push", () => {
           },
         ]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `--output-format json` asked for a stream of events, so progress does not
@@ -2112,7 +2112,7 @@ describe("compute push", () => {
         expect(out.stderrText).not.toContain("Deploying Compute");
         expect(out.stdoutText).not.toContain("Deployed 2 Compute");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `-o env` cannot express the `compute` array. Discovering that at emit time
@@ -2133,7 +2133,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The "nothing to deploy" guard counts directory entries, so without this a tree
@@ -2156,7 +2156,7 @@ describe("compute push", () => {
         expect(error.suggestion).not.toContain("compute new");
         expect(http.routeKeys).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The runtime guess is an inference about the contents of a directory, so it
@@ -2178,7 +2178,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeSourceMissingError);
         expect(out.stderrText).not.toContain("guessed");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `image_version` is optional in the response. Present-but-undefined made the
@@ -2203,7 +2203,7 @@ describe("compute push", () => {
         expect(out.stdoutText).toContain("compute_name");
         expect(out.stdoutText).not.toContain("image_version");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describe("[compute.api] exclude", () => {
@@ -2229,7 +2229,7 @@ describe("compute push", () => {
           expect(out.stderrText).toContain("excluded 2 paths");
           expect(out.stdoutText).toContain("Deployed Compute api");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("says nothing about exclusions when the compute configures none", () =>
@@ -2243,7 +2243,7 @@ describe("compute push", () => {
           expect(out.stderrText).toContain("Packaged");
           expect(out.stderrText).not.toContain("excluded");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // Refused where the refusal is still free: a pattern the CLI cannot read is knowable from
@@ -2260,7 +2260,7 @@ describe("compute push", () => {
           expect(http.requests).toHaveLength(0);
           expect(out.stderrText).not.toContain("Packaged");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // An over-broad pattern leaves the same empty archive an empty directory would, and the
@@ -2281,7 +2281,7 @@ describe("compute push", () => {
           // Nothing was uploaded, so the failure costs no remote state.
           expect(http.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // Configured patterns that matched nothing must not be blamed for an empty archive: the
@@ -2311,7 +2311,7 @@ describe("compute push", () => {
           });
           expect(http.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     // A pattern the config schema accepts but no reader can act on: the loader lets it
@@ -2327,7 +2327,7 @@ describe("compute push", () => {
           expect(error).toBeInstanceOf(InvalidComputeExcludeError);
           expect(http.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -2343,7 +2343,7 @@ describe("compute push", () => {
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

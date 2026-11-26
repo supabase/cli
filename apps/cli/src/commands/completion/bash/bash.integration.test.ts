@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -48,8 +48,8 @@ describe("completion bash", () => {
       const layer = Layer.mergeAll(
         out.layer,
         mockAnalytics().layer,
-        BunServices.layer,
-        BunCrypto.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
         processControlLayer,
       );
       return Effect.gen(function* () {
@@ -68,8 +68,8 @@ describe("completion bash", () => {
     const layer = Layer.mergeAll(
       out.layer,
       analytics.layer,
-      BunServices.layer,
-      BunCrypto.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
       processControlLayer,
     );
     return Effect.gen(function* () {

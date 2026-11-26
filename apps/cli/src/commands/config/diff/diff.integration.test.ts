@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
@@ -136,7 +136,7 @@ function setup(opts: SetupOpts = {}) {
       opts.toml === undefined ? Effect.void : writeProjectFile("config.toml", opts.toml),
       opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
     ]),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi({
     handler: (request) => {
@@ -751,7 +751,7 @@ describe("config diff integration", () => {
         }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -786,7 +786,7 @@ describe("config diff integration", () => {
           expect(causeText).toContain("failed to change workdir: chdir");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -806,7 +806,7 @@ describe("config diff integration", () => {
         yield* configDiff(noFlags).pipe(Effect.provide(layer));
         expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(true);
         expect(api.requests).not.toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a malformed config aborts before any network call, even with a branch target", () => {
@@ -1201,7 +1201,7 @@ describe("config diff integration", () => {
       });
       yield* configDiff(noFlags).pipe(Effect.provide(layer));
       expect(out.stdoutText).toContain("api.max_rows [update]");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("hostile names cannot inject ANSI or forge output lines in text mode", () => {
@@ -1438,7 +1438,7 @@ describe("config diff -o/--output wrapper wiring", () => {
         Layer.mergeAll(
           layer,
           commandRuntimeLayer(["config", "diff"]).pipe(
-            Layer.provide([BunServices.layer, BunCrypto.layer]),
+            Layer.provide([NodeServices.layer, NodeCrypto.layer]),
           ),
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "-o", "table"]) }),
         ),

@@ -1,11 +1,11 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 const LEGACY_STATE_SEGMENT = Effect.runSync(
   Effect.gen(function* () {
     const path = yield* Path.Path;
     return path.join("supabase", ".temp");
-  }).pipe(Effect.provide(BunPath.layer)),
+  }).pipe(Effect.provide(NodePath.layer)),
 );
 
 /** Wrong-on-purpose values for every `supabase/.temp` file a stack-mode command might still read. */
@@ -41,7 +41,7 @@ export const seedLegacyStateDecoys = (root: string) =>
   }).pipe(
     /* A host failure surfaces as the raw host error. */
     Effect.catchTag("PlatformError", (error) => Effect.die(error.cause ?? error)),
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
   );
 
 /** The recorded paths that fall under a `supabase/.temp` directory. */
@@ -82,6 +82,6 @@ export function recordingFileSystem(): {
           },
         }),
     ),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   return { layer, accessed };
 }

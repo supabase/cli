@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
@@ -128,7 +128,7 @@ const runWith = <A, E, R>(
           api.layer,
           mockCommandSettings({ workdir: dir, projectId: Option.none() }),
           commandRuntimeLayer(["functions", "deploy"]).pipe(
-            Layer.provide([BunServices.layer, BunCrypto.layer]),
+            Layer.provide([NodeServices.layer, NodeCrypto.layer]),
           ),
           options.args === undefined
             ? Layer.empty
@@ -152,7 +152,7 @@ const runWith = <A, E, R>(
       branchRequests: api.requests.length,
       requestedUrls: api.requests.map((request) => request.url),
     };
-  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const run = (input: RunInput, options: RunOptions = {}) =>
   runWith(input, options, (flags) => resolveProjectTarget(flags));

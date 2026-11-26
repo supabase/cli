@@ -1,4 +1,4 @@
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { CurrentAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
@@ -39,7 +39,7 @@ function makeCaptureTelemetry(
 ): CompleteDeps["captureTelemetry"] {
   return (exitCode, durationMs) =>
     captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-      Effect.provide([analyticsLayer, BunCrypto.layer]),
+      Effect.provide([analyticsLayer, NodeCrypto.layer]),
       Effect.orDie,
     );
 }

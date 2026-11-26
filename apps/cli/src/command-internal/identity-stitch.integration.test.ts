@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";
@@ -37,7 +37,7 @@ function makeStitchLayer(opts: {
   return identityStitchLayer.pipe(
     Layer.provideMerge(runtime),
     Layer.provide(opts.analytics.layer),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
 }
 

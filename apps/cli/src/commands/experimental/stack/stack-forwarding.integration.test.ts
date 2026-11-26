@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
@@ -15,8 +15,8 @@ import { createStackConfigProject } from "../../../../tests/helpers/stack-config
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const layer = Layer.mergeAll(
-  BunServices.layer,
-  BunCrypto.layer,
+  NodeServices.layer,
+  NodeCrypto.layer,
   runtimeInfoLayer,
   mockCommandSettings({ workdir: "/unused-stack-forwarding-workdir" }),
   cliConfigValuesTestLayer,

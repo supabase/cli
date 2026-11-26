@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -382,7 +382,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
                 ? undefined
                 : { ...opts.removals, extensions: remainingExtensions },
           };
-        }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+        }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     }),
   );
   const recorder = recordingFileSystem();
@@ -425,10 +425,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     recorder.layer,
-    // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
+    // `child.layer` must be listed after `NodeServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
     // real `ChildProcessSpawner` instead of the reverse.
     child.layer,
@@ -1681,7 +1681,7 @@ describe("db schema declarative sync permissions through the real resolver", () 
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });

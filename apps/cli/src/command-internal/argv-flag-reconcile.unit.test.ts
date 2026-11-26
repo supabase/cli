@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Result } from "effect";
 
@@ -381,7 +381,7 @@ describe("resolveArgvProfile", () => {
           expect(resolved.value.name).toBe("harness");
           expect(resolved.value.apiUrl).toBe("http://127.0.0.1:45555");
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns none when the scan and the layer agree on an explicit supabase", () =>
@@ -396,7 +396,7 @@ describe("resolveArgvProfile", () => {
         Effect.provide(services(["sso", "add", "--profile", "supabase"], dir, "rogue-profile")),
       );
       expect(Option.isNone(resolved)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails to load an untrimmed token persisted in the Supabase home", () =>
@@ -416,7 +416,7 @@ describe("resolveArgvProfile", () => {
         Effect.flip,
       );
       expect(error.message).toBe(`failed to read profile: unsupported config file type ""`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -441,7 +441,7 @@ describe("validateArgvWorkdir", () => {
       expect(error.message).toBe(
         `failed to change workdir: chdir ${missing}: no such file or directory`,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats an empty SUPABASE_WORKDIR as unset", () =>
@@ -451,6 +451,6 @@ describe("validateArgvWorkdir", () => {
       yield* validateArgvWorkdir(scan).pipe(
         Effect.provide(mockCommandSettings({ workdir: dir, workdirEnvValue: "" })),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -85,7 +85,7 @@ function tempDirLayer<S>(
   prefix: string,
   make: (dir: string) => Layer.Layer<S>,
 ): Layer.Layer<S, PlatformError.PlatformError> {
-  return Layer.unwrap(Effect.map(tempDir(prefix), make)).pipe(Layer.provide(BunServices.layer));
+  return Layer.unwrap(Effect.map(tempDir(prefix), make)).pipe(Layer.provide(NodeServices.layer));
 }
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
@@ -420,7 +420,7 @@ describe("inspect report", () => {
         expect(out.stderrText).not.toContain("Loading default rules...");
         expect(out.stdoutText).toContain("Custom rule");
         expect(out.stdoutText).toContain("bad");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -459,7 +459,7 @@ describe("inspect report", () => {
         expect(out.stdoutText).toContain("Env rule");
         expect(out.stdoutText).toContain("env(REPORT_INTEG_X)");
         expect(out.stdoutText).not.toContain("fromfile");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces a malformed rule query as the STATUS cell without failing", () =>
@@ -487,7 +487,7 @@ describe("inspect report", () => {
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toContain("Broken rule");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("aborts on a malformed config.toml before connecting or writing any CSV", () =>
@@ -521,7 +521,7 @@ describe("inspect report", () => {
       // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);
       expect((yield* fs.readDirectory(base)).length).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits a structured result and writes CSVs but no table in json mode", () => {
@@ -640,7 +640,7 @@ describe("inspect report", () => {
       yield* inspectReport(flags({ outputDir: "reports" })).pipe(Effect.provide(layer));
       const { files } = yield* dateFolderContents(path.join(cwd, "reports"));
       expect(files.length).toBe(16);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses an absolute --output-dir as-is", () =>
@@ -652,7 +652,7 @@ describe("inspect report", () => {
       yield* inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer));
       expect((yield* dateFolderContents(base)).files.length).toBe(16);
       expect((yield* fs.readDirectory(cwd)).length).toBe(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("renders the path in bold when stdout is a TTY", () => {

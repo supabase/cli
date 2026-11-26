@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
@@ -32,8 +32,8 @@ const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
-        BunCrypto.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
         runtimeInfoLayer,
         mockCommandSettings({ workdir: projectRoot }),
         cliConfigValuesTestLayer,
@@ -45,8 +45,8 @@ const project = (contents: string, options: Parameters<typeof createStackConfigP
   createStackConfigProject(contents, options).pipe(
     Effect.provide(
       Layer.mergeAll(
-        BunServices.layer,
-        BunCrypto.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
         runtimeInfoLayer,
         cliConfigValuesTestLayer,
       ),
@@ -133,7 +133,7 @@ enabled = true
       const storage = recipes.get("storage");
       expect(storage?.service === "storage" && storage.config.fileSizeLimit).toBe("52428800");
       expect(recipes.has("functions")).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves explicit listener ports while translating every enabled service", () =>
@@ -177,7 +177,7 @@ enabled = true
       });
       expect(recipes.has("pgmeta")).toBe(true);
       expect(recipes.has("imgproxy")).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("hands Studio the API settings it mirrors and its snippets folder", () =>
@@ -197,7 +197,7 @@ max_rows = 250
         apiMaxRows: 250,
         cliVersion: CLI_VERSION,
       });
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("hands REST [api] db_pool only when set", () =>
@@ -215,7 +215,7 @@ max_rows = 250
       const unset = yield* restConfig("stack-config-no-pool", "");
       expect(unset).toMatchObject({ maxRows: 1000 });
       expect(unset).not.toHaveProperty("dbPool");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () =>
@@ -228,7 +228,7 @@ max_rows = 250
       expect(services.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
       expect(services.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
       expect(services.get("pooler")).toBeUndefined();
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("keeps the shared API port when REST is disabled", () =>
@@ -243,7 +243,7 @@ port = 55431
       expect(recipes.has("rest")).toBe(false);
       expect(recipes.get("auth")?.endpoints).toEqual({ http: { port: 55431 } });
       expect(recipes.get("storage")?.endpoints).toEqual({ http: { port: 55431 } });
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("resolves Auth template and enabled notification files for the stack", () =>
@@ -281,7 +281,7 @@ content_path = "./supabase/templates/disabled.html"
       ]);
       expect(auth.config.settings?.email?.template.invite?.subject).toBe("Join us");
       expect(auth.config.settings?.email?.notification.password_changed?.subject).toBe("Changed");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(
@@ -330,7 +330,7 @@ content_path = "./supabase/link.html"
         const config = yield* load(escaping);
         const failure = yield* Effect.flip(config.creations("stack-auth-template-escape"));
         expect(failure.message).toContain("resolves outside the project root");
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("ignores Auth template files while Auth is disabled", () =>
@@ -343,7 +343,7 @@ content_path = "./supabase/templates/missing.html"
 `);
       const config = yield* load(root);
       expect(byService(yield* config.creations("stack-auth-disabled")).has("auth")).toBe(false);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("serves api.tls with legacy's embedded pair or the configured one, like legacy", () =>
@@ -455,7 +455,7 @@ key_path = "certs/missing.key"
       expect((yield* Effect.flip(missingFiles.apiTls)).message).toContain(
         "failed to read TLS cert",
       );
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("validates enabled Auth third-party providers", () =>
@@ -468,7 +468,7 @@ project_id = ""
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.third_party");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("loads an empty signing-key file and skips it when Auth is disabled", () =>
@@ -520,7 +520,7 @@ signing_keys_path = "./missing-keys.json"
       expect(envKeys.publicSigningKeys).toBe(disabledKeys.publicSigningKeys);
       expect(envKeys.anonKey).toBeDefined();
       expect(envKeys.serviceRoleKey).toBeDefined();
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("fetches third-party JWKS while Auth is disabled", () =>
@@ -568,7 +568,7 @@ issuer_url = ""
       const emptyIssuerKeys = yield* (yield* load(emptyIssuer)).keys;
       expect(emptyIssuerKeys.remoteJwks).toBeUndefined();
       expect(paths).toEqual(["/.well-known/openid-configuration", "/jwks"]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("rejects an analytics backend the stack cannot represent", () =>
@@ -582,7 +582,7 @@ backend = "bigquery"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("analytics.backend must be postgres");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("accepts storage analytics and declared vector buckets", () =>
@@ -596,7 +596,7 @@ enabled = true
       const services = yield* (yield* load(root)).creations("stack-storage-buckets");
       const storage = byService(services).get("storage");
       expect(storage?.service === "storage" && storage.config.vectorEnabled).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("rejects unsupported database versions before creating recipes", () =>
@@ -609,7 +609,7 @@ major_version = 14
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("ignores unresolved experimental S3 env placeholders", () => {
@@ -626,7 +626,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       const config = yield* load(root);
       const services = yield* config.creations("stack-s3-placeholder");
       expect(services.some((service) => service.service === "database")).toBe(true);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
   });
 
   it.effect(
@@ -664,7 +664,7 @@ s3_host = "s3.example.test"
           expect(String(orioledbS3Exit.cause)).toContain(
             "experimental.s3_host is unsupported by the experimental stack",
           );
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("rejects the removed experimental.orioledb_version key and its env var", () =>
@@ -691,7 +691,7 @@ orioledb_version = "17.0.0.000"
         expect(String(envExit.cause)).toContain(
           "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in the shell environment) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.",
         );
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("records OrioleDB selection on the command event before rejecting it", () =>
@@ -720,6 +720,6 @@ orioledb_version = "15.1.1.14"
       const accepted = yield* loadRecordingOrioleDb(standard);
       expect(Exit.isSuccess(accepted.exit)).toBe(true);
       expect(accepted.orioledb).toBe(false);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

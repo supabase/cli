@@ -1,5 +1,5 @@
 import { unusedStackServices } from "../../tests/helpers/unused-stack.ts";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { stringify as stringifyToml } from "smol-toml";
@@ -37,7 +37,7 @@ const withConfig = (content: string) =>
     yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
     yield* fs.writeFileString(path.join(dir, "supabase", "config.toml"), content);
     return dir;
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
@@ -45,7 +45,7 @@ const readD = (workdir: string) =>
     const path = yield* Path.Path;
     return yield* readDbConfig(fs, path, workdir);
   }).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, cliConfigValuesTestLayer)),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, cliConfigValuesTestLayer)),
   );
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
@@ -79,7 +79,7 @@ function failsWithL(
       resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document),
     );
     expect(error.message).toContain(message);
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 }
 
 interface ParityScenario {
@@ -338,7 +338,7 @@ describe("config check units cross-caller parity (D vs L)", () => {
         storage: { buckets: { avatars: { file_size_limit: "nonsense" } } },
       });
       yield* resolveLocalConfigValues(config, "127.0.0.1", WORKDIR).pipe(
-        Effect.provide([BunServices.layer, BunCrypto.layer]),
+        Effect.provide([NodeServices.layer, NodeCrypto.layer]),
       );
     }),
   );
@@ -545,10 +545,10 @@ const firstErrors = (scenario: GoldenScenario) =>
             Effect.flip,
             Effect.map((error) => error.message.replaceAll(dir, "<workdir>")),
             Effect.orElseSucceed(() => undefined),
-            Effect.provide([BunServices.layer, BunCrypto.layer]),
+            Effect.provide([NodeServices.layer, NodeCrypto.layer]),
           );
     return { d, l };
-  }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("config check units first-error text, pinned per pipeline", () => {
   for (const scenario of golden) {
@@ -624,8 +624,8 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
           Layer.mergeAll(
             unusedStackServices,
             cliConfigValuesTestLayer,
-            BunServices.layer,
-            BunCrypto.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the

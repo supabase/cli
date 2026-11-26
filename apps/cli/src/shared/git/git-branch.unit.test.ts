@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -7,7 +7,7 @@ import { detectGitBranch } from "./git-branch.ts";
 
 function withCwd(cwd: string, env: Record<string, string> = {}) {
   return Layer.mergeAll(
-    BunServices.layer,
+    NodeServices.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
     Layer.succeed(RuntimeInfo, {
       cwd,
@@ -38,7 +38,7 @@ describe("detectGitBranch", () => {
         Effect.provide(withCwd(root, { GITHUB_HEAD_REF: "ci-branch" })),
       );
       expect(got).toEqual(Option.some("ci-branch"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores an empty $GITHUB_HEAD_REF and falls back to .git/HEAD", () =>
@@ -49,7 +49,7 @@ describe("detectGitBranch", () => {
         Effect.provide(withCwd(root, { GITHUB_HEAD_REF: "" })),
       );
       expect(got).toEqual(Option.some("feature-x"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("parses ref: refs/heads/<name> from .git/HEAD in CWD", () =>
@@ -58,7 +58,7 @@ describe("detectGitBranch", () => {
       yield* writeHead(root, "ref: refs/heads/feature-x\n");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
       expect(got).toEqual(Option.some("feature-x"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("walks up parent directories until .git/HEAD is found", () =>
@@ -71,7 +71,7 @@ describe("detectGitBranch", () => {
       yield* writeHead(root, "ref: refs/heads/main\n");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(nested)));
       expect(got).toEqual(Option.some("main"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns none when no .git/HEAD is ever found", () =>
@@ -79,7 +79,7 @@ describe("detectGitBranch", () => {
       const root = yield* makeTempDir("git-branch-none-");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
       expect(Option.isNone(got)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns none when .git/HEAD points at a detached commit (no ref: line)", () =>
@@ -88,7 +88,7 @@ describe("detectGitBranch", () => {
       yield* writeHead(root, "deadbeef\n");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
       expect(Option.isNone(got)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("walks from an explicit startDir instead of the runtime CWD", () =>
@@ -101,7 +101,7 @@ describe("detectGitBranch", () => {
       const elsewhere = yield* makeTempDir("git-branch-cwd-");
       const got = yield* detectGitBranch(project).pipe(Effect.provide(withCwd(elsewhere)));
       expect(got).toEqual(Option.some("project-branch"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves a worktree's `.git` gitlink file to its own HEAD", () =>
@@ -119,7 +119,7 @@ describe("detectGitBranch", () => {
       yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(worktree)));
       expect(got).toEqual(Option.some("feature-x"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves a relative gitdir in a `.git` gitlink against its directory", () =>
@@ -133,7 +133,7 @@ describe("detectGitBranch", () => {
       yield* fs.writeFileString(path.join(root, ".git"), "gitdir: ./actual-gitdir\n");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
       expect(got).toEqual(Option.some("relative-branch"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops at the nearest .git instead of a detached HEAD's parent checkout", () =>
@@ -147,6 +147,6 @@ describe("detectGitBranch", () => {
       yield* writeHead(nested, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(nested)));
       expect(Option.isNone(got)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

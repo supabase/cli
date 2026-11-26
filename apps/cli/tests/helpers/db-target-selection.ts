@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Predicate, type Scope } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -125,7 +125,7 @@ interface DbTargetSelectionScenario<R> {
     readonly workdir: string;
     readonly args: ReadonlyArray<string>;
     readonly target: TargetFlagValuesWithDbUrl;
-  }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, Error, BunServices.BunServices>;
+  }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, Error, NodeServices.NodeServices>;
   /** Wraps each row, for a leaf whose tests pin ambient environment variables around their body. */
   readonly around?: <E>(row: Effect.Effect<void, E>) => Effect.Effect<void, E>;
   /** The flags besides `--remote` that the run sets and the leaf's permission map branches on. */
@@ -141,7 +141,7 @@ const linkCheckout = (workdir: string) =>
     const temp = path.join(workdir, "supabase", ".temp");
     yield* fs.makeDirectory(temp, { recursive: true });
     yield* fs.writeFileString(path.join(temp, "project-ref"), VALID_REF);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const expectCachedRef = <R>(ctx: DbTargetAttempt<R>, ref: string | undefined) => {
   if (ctx.cachedRef !== undefined) expect(ctx.cachedRef()).toBe(ref);
@@ -185,7 +185,7 @@ export function describeDbTargetSelection<R>(
         });
         const row = Effect.flatMap(
           Effect.isEffect(attempted)
-            ? Effect.provide(attempted, BunServices.layer)
+            ? Effect.provide(attempted, NodeServices.layer)
             : Effect.succeed(attempted),
           (ctx) =>
             spec
@@ -338,9 +338,9 @@ export function describeDbTargetSelection<R>(
           }).pipe(
             Effect.provide(
               Layer.mergeAll(
-                BunServices.layer,
-                BunCrypto.layer,
-                legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+                NodeServices.layer,
+                NodeCrypto.layer,
+                legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
                 CliOutput.layer(textCliOutputFormatter()),
                 Layer.succeed(CliArgs, { args }),
                 mockOutput({ format: "text" }).layer,

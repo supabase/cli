@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -74,7 +74,7 @@ const spansOf = (
 
 const traceFilePath = Effect.map(Path.Path, (path) => path.join(tempRoot.current, "trace.jsonl"));
 
-const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer, BunCrypto.layer);
+const runtime = Layer.mergeAll(mockRuntimeInfo(), NodeServices.layer, NodeCrypto.layer);
 
 describe("withTraceExport with a trace file", () => {
   it.live("creates the file with owner-only permissions and writes one line per batch", () =>

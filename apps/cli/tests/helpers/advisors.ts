@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { cliConfigValuesTestLayer } from "./config-values-layer.ts";
@@ -306,7 +306,7 @@ export function setupAdvisors(workdir: string, opts: AdvisorTestOptions = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return {
     layer,

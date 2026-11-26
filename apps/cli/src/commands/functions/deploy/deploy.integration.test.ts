@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -128,7 +128,7 @@ const deployedFunction = (slug: string) => ({
 const removeTempRoot = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* fs.remove(tempRoot.current, { recursive: true, force: true });
-}).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
+}).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]), Effect.orDie);
 
 // Each sleep advances the test clock itself, so retry backoff costs no real time.
 const withAdvancingClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -191,7 +191,7 @@ function mockDockerBundleSpawner() {
       const outputPath = resolveDockerOutputPath(record.args);
       yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
       yield* fs.writeFileString(outputPath, "eszip-test-output");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]), Effect.orDie);
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]), Effect.orDie);
   return mockChildProcessSpawner(spawnerOpts);
 }
 
@@ -488,7 +488,7 @@ describe("functions deploy", () => {
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         commandRuntimeLayer(["functions", "deploy"]).pipe(
-          Layer.provide([BunServices.layer, BunCrypto.layer]),
+          Layer.provide([NodeServices.layer, NodeCrypto.layer]),
         ),
         approvedHostedMutation,
         cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), args)).pipe(
@@ -508,7 +508,7 @@ describe("functions deploy", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
     it.effect("fails with the branches that exist when no branch has that name", () => {
       const { layer, deployedTo } = selectionHarness([
@@ -3654,7 +3654,7 @@ describeHostedConsent("functions deploy", {
     Effect.gen(function* () {
       yield* writeCliConfig(workdir);
       yield* writeLocalFunction(workdir, "hello-world");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   invoke: () => ({
     run: functionsDeploy(baseFlags).pipe(
       Effect.provide(

@@ -1,11 +1,11 @@
 import { expect, layer } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Path } from "effect";
 
 import { withConfigEnv } from "../../../tests/helpers/command-mocks.ts";
 import { readSupabaseHome } from "./supabase-home.ts";
 
-layer(BunServices.layer)("readSupabaseHome", (it) => {
+layer(NodeServices.layer)("readSupabaseHome", (it) => {
   const resolve = (env: Record<string, string>) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
@@ -97,7 +97,7 @@ const harness = (scenario: Scenario) => {
       : Layer.succeed(AiTool, { name: Option.some(scenario.aiTool) }),
     scenario.withoutFilesystem === true
       ? Layer.empty
-      : Layer.merge(BunServices.layer, mockRuntimeInfo({ cwd: scenario.cwd ?? "/test/project" })),
+      : Layer.merge(NodeServices.layer, mockRuntimeInfo({ cwd: scenario.cwd ?? "/test/project" })),
     scenario.workdir === undefined
       ? Layer.empty
       : mockCommandSettings({ workdir: scenario.workdir }),
@@ -232,7 +232,7 @@ describe("requireHostedMutationConsent", () => {
           yield* fs.writeFileString(path.join(dir, name), contents);
         }
         return yield* body(dir);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
     it.effect(
       "grants when set in the shell environment and echoes SUPABASE_YES as the source",
@@ -434,7 +434,7 @@ describe("requireHostedMutationConsent", () => {
           suggestion:
             "Re-run with --yes to confirm. SUPABASE_YES in supabase/.env does not confirm hosted changes; pass --yes.",
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("says a working-directory .env SUPABASE_YES does not confirm hosted changes", () =>
@@ -448,7 +448,7 @@ describe("requireHostedMutationConsent", () => {
           suggestion:
             "Re-run with --yes to confirm. SUPABASE_YES in .env does not confirm hosted changes; pass --yes.",
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -605,7 +605,7 @@ describe("hostedMutationPreapproval", () => {
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-consent-" });
       yield* fs.writeFileString(path.join(cwd, ".env.local"), "SUPABASE_YES=1\n");
       expect(Option.isNone(yield* preapproval({ shellYes: "1", cwd }))).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

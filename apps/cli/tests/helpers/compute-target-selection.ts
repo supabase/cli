@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
@@ -35,7 +35,7 @@ const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
       yield* fs.makeDirectory(path.dirname(absolutePath), { recursive: true });
       yield* fs.writeFileString(absolutePath, contents);
     }
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 /** `describeTargetSelectionMatrix` for a `compute` leaf, run through `setupCompute`. */
 export function describeComputeTargetSelection(
@@ -68,7 +68,7 @@ export function describeComputeTargetSelection(
         layer: Layer.mergeAll(
           layer,
           commandRuntimeLayer(path.split(" ")).pipe(
-            Layer.provide([BunServices.layer, BunCrypto.layer]),
+            Layer.provide([NodeServices.layer, NodeCrypto.layer]),
           ),
         ),
         requests: () => http.driftRequests,

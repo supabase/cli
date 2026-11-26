@@ -1,10 +1,10 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Clock, Context, Effect, Exit, Option, Schema, Tracer } from "effect";
 import { makeTraceSanitizer } from "../trace-sanitize.ts";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
 
-const sanitizer = makeTraceSanitizer.pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+const sanitizer = makeTraceSanitizer.pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const makeEndedSpan = (name: string, attrs: Record<string, unknown> = {}) =>
   Effect.map(Clock.currentTimeMillis, (now): Tracer.Span => {

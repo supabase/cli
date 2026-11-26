@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type * as PlatformError from "effect/PlatformError";
 import { createServer } from "node:net";
@@ -130,7 +130,7 @@ class TempStackCleanupError extends Data.TaggedError("TempStackCleanupError")<{
   readonly message: string;
 }> {}
 
-const helperServices = BunServices.layer;
+const helperServices = NodeServices.layer;
 
 /* UTF-8 decoding that keeps a leading byte order mark, like Node's `Buffer#toString`. */
 const chunkDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -169,7 +169,7 @@ export function helperRejection(error: Error): Error {
 
 /** Promise edge for the helpers non-Effect tests `await`. */
 const runHelper = <A, E extends Error>(
-  effect: Effect.Effect<A, E, BunServices.BunServices>,
+  effect: Effect.Effect<A, E, NodeServices.NodeServices>,
 ): Promise<A> =>
   Effect.runPromise(effect.pipe(Effect.mapError(helperRejection), Effect.provide(helperServices)));
 

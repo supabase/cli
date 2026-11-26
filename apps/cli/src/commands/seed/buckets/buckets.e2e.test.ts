@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -30,7 +30,7 @@ describe("supabase seed buckets", () => {
         });
         expect(exitCode).toBe(0);
         expect(stdout.trim()).toBe("");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -47,7 +47,7 @@ describe("supabase seed buckets", () => {
         expect(`${stdout}${stderr}`).toContain(
           "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -65,7 +65,7 @@ describe("supabase seed buckets", () => {
         expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
         expect(`${stdout}${stderr}`).toContain("--local isn't needed");
         expect(exitCode).toBe(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
@@ -82,7 +82,7 @@ describe("supabase seed buckets", () => {
         expect(`${stdout}${stderr}`).toContain(
           "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

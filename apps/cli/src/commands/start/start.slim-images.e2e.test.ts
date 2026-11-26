@@ -1,5 +1,5 @@
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
@@ -314,7 +314,7 @@ describe("supabase start slim images (e2e)", () => {
           }
         }
       }).pipe(
-        Effect.provide(Layer.mergeAll(BunServices.layer, BunCrypto.layer, FetchHttpClient.layer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
       ),
     WGET_PROBE_TEST_TIMEOUT_MS,
   );
@@ -418,7 +418,7 @@ describe("supabase start slim images (e2e)", () => {
         expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).toEqual({
           message: "Hello Functions!",
         });
-      }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer))),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
 });

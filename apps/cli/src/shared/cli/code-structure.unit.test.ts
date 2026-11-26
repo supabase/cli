@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { Effect, FileSystem, Path, PlatformError } from "effect";
 import { fileURLToPath } from "node:url";
@@ -288,7 +288,7 @@ const scanSource = (
     return violations;
   });
 
-layer(BunServices.layer)("code structure", (it) => {
+layer(NodeServices.layer)("code structure", (it) => {
   it.effect("does not keep barrel index.ts files under src", () =>
     Effect.gen(function* () {
       const { path } = yield* layout;

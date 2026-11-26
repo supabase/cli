@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -34,7 +34,7 @@ const plan = (
       Layer.mergeAll(
         configValuesLayer({ env: options.env }),
         mockCommandSettings({ workdir: "/unused" }),
-        BunServices.layer,
+        NodeServices.layer,
       ),
     ),
   );

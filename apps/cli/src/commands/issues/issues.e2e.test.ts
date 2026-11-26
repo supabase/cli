@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Schema } from "effect";
 import { gunzipSync } from "node:zlib";
@@ -161,6 +161,6 @@ describe("issues telemetry from the compiled CLI", () => {
       const encodedEvent = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(event);
       expect(encodedEvent).not.toContain("private_fixture");
       expect(encodedEvent).not.toContain("private upstream response");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

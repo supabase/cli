@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { parseJsonc } from "@supabase/config/internal";
 import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
@@ -70,7 +70,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CommandTelemetryAttributes, {
       record: (values) => Effect.sync(() => void recorded.push(values)),
     }),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, telemetry, recorded };
 }
@@ -105,7 +105,7 @@ const materializedConfig = Effect.fnUntraced(
     const resolved = yield* values.load({ workdir: tempRoot.current, projectRef: Option.none() });
     return resolved.materialized.config;
   },
-  Effect.provide(Layer.mergeAll(configValuesLayer(), BunServices.layer)),
+  Effect.provide(Layer.mergeAll(configValuesLayer(), NodeServices.layer)),
 );
 
 const run = (dryRun = false) => configConvert({ dryRun, to: "json", reason: Option.none() });
@@ -234,7 +234,7 @@ describe("config convert integration", () => {
         expect(out.stderrText).toBe("");
         expect(recorded).toContainEqual({ config_format: "toml" });
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -253,7 +253,7 @@ describe("config convert integration", () => {
       });
       expect(jsonc).toContain("// project name");
       expect(jsonc).toContain('"port": 54321 // default');
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("gives config.jsonc the permissions of the config.toml it replaces", () => {
@@ -267,7 +267,7 @@ describe("config convert integration", () => {
 
       const info = yield* fs.stat(yield* projectPath("supabase", "config.jsonc"));
       expect(info.mode & 0o777).toBe(0o600);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("keeps a comment inside a multi-line array in place without a warning", () => {
@@ -282,7 +282,7 @@ describe("config convert integration", () => {
 
       expect(yield* readFile("supabase", "config.jsonc")).toContain('"public", // keep');
       expect(out.stdoutText).not.toContain("relocated");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("reports comments moved out of values it cannot place", () => {
@@ -299,7 +299,7 @@ describe("config convert integration", () => {
         "  ℹ 1 comment relocated\n    Comments inside nested arrays or inline tables move to the line above their key.\n    line 3 → api.schemas  # keep\n",
       );
       expect(yield* readFile("supabase", "config.jsonc")).toContain("// keep");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("fails with the init hint when no config exists", () => {
@@ -310,7 +310,7 @@ describe("config convert integration", () => {
       expect(error.message).toBe(
         "failed to read supabase/config.toml, config.json or config.jsonc: file not found. Run `supabase init` to create one.",
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("names the workdir when an explicit --workdir has no project", () => {
@@ -320,7 +320,7 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertLoadConfigError");
       expect(error.message).toContain(tempRoot.current);
       expect(error.message).toContain("--workdir/SUPABASE_WORKDIR is used exactly as given");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("reports a TOML parse failure against config.toml and still records the target", () => {
@@ -332,7 +332,7 @@ describe("config convert integration", () => {
       expect(error.message).toContain("failed to parse supabase/config.toml");
       expect(recorded).toContainEqual({ convert_target: "jsonc" });
       expect(recorded).toContainEqual({ config_format: "toml" });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect.each(["config.jsonc", "config.json"] as const)(
@@ -351,7 +351,7 @@ describe("config convert integration", () => {
         );
         expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
         expect(yield* readFile("supabase", existing)).toBe("{}\n");
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -370,7 +370,7 @@ describe("config convert integration", () => {
         expect(out.stderrText).toBe("");
         expect(yield* readFile("supabase", existing)).toBe("{}\n");
         expect(yield* exists("supabase", "config.toml")).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     },
   );
 
@@ -388,7 +388,7 @@ describe("config convert integration", () => {
           data: { converted: false, path: "supabase/config.jsonc" },
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses a config.toml that is not valid UTF-8, leaving it byte-identical", () => {
@@ -410,7 +410,7 @@ describe("config convert integration", () => {
       expect(error.message).toBe(NOT_UTF8_MESSAGE);
       expect([...(yield* fs.readFile(tomlPath))]).toEqual([...bytes]);
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses a TOML date, leaving config.toml byte-identical and writing nothing", () => {
@@ -426,7 +426,7 @@ describe("config convert integration", () => {
       expect(error.message).toContain("Quote the value as a string, then rerun.");
       expect(yield* readFile("supabase", "config.toml")).toBe(toml);
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("adds the schema domain to an existing commented VS Code settings file", () => {
@@ -446,7 +446,7 @@ describe("config convert integration", () => {
       expect(out.stdoutText).toContain(
         "    ~ Updated  .vscode/settings.json (trusts https://supabase.com/schemas/)\n",
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("does not create .vscode when it does not exist", () => {
@@ -458,7 +458,7 @@ describe("config convert integration", () => {
 
       expect(yield* exists(".vscode")).toBe(false);
       expect(out.stdoutText).not.toContain(".vscode/settings.json");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("warns but still converts when settings.json is malformed", () => {
@@ -476,7 +476,7 @@ describe("config convert integration", () => {
       expect(out.stdoutText).toContain(
         'Add "https://supabase.com/schemas/": true under "json.schemaDownload.trustedDomains" to trust the config schema.',
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("--dry-run prints the JSONC and writes nothing", () => {
@@ -506,7 +506,7 @@ describe("config convert integration", () => {
         ].join("\n"),
       );
       expect(out.stderrText).toContain("  To undo after converting:\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("--dry-run lists no VS Code change when settings need none", () => {
@@ -520,7 +520,7 @@ describe("config convert integration", () => {
         "    > Move    supabase/config.toml to supabase/config.toml.bak\n\n",
       );
       expect(out.stderrText).not.toContain(".vscode/settings.json");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("emits a structured payload in json mode without stderr noise", () => {
@@ -548,7 +548,7 @@ describe("config convert integration", () => {
           }),
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("--dry-run in json mode carries the document and writes nothing", () => {
@@ -572,7 +572,7 @@ describe("config convert integration", () => {
       });
       expect(message?.data).not.toHaveProperty("backup");
       expect(yield* exists("supabase", "config.toml.bak")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("--dry-run in json mode reports a pending VS Code update without writing it", () => {
@@ -587,7 +587,7 @@ describe("config convert integration", () => {
         data: { would_update_vscode_settings: true },
       });
       expect(yield* readFile(".vscode", "settings.json")).toBe("{}\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("keeps an explicit trusted-domain choice in VS Code settings", () => {
@@ -602,7 +602,7 @@ describe("config convert integration", () => {
 
       expect(yield* readFile(".vscode", "settings.json")).toBe(settings);
       expect(out.stdoutText).not.toContain(".vscode/settings.json");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("removes config.jsonc and keeps config.toml when config.toml cannot be moved", () => {
@@ -623,7 +623,7 @@ describe("config convert integration", () => {
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
       expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("says config.jsonc remains when the rollback cannot remove it", () => {
@@ -643,7 +643,7 @@ describe("config convert integration", () => {
       expect(error.message).not.toContain(JSONC_REMOVED_NOTE);
       expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("leaves a config.jsonc that appears mid-run in place and keeps config.toml", () => {
@@ -660,7 +660,7 @@ describe("config convert integration", () => {
       expect(error.message).toBe(JSONC_APPEARED_MESSAGE);
       expect(yield* readFile("supabase", "config.jsonc")).toBe("{}\n");
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("keeps a config.toml edited mid-run in the backup and says how to restore it", () => {
@@ -678,7 +678,7 @@ describe("config convert integration", () => {
       expect(yield* readFile("supabase", "config.toml.bak")).toBe(EDITED_TOML);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("fails before writing when it cannot check for an existing backup", () => {
@@ -697,7 +697,7 @@ describe("config convert integration", () => {
       );
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("says the conversion finished but is unverified when the backup cannot be read", () => {
@@ -716,7 +716,7 @@ describe("config convert integration", () => {
       expect(yield* exists("supabase", "config.jsonc")).toBe(true);
       expect(yield* exists("supabase", "config.toml")).toBe(false);
       expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("backs up to the next free name when a backup already exists", () => {
@@ -729,7 +729,7 @@ describe("config convert integration", () => {
 
       expect(yield* readFile("supabase", "config.toml.bak")).toBe("old backup\n");
       expect(yield* readFile("supabase", "config.toml.2.bak")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("prints the undo command relative to the directory the command ran from", () => {
@@ -744,7 +744,7 @@ describe("config convert integration", () => {
       expect(out.stdoutText).toContain(
         `    mv -- ${root}/${BACKUP} ${root}/supabase/config.toml && rm -- ${root}/supabase/config.jsonc\n`,
       );
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses a symlinked config.toml and leaves the link in place", () => {
@@ -761,7 +761,7 @@ describe("config convert integration", () => {
       expect(error.message).toBe(TOML_SYMLINK_MESSAGE);
       expect(yield* fs.readLink(yield* configTomlPath)).toBe("../shared/real.toml");
       expect(yield* exists("supabase", "config.jsonc")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("refuses when config.jsonc is a dangling symlink", () => {
@@ -776,7 +776,7 @@ describe("config convert integration", () => {
       expect(error._tag).toBe("ConfigConvertUnsupportedError");
       expect(error.message).toBe(JSONC_SYMLINK_MESSAGE);
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("rejects -o/--output in favour of --output-format", () => {
@@ -791,6 +791,6 @@ describe("config convert integration", () => {
         "the -o/--output flag is not supported by config convert; use --output-format json|stream-json instead.",
       );
       expect(yield* readFile("supabase", "config.toml")).toBe(SIMPLE_TOML);
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 });

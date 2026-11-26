@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { describe, expect, vi } from "vitest";
@@ -26,7 +26,7 @@ describe("packageComputeDirectory compression", () => {
         const error = yield* Effect.flip(packageComputeDirectory(source));
         expect(error).toBeInstanceOf(ComputeArchiveCompressionError);
         expect(error).toMatchObject({ cause: gzipFailure });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 });

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -312,7 +312,7 @@ function withConfirmSideEffect(
           ),
       };
     }),
-  ).pipe(Layer.provide(base), Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(base), Layer.provide(NodeServices.layer));
 }
 
 /**
@@ -399,7 +399,7 @@ function setup(opts: SetupOpts = {}) {
       opts.toml === undefined ? Effect.void : writeProjectFile("config.toml", opts.toml),
       opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
     ]),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
@@ -485,7 +485,7 @@ function setup(opts: SetupOpts = {}) {
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
     // Listed after `buildTestRuntime` so it overrides the real spawner
-    // BunServices.layer provides (last-wins).
+    // NodeServices.layer provides (last-wins).
     gitStatus.layer,
     projectFiles,
     configValuesLayer({ output: outputLayer }),
@@ -914,7 +914,7 @@ describe("config pull integration", () => {
         }
         expect((yield* fs.stat(configPath)).mtime).toEqual(beforeStat.mtime);
         expect(yield* readConfig).toBe(beforeStat.contents);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -934,7 +934,7 @@ describe("config pull integration", () => {
         }
         expect(api.requests).toHaveLength(0);
         expect(yield* fs.exists(missing)).toBe(false);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(

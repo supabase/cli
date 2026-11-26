@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -167,7 +167,7 @@ const fixture = (
             .makeTempDirectoryScoped({ prefix: "functions-serve-project-" })
             .pipe(Effect.flatMap((root) => fs.realPath(root))),
         ),
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
       ));
     let restartCount = 0;
     let destroyed = false;
@@ -391,8 +391,8 @@ const fixture = (
     const recorder = recordingFileSystem();
     const layer = Layer.mergeAll(
       cliConfigValuesTestLayer,
-      BunServices.layer,
-      BunCrypto.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
       recorder.layer,
       api,
       mockCommandSettings({
@@ -441,7 +441,7 @@ describe("experimental Stack Functions serve", () => {
       expect(error.message).toBe('The local stack "feature" does not exist for this project.');
       expect(error.suggestion).toBe("Run supabase start --stack feature.");
       expect(state.createdFunctions).toBeUndefined();
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -482,7 +482,7 @@ describe("experimental Stack Functions serve", () => {
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
         expect(state.destroyed).toBe(true);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("runs standalone Functions on the pin the project lock selects", () =>
@@ -517,7 +517,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live(
@@ -545,7 +545,7 @@ describe("experimental Stack Functions serve", () => {
 
         yield* Deferred.succeed(state.signal, undefined);
         yield* Fiber.join(run);
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("creates standalone Functions with secrets and each function's own .env", () =>
@@ -580,7 +580,7 @@ describe("experimental Stack Functions serve", () => {
       );
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("creates standalone Functions with the explicit env file in place of .env files", () =>
@@ -611,7 +611,7 @@ describe("experimental Stack Functions serve", () => {
       expect(state.createdFunctions?.config.functions?.echo?.env).toBeUndefined();
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("serves standalone Functions on the API port a running Realtime holds", () =>
@@ -634,7 +634,7 @@ describe("experimental Stack Functions serve", () => {
       expect(state.createdFunctions?.config.hostApiUrl).toBeUndefined();
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("gives standalone Functions the stack's HTTPS host API origin under api.tls", () =>
@@ -660,7 +660,7 @@ describe("experimental Stack Functions serve", () => {
       expect(state.createdFunctions?.config.hostApiUrl).toBe("https://127.0.0.1:23849");
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("gives standalone Functions the HTTPS host API origin without an API member", () =>
@@ -681,7 +681,7 @@ describe("experimental Stack Functions serve", () => {
       expect(state.createdFunctions?.config.hostApiUrl).toBe("https://127.0.0.1:23850");
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>
@@ -745,7 +745,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("keeps local signing keys and warns when remote JWKS refresh fails", () =>
@@ -804,7 +804,7 @@ describe("experimental Stack Functions serve", () => {
 
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("forwards Functions output written since serve started and reports lost output", () =>
@@ -900,7 +900,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions).toEqual({ ...functionsConfig(), ...saved });
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("serves composed Functions from the stack's real project root through a symlink", () =>
@@ -930,7 +930,7 @@ describe("experimental Stack Functions serve", () => {
       expect(state.currentFunctions.functions?.echo?.entrypoint).toBe(entrypoint);
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("keeps composed Functions running when the project env files are unchanged", () =>
@@ -960,7 +960,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("replaces stale per-function env a previous serve left on composed Functions", () =>
@@ -992,7 +992,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions).toEqual({ ...functionsConfig(), ...saved });
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("rejects serving composed Functions once edge_runtime is disabled", () =>
@@ -1019,7 +1019,7 @@ describe("experimental Stack Functions serve", () => {
           );
       }
       expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("replaces the project env files with an explicit env file and restores on SIGINT", () =>
@@ -1052,7 +1052,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions).toEqual({ ...functionsConfig(), functionsRoot });
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("runs composed Functions in debug mode for --debug and restores it on SIGINT", () =>
@@ -1159,7 +1159,7 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
       expect(state.currentFunctions).toEqual(functionsConfig());
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("rejects a malformed env file before restarting Functions", () =>
@@ -1179,7 +1179,7 @@ describe("experimental Stack Functions serve", () => {
       );
       expect(state.currentFunctions).toEqual(functionsConfig());
       expect(state.restartCount).toBe(0);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("restores config when SIGINT arrives during an in-flight restart", () =>

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -200,7 +200,7 @@ const silentFormatter: CliOutput.Formatter = {
   formatVersion: () => "",
 };
 
-const runtimeLayer = Layer.mergeAll(BunServices.layer, CliOutput.layer(silentFormatter));
+const runtimeLayer = Layer.mergeAll(NodeServices.layer, CliOutput.layer(silentFormatter));
 
 class GroupProbe extends Context.Service<GroupProbe, TargetGroup>()("test/GroupProbe") {}
 

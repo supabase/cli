@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { makeApiClient } from "@supabase/api/effect";
 import { Cause, Effect, Exit, Layer } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -132,7 +132,7 @@ describe("live project provisioning", () => {
         expect(message).not.toContain("sentinel-secret");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(platformApi, BunFileSystem.layer, BunPath.layer, cliConfigProviderLayer),
+          Layer.mergeAll(platformApi, NodeFileSystem.layer, NodePath.layer, cliConfigProviderLayer),
         ),
       ),
     );
@@ -239,7 +239,7 @@ describe("live project provisioning", () => {
         expect(ownedProjects).toEqual(new Set());
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(platformApi, BunFileSystem.layer, BunPath.layer, cliConfigProviderLayer),
+          Layer.mergeAll(platformApi, NodeFileSystem.layer, NodePath.layer, cliConfigProviderLayer),
         ),
       ),
     );

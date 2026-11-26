@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit, Layer, Option, Ref } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
@@ -24,7 +24,7 @@ describe("functions serve command", () => {
         Option.some(["hello-world", "send-email"]),
       );
     }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     ),
   );
 });

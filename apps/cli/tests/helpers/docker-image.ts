@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Cause, Clock, Data, Duration, Effect, Layer } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process";
@@ -50,7 +50,7 @@ export function ensureImage(
   deadline?: number,
   // Injectable so the queue/memo behavior is unit-testable with a fake spawner;
   // every e2e caller uses the real default.
-  services: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> = BunServices.layer,
+  services: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> = NodeServices.layer,
 ): Promise<string> {
   const memo = resolvedImages.get(image);
   if (memo !== undefined) return memo;

@@ -1,6 +1,6 @@
 import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 
-import { BunCrypto, BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import {
   type ApiClient,
   makeApiClient,
@@ -88,7 +88,7 @@ import {
 } from "./mocks.ts";
 import { EXEC_FAILED_STATE } from "./docker-health.ts";
 
-const hostPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+const hostPath = Effect.runSync(Path.Path.pipe(Effect.provide(NodePath.layer)));
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -764,7 +764,7 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
     }).pipe(
       /* A host failure rejects the hook with the raw host error. */
       Effect.catch((error) => Effect.die(error.cause ?? error)),
-      Effect.provide(BunFileSystem.layer),
+      Effect.provide(NodeFileSystem.layer),
       Effect.runPromise,
     ),
   );
@@ -777,7 +777,7 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
       }
     }).pipe(
       Effect.catch((error) => Effect.die(error.cause ?? error)),
-      Effect.provide(BunFileSystem.layer),
+      Effect.provide(NodeFileSystem.layer),
       Effect.runPromise,
     ),
   );
@@ -911,8 +911,8 @@ export function isolatedHomeLayer(
 // Wraps the real Bun `FileSystem` and fails a chosen `writeFileString` with a `PlatformError`,
 // so cleanup-on-failure paths (e.g. the pg-delta multi-file migration writer) can be exercised
 // deterministically. Every other call delegates to the real filesystem, so config reads/earlier
-// writes behave normally. Merge this after `BunServices.layer` (last-wins) so it overrides only
-// `FileSystem`; `Path` still comes from `BunServices`.
+// writes behave normally. Merge this after `NodeServices.layer` (last-wins) so it overrides only
+// `FileSystem`; `Path` still comes from `NodeServices`.
 export function failWriteStringOnNthCallFsLayer(
   failOnCall: number,
 ): Layer.Layer<FileSystem.FileSystem> {
@@ -958,7 +958,7 @@ function failWriteStringFsLayer(
         },
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 }
 
 // Shadow-database container-CLI spawner, shared by `db diff`/`db pull`'s native
@@ -1489,8 +1489,8 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const httpClient = opts.api.httpClientLayer;
   const platform =
     opts.fileSystem === undefined
-      ? Layer.merge(BunServices.layer, BunCrypto.layer)
-      : Layer.mergeAll(BunServices.layer, BunCrypto.layer, opts.fileSystem);
+      ? Layer.merge(NodeServices.layer, NodeCrypto.layer)
+      : Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1537,7 +1537,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     opts.commandPath === undefined
       ? Layer.empty
       : commandRuntimeLayer(opts.commandPath).pipe(
-          Layer.provide([BunServices.layer, BunCrypto.layer]),
+          Layer.provide([NodeServices.layer, NodeCrypto.layer]),
         ),
     linkedProjectCache,
     telemetry,

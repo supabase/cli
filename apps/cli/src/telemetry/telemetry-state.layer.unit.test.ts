@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { DateTime, Effect, FileSystem, Layer, Path, Schema } from "effect";
 
@@ -14,7 +14,7 @@ import {
 } from "./telemetry-state.layer.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
 
-const platformLayer = Layer.mergeAll(BunServices.layer, BunCrypto.layer, cliConfigProviderLayer);
+const platformLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, cliConfigProviderLayer);
 
 const tempHome = useTempWorkdir("supabase-telemetry-");
 
@@ -45,7 +45,7 @@ function makeLayer(
   runtime: ReturnType<typeof makeRuntime> = makeRuntime(),
 ) {
   return telemetryStateLayer.pipe(
-    Layer.provide([BunServices.layer, BunCrypto.layer]),
+    Layer.provide([NodeServices.layer, NodeCrypto.layer]),
     Layer.provide(analytics.layer),
     Layer.provide(runtime.layer),
     Layer.provideMerge(cliConfigProviderLayer),
@@ -59,16 +59,16 @@ const telemetryPath = Effect.gen(function* () {
 const readTelemetryFile = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(yield* telemetryPath);
-}).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+}).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 const telemetryFileExists = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.exists(yield* telemetryPath);
-}).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+}).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 const writeTelemetryFile = (contents: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.writeFileString(yield* telemetryPath, contents);
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 const seedJson = (value: unknown) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(
     Effect.flatMap(writeTelemetryFile),

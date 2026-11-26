@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Cause, Clock, DateTime, Effect, Layer, Option } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { FetchHttpClient } from "effect/http";
@@ -1148,8 +1148,8 @@ const completeAnalyticsLayer = (mode: ProjectStateMode) =>
     ),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(cliConfigProviderLayer),
-    Layer.provide(BunServices.layer),
-    Layer.provideMerge(BunCrypto.layerSecureRandom),
+    Layer.provide(NodeServices.layer),
+    Layer.provideMerge(NodeCrypto.layerSecureRandom),
   );
 
 /**

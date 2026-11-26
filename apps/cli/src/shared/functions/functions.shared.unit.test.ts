@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { vi } from "vitest";
@@ -55,7 +55,7 @@ describe("resolveEdgeRuntimeVersionPin", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             runtimeInfoLayer,
             mockCommandSettings({ workdir: "/no-such-supabase-dir" }),
           ),
@@ -105,7 +105,7 @@ describe("resolveEdgeRuntimeVersionPin", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        Layer.mergeAll(BunServices.layer, BunCrypto.layer, projectStateModeLayer("stack")),
+        Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, projectStateModeLayer("stack")),
       ),
     ),
   );
@@ -123,7 +123,7 @@ describe("resolveEdgeRuntimeVersionPin", () => {
       expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "invalid-lock" });
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(BunServices.layer, projectStateModeLayer("stack"))),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, projectStateModeLayer("stack"))),
     ),
   );
 });

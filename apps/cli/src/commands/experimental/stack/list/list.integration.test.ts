@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -26,7 +26,7 @@ const registry = Effect.fn("StackListTest.registry")(function* () {
   return { root, api, fs, path, locations, telemetry, layer };
 });
 
-const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(NodeServices.layer, NodeCrypto.layer));
 
 describe("stack list", () => {
   it.effect("lists real saved identities without starting owners in text and machine output", () =>

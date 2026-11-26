@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -53,7 +53,7 @@ describe("pgpassPassword (passfile + injected env precedence)", () => {
       const env = (name: string): string | undefined =>
         name === "PGPASSFILE" ? envPath : undefined;
       expect(yield* pgpassPassword("h", 5432, "d", "u", env, explicitPath)).toBe("explicit-secret");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to PGPASSFILE from the injected env when no explicit passfile", () =>
@@ -62,7 +62,7 @@ describe("pgpassPassword (passfile + injected env precedence)", () => {
       const env = (name: string): string | undefined =>
         name === "PGPASSFILE" ? envPath : undefined;
       expect(yield* pgpassPassword("h", 5432, "d", "u", env)).toBe("env-secret");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns empty string when the resolved passfile is unreadable", () =>
@@ -70,6 +70,6 @@ describe("pgpassPassword (passfile + injected env precedence)", () => {
       const { path, tmp } = yield* passfiles;
       const env = (): string | undefined => undefined;
       expect(yield* pgpassPassword("h", 5432, "d", "u", env, path.join(tmp, "missing"))).toBe("");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

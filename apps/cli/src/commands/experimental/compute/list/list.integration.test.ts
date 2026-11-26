@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Schema } from "effect";
 import {
@@ -87,7 +87,7 @@ describe("compute list", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("picks the project, lists its compute and records the linked project", () =>
@@ -130,7 +130,7 @@ describe("compute list", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not assert a runtime for a compute that has never been deployed", () =>
@@ -149,7 +149,7 @@ describe("compute list", () => {
         expect(row).not.toContain("dockerfile");
         expect(row).toContain("not deployed");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A local directory with no `[compute.<name>]` entry: pushable, and the
@@ -179,7 +179,7 @@ describe("compute list", () => {
         expect(out.stderrText).toContain("stray");
         expect(out.stderrText).toContain("guess the runtime");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Two of them, so the advisory has to read as a list rather than as one name
@@ -215,7 +215,7 @@ describe("compute list", () => {
         expect(out.stderrText).toContain("spare, stray are deployed but not in");
         expect(out.stderrText).toContain("guess the runtime");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Deletion is asynchronous, so a compute can be listed while it is being torn
@@ -239,7 +239,7 @@ describe("compute list", () => {
 
         expect(out.stdoutText).toContain("deleting");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Nothing local at all: `deployOneCompute` checks the source directory before
@@ -264,7 +264,7 @@ describe("compute list", () => {
         expect(out.stderrText).toContain("no source in this project");
         expect(out.stderrText).not.toContain("guess the runtime");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("says so when the project has no compute at all", () =>
@@ -282,7 +282,7 @@ describe("compute list", () => {
           "No compute found. Scaffold one with supabase compute new <name>.",
         );
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits the inventory as structured data in json mode", () =>
@@ -331,7 +331,7 @@ describe("compute list", () => {
           },
         ]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("serialises the inventory for the -o flag", () =>
@@ -361,7 +361,7 @@ describe("compute list", () => {
         expect(parsed.compute).toHaveLength(2);
         expect(out.messages.filter((m) => m.type === "success")).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses -o env before making any request at all", () =>
@@ -381,7 +381,7 @@ describe("compute list", () => {
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Until the Management API ships `not_found.compute.not_enabled`, an unenrolled
@@ -412,7 +412,7 @@ describe("compute list", () => {
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
@@ -441,7 +441,7 @@ describe("compute list", () => {
         expect(error).toBeInstanceOf(ComputeUnavailableError);
         expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the unserved route instead of the project when the API has no such route", () =>
@@ -473,7 +473,7 @@ describe("compute list", () => {
         expect(error.suggestion).toContain("supabase issue");
         expect(error.suggestion).not.toContain("supabase link");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still reports a missing project when the 404 is the project's own", () =>
@@ -497,7 +497,7 @@ describe("compute list", () => {
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("surfaces an unexpected status rather than showing an empty list", () =>
@@ -521,7 +521,7 @@ describe("compute list", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses an explicit --remote=<ref> without a linked project", () =>
@@ -550,7 +550,7 @@ describe("compute list", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("requires a linked project when no ref is given", () =>
@@ -565,7 +565,7 @@ describe("compute list", () => {
 
         expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A directory under the compute root with no `[compute.<name>]` entry is what
@@ -597,7 +597,7 @@ describe("compute list", () => {
         // orphan either.
         expect(out.stderrText).not.toContain("scaffolded");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The API omits `spec.runtime` only for a context-only build, so for a
@@ -622,7 +622,7 @@ describe("compute list", () => {
         );
         expect(success?.data?.["compute"]).toMatchObject([{ name: "api", runtime: "dockerfile" }]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // An undeployed compute has no `size`/`instances` and a private one no `url`,
@@ -650,7 +650,7 @@ describe("compute list", () => {
         expect(out.stdoutText).toContain("project_ref = ");
         expect(out.stdoutText).not.toContain("undefined");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("encodes YAML when -o yaml asks for it", () =>
@@ -675,7 +675,7 @@ describe("compute list", () => {
         // The table would have gone to stdout too, and broken the document.
         expect(out.stdoutText).not.toContain("NAME");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `table`/`csv` are accepted by the global flag for `db query`'s benefit; every
@@ -702,7 +702,7 @@ describe("compute list", () => {
           expect(out.stdoutText).toContain("NAME");
           expect(out.stdoutText).not.toContain("project_ref = ");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("flushes telemetry when the project config cannot be loaded", () =>
@@ -715,7 +715,7 @@ describe("compute list", () => {
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -750,7 +750,7 @@ describe("compute list", () => {
           expect(row).toContain("not deployed");
           expect(row).toContain("node");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -782,7 +782,7 @@ describe("compute list", () => {
           expect(out.stdoutText).not.toContain("api");
           expect(out.stdoutText).toContain("No compute found.");
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

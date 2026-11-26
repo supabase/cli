@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, FileSystem, Schema } from "effect";
 
@@ -207,5 +207,5 @@ it.live(
           Effect.sync(() => releaseDelete.resolve(new Response(null, { status: 503 }))),
         ),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -35,9 +35,9 @@ describe("logs output format parsing", () => {
                 CliOutput.layer(textCliOutputFormatter()),
                 Layer.succeed(CliArgs, { args }),
                 mockOutput({ format: "text" }).layer,
-                BunServices.layer,
-                BunCrypto.layer,
-                legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+                NodeServices.layer,
+                NodeCrypto.layer,
+                legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
                 mockRuntimeInfo({ homeDir: home, cwd: home }),
                 mockAnalytics().layer,
                 mockTelemetryRuntime({ configDir: home }),
@@ -53,7 +53,7 @@ describe("logs output format parsing", () => {
           expect(error).toMatchObject({
             message: `the -o/--output flag is not supported by ${leaf === "" ? "logs" : `logs ${leaf}`}; use --output-format json|stream-json instead.`,
           });
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
     }
   }

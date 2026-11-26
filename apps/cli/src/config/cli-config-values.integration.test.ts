@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
@@ -129,7 +129,7 @@ describe("CliConfigValues credential scoping", () => {
             expect(resolvedConfig.withheldEnv).toEqual([]);
           }
         }).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           (effect) => withShell({ SUPABASE_DB_PASSWORD: "from-shell" }, effect),
           Effect.scoped,
         ),
@@ -155,7 +155,7 @@ describe("CliConfigValues credential scoping", () => {
       expect(resolvedConfig.projectEnvValues["UNSCOPED_VAR"]).toBe("kept");
       expect(yield* resolvedConfig.envValues(["SUPABASE_DB_PASSWORD"])).toEqual({});
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_PASSWORD: undefined }, effect),
       Effect.scoped,
     ),
@@ -176,7 +176,7 @@ describe("CliConfigValues credential scoping", () => {
 
       expect(password).toMatchObject({ value: Option.some("explicit"), origin: { tier: "flag" } });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_PASSWORD: "from-shell" }, effect),
       Effect.scoped,
     ),
@@ -200,7 +200,7 @@ describe("CliConfigValues credential scoping", () => {
         origin: { tier: "shell", envName: "SUPABASE_AUTH_CAPTCHA_SECRET" },
       });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_AUTH_CAPTCHA_SECRET: "from-shell" }, effect),
       Effect.scoped,
     ),
@@ -242,7 +242,7 @@ major_version = 15
         tier: "config",
         origin: { source: "local" },
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("lets env and flags beat the matched remote, including its seed default", () =>
@@ -265,7 +265,7 @@ major_version = 15
         origin: { tier: "flag", flag: "include-seed" },
       });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_MAJOR_VERSION: "17" }, effect),
       Effect.scoped,
     ),
@@ -289,7 +289,7 @@ major_version = 15
         },
       ]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_MAJOR_VERSION: "17", SUPABASE_DB_PORT: "54400" }, effect),
       Effect.scoped,
     ),
@@ -313,7 +313,7 @@ major_version = 15
       expect(lines).toContainEqual(expect.stringContaining("SUPABASE_DB_PORT"));
       expect(lines.some((line) => line.startsWith("config: api.port"))).toBe(false);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_PORT: "54400" }, effect),
       Effect.scoped,
     ),
@@ -330,7 +330,7 @@ major_version = 15
 
       expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_REMOTES_STAGING_PROJECT_ID: OTHER }, effect),
       Effect.scoped,
     ),
@@ -349,7 +349,7 @@ major_version = 15
       expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).origin).toEqual({
         tier: "default",
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("fails the load on duplicate or malformed remote project ids", () =>
@@ -370,7 +370,7 @@ major_version = 15
       expect((yield* load(malformed)).message).toBe(
         "Invalid config for remotes.a.project_id. Must be like: abcdefghijklmnopqrst",
       );
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -406,7 +406,7 @@ describe("CliConfigValues provider switch env names", () => {
           value: true,
           origin: { tier: "shell", envName: legacyName },
         });
-      }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
 
@@ -437,7 +437,7 @@ describe("CliConfigValues deprecated keys", () => {
         `${deprecationLine("auth.email")}${deprecationLine("auth.sms")}`,
       );
       expect(output.stdoutText).toBe("");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("escapes control characters in a remote label before printing the deprecation", () =>
@@ -453,7 +453,7 @@ describe("CliConfigValues deprecated keys", () => {
 
       expect(output.stderrText).toBe(deprecationLine("remotes.a\\u001bb.auth.sms"));
       expect(output.stderrText.includes("\u001b")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -492,7 +492,7 @@ describe("CliConfigValues JSON config files", () => {
             "Ignoring supabase/config.toml because supabase/config.jsonc takes precedence. Delete the file you don't use.",
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("warns that config.toml is ignored when a strict config.json shadows it", () =>
@@ -513,7 +513,7 @@ describe("CliConfigValues JSON config files", () => {
             "Ignoring supabase/config.toml because supabase/config.json takes precedence. Delete the file you don't use.",
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("prints no ignored-file warning when only config.toml exists", () =>
@@ -524,7 +524,7 @@ describe("CliConfigValues JSON config files", () => {
       yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
 
       expect(output.messages).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("resolves a value from a commented config.jsonc-only project", () =>
@@ -546,7 +546,7 @@ describe("CliConfigValues JSON config files", () => {
 
       expect(loaded.materialized.config.db.port).toBe(54444);
       expect(output.messages).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live(
@@ -563,7 +563,7 @@ describe("CliConfigValues JSON config files", () => {
         expect(failure.message).toBe(
           "Found both supabase/config.json and supabase/config.jsonc. Keep one and delete the other.",
         );
-      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -594,7 +594,7 @@ describe("CliConfigValues schema declaration", () => {
       const output = mockOutput();
       yield* load(root).pipe(Effect.provide(configValuesLayer({ output: output.layer })));
       return { messages: output.messages, stderr: output.stderrText, stdout: output.stdoutText };
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect));
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect));
 
   it.live("warns once that an unrecognized schema URL is read as v1", () =>
     Effect.gen(function* () {
@@ -618,7 +618,7 @@ describe("CliConfigValues schema declaration", () => {
       );
       expect(output.stdoutText).toBe("");
       expect(output.messages).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   const silent: ReadonlyArray<readonly [string, string, string]> = [
@@ -666,7 +666,7 @@ describe("CliConfigValues schema declaration", () => {
       );
       expect(output.stdoutText).toBe("");
       expect(output.messages).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("lists unknown keys under a remote with the remote name", () =>
@@ -826,7 +826,7 @@ describe("CliConfigValues schema declaration", () => {
           `${shown} declares config schema v2, but this version of the Supabase CLI only reads up to v1. Upgrade the Supabase CLI to use this config.`,
         );
         expect(describeConfigLoadFailure(failure)).toBe(failure.message);
-      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
     );
   }
 });
@@ -857,7 +857,7 @@ describe("CliConfigValues memoisation", () => {
         expect(reloaded).not.toBe(first);
         expect((yield* reloaded.get(CliConfigKeys.db.port)).value).toBe(54400);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("defaults pg-delta on and lets config turn it off", () =>
@@ -882,7 +882,7 @@ describe("CliConfigValues memoisation", () => {
         expect(byDefault).toMatchObject({ value: true, origin: { tier: "default" } });
         expect(byConfig).toMatchObject({ value: false, origin: { tier: "config" } });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("ignores SUPABASE_EXPERIMENTAL_PG_DELTA and honours the canonical env name", () =>
@@ -902,7 +902,7 @@ describe("CliConfigValues memoisation", () => {
       }).pipe(Effect.provide(layer));
       expect(output.messages).toEqual([]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) =>
         withShell(
           {
@@ -934,7 +934,7 @@ describe("CliConfigValues memoisation", () => {
         'Invalid SUPABASE_API_PORT="not-a-port" (sets api.port): expected a port (0-65535).',
       );
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_API_PORT: "not-a-port" }, effect),
       Effect.scoped,
     ),
@@ -950,7 +950,7 @@ describe("CliConfigValues memoisation", () => {
       ).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toMatchObject({ path: "api.port", tier: "flag", flag: "port" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("fails the first load when two flags set one key to different values", () =>
@@ -973,7 +973,7 @@ describe("CliConfigValues memoisation", () => {
         flags: ["no-seed", "sql-paths"],
         message: "--no-seed and --sql-paths both set db.seed.enabled; pass only one",
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("loads when two flags set one key to the same value", () =>
@@ -991,7 +991,7 @@ describe("CliConfigValues memoisation", () => {
       ).pipe(Effect.provide(layer));
 
       expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("keeps package errors visible by their own tag", () =>
@@ -1004,7 +1004,7 @@ describe("CliConfigValues memoisation", () => {
       ).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error._tag).toBe("CliConfigParseError");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live.each(["[]", "42", '"text"', "null"])(
@@ -1023,7 +1023,7 @@ describe("CliConfigValues memoisation", () => {
 
         expect(error._tag).toBe("CliConfigParseError");
         expect(error).toMatchObject({ path: path.join(root, "supabase", "config.json") });
-      }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("fails the load when a config value does not decode", () =>
@@ -1036,7 +1036,7 @@ describe("CliConfigValues memoisation", () => {
       ).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toMatchObject({ path: "db.port", tier: "config" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -1065,7 +1065,7 @@ describe("CliConfigValues secrets", () => {
       expect(got).toMatchObject({ value: Option.some("value"), origin: { tier: "config" } });
       expect(decoded).toBe("value");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ DOTENV_PRIVATE_KEY: PRIVATE_KEY }, effect),
       Effect.scoped,
     ),
@@ -1079,7 +1079,7 @@ describe("CliConfigValues secrets", () => {
 
       expect(decoded).toBe("value");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ DOTENV_PRIVATE_KEY_2026: PRIVATE_KEY }, effect),
       Effect.scoped,
     ),
@@ -1093,7 +1093,7 @@ describe("CliConfigValues secrets", () => {
 
       expect(decoded).toBe("value");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) =>
         withShell(
           {
@@ -1117,7 +1117,7 @@ describe("CliConfigValues secrets", () => {
       expect(got.value).toEqual(Option.some("value"));
       expect(decoded).toBe("value");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ DOTENV_PRIVATE_KEY: PRIVATE_KEY }, effect),
       Effect.scoped,
     ),
@@ -1134,7 +1134,7 @@ describe("CliConfigValues secrets", () => {
 
       expect(error).toMatchObject({ path: "auth.captcha.secret", tier: "config" });
       expect(error.message).toBe("failed to parse config: missing private key");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("keeps a withheld env value out of env() interpolation", () =>
@@ -1155,7 +1155,7 @@ describe("CliConfigValues secrets", () => {
       expect(yield* siteUrl(LINKED)).toBe("from-shell");
       expect(yield* siteUrl(OTHER)).toBe("env(SUPABASE_DB_PASSWORD)");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_DB_PASSWORD: "from-shell" }, effect),
       Effect.scoped,
     ),
@@ -1170,7 +1170,7 @@ describe("CliConfigValues secrets", () => {
       ).pipe(Effect.provide(configValuesLayer()));
 
       expect(resolvedConfig.materialized.config.auth.site_url).toBe("env(toString)");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("reads a project .env line named like an inherited property", () =>
@@ -1186,7 +1186,7 @@ describe("CliConfigValues secrets", () => {
 
       expect(resolvedConfig.projectEnvValues["constructor"]).toBe("http://ok");
       expect(resolvedConfig.materialized.config.auth.site_url).toBe("http://ok");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -1207,7 +1207,7 @@ describe("CliConfigValues reads", () => {
       expect((yield* read(empty)).value).toEqual(["supabase/seed.sql"]);
       expect((yield* read(configured)).value).toEqual(["supabase/seed.sql"]);
       expect((yield* read(configured)).origin).toEqual({ tier: "default" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("keeps the unnormalized value beside a normalized config value", () =>
@@ -1227,7 +1227,7 @@ describe("CliConfigValues reads", () => {
         unnormalized: ["./a.sql"],
         origin: { tier: "config" },
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("defaults project_id from the workdir name, never the target ref", () =>
@@ -1248,7 +1248,7 @@ describe("CliConfigValues reads", () => {
       ).pipe(Effect.provide(layer));
 
       expect(read.value).toBe("My_Project");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("coerces weakly typed config values into the decoded config and an env() bool", () =>
@@ -1270,7 +1270,7 @@ describe("CliConfigValues reads", () => {
       expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
       expect((yield* resolvedConfig.get(CliConfigKeys.db.pooler.enabled)).value).toBe(true);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ POOLER_ON: "true" }, effect),
       Effect.scoped,
     ),
@@ -1294,7 +1294,7 @@ describe("CliConfigValues reads", () => {
       expect(declared.config.experimental.pgdelta?.enabled).toBe(false);
       expect((yield* resolvedConfig.get(CliConfigKeys.db.seed.enabled)).value).toBe(false);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ POOLER_ON: "true", SUPABASE_DB_SEED_ENABLED: "false" }, effect),
       Effect.scoped,
     ),
@@ -1314,7 +1314,7 @@ describe("CliConfigValues reads", () => {
       expect(yield* read).toMatchObject({ value: "my_app", origin: { tier: "config" } });
       const fromEnv = yield* withShell({ SUPABASE_PROJECT_ID: "other app" }, read);
       expect(fromEnv).toMatchObject({ value: "other_app", origin: { tier: "shell" } });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("reads the same value through get and the materialized config", () =>
@@ -1338,7 +1338,7 @@ describe("CliConfigValues reads", () => {
         config.auth.email.smtp?.enabled,
       );
       expect((yield* resolvedConfig.get(CliConfigKeys.projectId)).value).toBe(config.project_id);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("resolves every registry key to the value the materialized config holds", () =>
@@ -1373,7 +1373,7 @@ describe("CliConfigValues reads", () => {
 
       expect(compared).toBeGreaterThan(100);
       expect(mismatches).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("lists family entries from the registry and the merged document", () =>
@@ -1393,7 +1393,7 @@ describe("CliConfigValues reads", () => {
       expect(
         (yield* resolvedConfig.get(familyKey("authEmailTemplate", "invite", "subject"))).value,
       ).toEqual(Option.some("Join"));
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live(
@@ -1422,7 +1422,7 @@ describe("CliConfigValues reads", () => {
           SUPABASE_API_PORT: "2222",
         });
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         (effect) =>
           withShell({ SUPABASE_UNOWNED_FROM_SHELL: "shell", SUPABASE_API_PORT: "2222" }, effect),
         Effect.scoped,
@@ -1459,7 +1459,7 @@ describe("CliConfigValues dynamic family names", () => {
       expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
       expect(decoded["__proto__.polluted"]?.subject).toBe("override");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ [POLLUTING]: "override" }, effect),
       Effect.ensuring(cleanPrototype),
       Effect.scoped,
@@ -1479,7 +1479,7 @@ describe("CliConfigValues dynamic family names", () => {
         expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
         expect(decoded["__proto__.polluted"]?.subject).toBe("override");
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         (effect) => withShell({}, effect),
         Effect.ensuring(cleanPrototype),
         Effect.scoped,
@@ -1498,7 +1498,7 @@ describe("CliConfigValues dynamic family names", () => {
         expect(Object.hasOwn(Object.prototype, "subject")).toBe(false);
         expect(Object.hasOwn(decoded, name) ? decoded[name]?.subject : undefined).toBe("override");
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         (effect) =>
           withShell(
             { [`SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}_SUBJECT`]: "override" },
@@ -1523,7 +1523,7 @@ describe("CliConfigValues dynamic family names", () => {
       );
       expect(Object.hasOwn(Object.prototype, "subject")).toBe(false);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_AUTH_EMAIL_TEMPLATE___PROTO___SUBJECT: "override" }, effect),
       Effect.scoped,
     ),
@@ -1540,7 +1540,7 @@ describe("CliConfigValues dynamic family names", () => {
       expect(decoded["a.b"]?.subject).toBe("fromenv");
       expect(Object.hasOwn(decoded, "a")).toBe(false);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_AUTH_EMAIL_TEMPLATE_A_B_SUBJECT: "fromenv" }, effect),
       Effect.scoped,
     ),
@@ -1654,7 +1654,7 @@ policy = "per_worker"
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
-          BunServices.layer,
+          NodeServices.layer,
           runtimeInfoLayer,
           cliConfigValuesTestLayer,
           mockCommandSettings({ workdir: root }),
@@ -1727,7 +1727,7 @@ policy = "per_worker"
       expect(originAt("auth.email.smtp.port")).toMatchObject({ tier: "config" });
       expect(originAt("db.password")).toEqual({ tier: "default" });
     }).pipe(
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
       (effect) => withShell({}, effect),
       Effect.scoped,
     ),
@@ -1766,7 +1766,7 @@ major_version = 15
       expect(originAt("auth.site_url")).toMatchObject({ tier: "config", remote: "staging" });
       expect(originAt("api.schemas")).toMatchObject({ tier: "shell" });
     }).pipe(
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
       (effect) => withShell({ SUPABASE_API_SCHEMAS: "public,shell_api" }, effect),
       Effect.scoped,
     ),
@@ -1791,7 +1791,7 @@ major_version = 15
       expect(config.db.seed.sql_paths).toEqual(["supabase/flag.sql"]);
       expect(config.experimental.pgdelta?.enabled).toBe(true);
       expect(originAt("db.seed.enabled")).toEqual({ tier: "flag", flag: "include-seed" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("leaves a base-only value under an applied remote without a remote origin", () =>
@@ -1816,7 +1816,7 @@ major_version = 15
       expect(origin).toMatchObject({ tier: "config" });
       expect(origin).not.toHaveProperty("remote");
       expect(origin).toHaveProperty("file", expect.stringContaining("config.toml"));
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("decodes defaults when the workdir has no config file", () =>
@@ -1829,7 +1829,7 @@ major_version = 15
       expect(config.db.port).toBe(54322);
       expect(config.db.seed.sql_paths).toEqual(["supabase/seed.sql"]);
       expect(originAt("db.port")).toEqual({ tier: "default" });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -1851,7 +1851,7 @@ describe("CliConfigValues loaded document", () => {
       expect(loaded.config.api.max_rows).toBe(10);
       expect(resolvedConfig.materialized.config.auth.hook?.send_email?.uri).toBe("");
       expect(loaded.config.auth.hook?.send_email?.uri).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("matches the package loader when no flag or env overrides anything", () =>
@@ -1867,7 +1867,7 @@ describe("CliConfigValues loaded document", () => {
       expect(packaged).not.toBeNull();
       expect(resolvedConfig.loaded).toEqual(packaged);
       expect(resolvedConfig.loaded.document).not.toHaveProperty("project_id");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("applies an env override to the loaded config", () =>
@@ -1879,7 +1879,7 @@ describe("CliConfigValues loaded document", () => {
 
       expect(resolvedConfig.loaded.config.api.max_rows).toBe(25);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
       Effect.scoped,
     ),
@@ -1894,7 +1894,7 @@ describe("CliConfigValues loaded document", () => {
       const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
       expect(resolvedConfig.hasConfigFile).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("fails on an unreadable .temp/project-ref unless the load tolerates it", () =>
@@ -1921,7 +1921,7 @@ describe("CliConfigValues loaded document", () => {
 
       expect(Exit.isFailure(strict)).toBe(true);
       expect(tolerant.withheldEnv).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("names the source of an invalid value and leaves it out when tolerated", () =>
@@ -1952,7 +1952,7 @@ project_id = "${LINKED}"
       });
       expect(tolerated.invalid.map((entry) => entry.path)).toEqual(["db.port"]);
       expect(tolerated.materialized.config.db.port).toBe(54322);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("loads a partial [auth.email.smtp] table with smtp off", () =>
@@ -1965,7 +1965,7 @@ project_id = "${LINKED}"
       expect(resolvedConfig.materialized.config.auth.email.smtp?.enabled).toBe(false);
       expect(resolvedConfig.declares("auth.email.smtp")).toBe(true);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SMTP_PASS: "secret" }, effect),
       Effect.scoped,
     ),
@@ -1985,7 +1985,7 @@ project_id = "${LINKED}"
         envVariables: ["ROWS"],
       });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ ROWS: "40" }, effect),
       Effect.scoped,
     ),
@@ -2012,7 +2012,7 @@ project_id = "${LINKED}"
       expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
       expect(declared.valueOrigins).toContainEqual(origin);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ CALLBACK_URL: "https://cb.example.com" }, effect),
       Effect.scoped,
     ),
@@ -2041,7 +2041,7 @@ project_id = "${LINKED}"
       expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
       expect(declared.valueOrigins).toContainEqual(origin);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SEED_PATH: "seed.sql" }, effect),
       Effect.scoped,
     ),
@@ -2063,7 +2063,7 @@ project_id = "${LINKED}"
         path: ["db", "seed", "sql_paths"],
         source: "local",
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("coerces a mixed list with an env() reference in a matched remote block", () =>
@@ -2094,7 +2094,7 @@ sql_paths = ["env(SEED_PATH)", 42]
         envVariables: ["SEED_PATH"],
       });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SEED_PATH: "seed.sql" }, effect),
       Effect.scoped,
     ),
@@ -2120,7 +2120,7 @@ sql_paths = ["env(SEED_PATH)", 42]
         expect(resolvedConfig.loaded.valueOrigins).toContainEqual(origin);
         expect(declared.valueOrigins).toContainEqual(origin);
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         (effect) => withShell({ ROWS: rows }, effect),
         Effect.scoped,
       ),
@@ -2143,7 +2143,7 @@ sql_paths = ["env(SEED_PATH)", 42]
           envVariables: ["JWT"],
         });
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         (effect) => withShell({ JWT: "s3cret" }, effect),
         Effect.scoped,
       ),
@@ -2160,7 +2160,7 @@ sql_paths = ["env(SEED_PATH)", 42]
       expect(resolvedConfig.loaded.config.api.max_rows).toBe(25);
       expect(declared.config.api.max_rows).toBe(10);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
       Effect.scoped,
     ),
@@ -2180,7 +2180,7 @@ sql_paths = ["env(SEED_PATH)", 42]
       expect(resolvedConfig.loaded.config.auth.site_url).toBe("env(CHAIN_W)");
       expect(resolvedConfig.materialized.config.auth.site_url).toBe("env(CHAIN_W)");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) =>
         withShell({ SUPABASE_AUTH_SITE_URL: "env(CHAIN_Y)", CHAIN_Y: "env(CHAIN_W)" }, effect),
       Effect.scoped,
@@ -2201,7 +2201,7 @@ sql_paths = ["env(SEED_PATH)", 42]
       expect(resolvedConfig.loaded.config.auth.jwt_secret).toBe("env(CHAIN_W)");
       expect(resolvedConfig.materialized.config.auth.jwt_secret).toBe("env(CHAIN_W)");
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ CHAIN_Y: "env(CHAIN_W)" }, effect),
       Effect.scoped,
     ),
@@ -2217,7 +2217,7 @@ sql_paths = ["env(SEED_PATH)", 42]
       const resolvedConfig = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
       expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["env(CHAIN_W)"]);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -2256,7 +2256,7 @@ enabled = false
         ],
       });
       expect(loaded.materialized.config.local_smtp.enabled).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("rejects a removed key in a [remotes.*] block no target selects", () =>
@@ -2281,7 +2281,7 @@ orioledb_version = "15.1.0.150"
           },
         ],
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("drops an empty experimental.orioledb_version from the loaded raw document", () =>
@@ -2291,7 +2291,7 @@ orioledb_version = "15.1.0.150"
       const resolvedConfig = yield* load(root).pipe(Effect.provide(configValuesLayer()));
 
       expect(resolvedConfig.loaded.rawDocument?.["experimental"]).toEqual({});
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   const removedEnv = "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION";
@@ -2320,7 +2320,11 @@ orioledb_version = "15.1.0.150"
         envName: removedEnv,
         message: `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in ${location}) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.`,
       });
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell(shell, effect), Effect.scoped),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      (effect) => withShell(shell, effect),
+      Effect.scoped,
+    ),
   );
 
   it.live("fails on the removed orioledb variable even when the config file is ignored", () =>
@@ -2334,7 +2338,7 @@ orioledb_version = "15.1.0.150"
 
       expect(failure).toMatchObject({ _tag: "CliConfigRemovedEnvError", envName: removedEnv });
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ [removedEnv]: "15.1.0.150" }, effect),
       Effect.scoped,
     ),
@@ -2348,7 +2352,7 @@ orioledb_version = "15.1.0.150"
 
       expect(resolvedConfig.hasConfigFile).toBe(true);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       (effect) => withShell({ [removedEnv]: "" }, effect),
       Effect.scoped,
     ),
@@ -2384,7 +2388,7 @@ project_id = "${OTHER}"
       const layer = cliConfigValuesLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             mockOutput().layer,
             Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
             ConfigProvider.layer(lookupOnly),
@@ -2407,7 +2411,7 @@ project_id = "${OTHER}"
       ).toMatchObject({ value: "family-client", origin: { tier: "shell" } });
       expect(resolvedConfig.appliedRemote).toEqual(Option.some("staging"));
       expect(resolvedConfig.materialized.config.auth.captcha?.secret).toBe("value");
-    }).pipe(Effect.provide(BunServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
 
@@ -2452,7 +2456,7 @@ describe("CliConfigValues failure telemetry", () => {
         expect(port.value).toBe(54400);
         expect(records).toEqual([]);
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records the key of a tolerated invalid value when it is read", () =>
@@ -2468,7 +2472,7 @@ describe("CliConfigValues failure telemetry", () => {
         expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.port" });
         expect(records).toEqual([{ config_key: "db.port" }]);
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records no key when the load failure names no config key", () =>
@@ -2481,7 +2485,7 @@ describe("CliConfigValues failure telemetry", () => {
         expect(error._tag).toBe("CliConfigParseError");
         expect(records).toEqual([]);
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records no key for a keyless load failure after a recovered keyed lookup failure", () =>
@@ -2500,7 +2504,7 @@ describe("CliConfigValues failure telemetry", () => {
         expect(error._tag).toBe("CliConfigParseError");
         expect(configKey()).toBeUndefined();
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("clears the key of a recovered lookup failure when a later load succeeds", () =>
@@ -2518,7 +2522,7 @@ describe("CliConfigValues failure telemetry", () => {
 
         expect(configKey()).toBeUndefined();
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("clears the key of a recovered lookup failure when a later lookup succeeds", () =>
@@ -2534,7 +2538,7 @@ describe("CliConfigValues failure telemetry", () => {
 
         expect(configKey()).toBeUndefined();
       }),
-    ).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    ).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });
 
@@ -2583,7 +2587,7 @@ describe("CliConfigValues config format telemetry", () => {
 
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(format).toBe(expected);
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records the format of a config file that fails to parse", () =>
@@ -2594,7 +2598,7 @@ describe("CliConfigValues config format telemetry", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       expect(format).toBe("jsonc");
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
   it.live("records no format when the project has no config file", () =>
@@ -2604,6 +2608,6 @@ describe("CliConfigValues config format telemetry", () => {
       const { format } = yield* loadRecordingFormat(root);
 
       expect(format).toBeUndefined();
-    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });

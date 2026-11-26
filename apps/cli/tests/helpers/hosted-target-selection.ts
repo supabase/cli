@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stdio } from "effect";
 
@@ -221,7 +221,7 @@ const hostedLayer = (
 ) =>
   Layer.mergeAll(
     buildTestRuntime(runtime),
-    commandRuntimeLayer(words).pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
+    commandRuntimeLayer(words).pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer])),
     Layer.succeed(YesFlag, true),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
     Stdio.layerTest({ args: Effect.succeed(argv) }),
@@ -259,7 +259,7 @@ const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
       yield* fs.makeDirectory(path.dirname(absolutePath), { recursive: true });
       yield* fs.writeFileString(absolutePath, contents);
     }
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 /** `describeTargetSelectionMatrix` for a hosted leaf run through `buildTestRuntime`. */
 export function describeHostedTargetSelection(

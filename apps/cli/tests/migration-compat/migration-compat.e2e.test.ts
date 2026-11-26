@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -36,7 +36,7 @@ it.live("refuses to record a baseline in CI before processing arguments", () =>
   }).pipe(
     Effect.withSpan("MigrationCompat.checkRecorderCiGuard"),
     Effect.scoped,
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
   ),
 );
 
@@ -64,6 +64,6 @@ for (const scenario of scenarios) {
           normalizeStdout(testCase.format, expected.stdout),
         );
         expect(actual.stderr).toBe(expected.stderr);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 }

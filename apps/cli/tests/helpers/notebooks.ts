@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -317,7 +317,7 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
           Layer.provide(mockTty({ stdinIsTty: true })),
           Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
           Layer.provide(out.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         )
       : testProjectRefLayer(options.linked !== false);
   const linkedProjectCache =
@@ -344,13 +344,13 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       analytics.layer,
       process.layer,
       commandRuntimeLayer(["notebooks", command]).pipe(
-        Layer.provide([BunServices.layer, BunCrypto.layer]),
+        Layer.provide([NodeServices.layer, NodeCrypto.layer]),
       ),
       Layer.succeed(
         OutputFlag,
         options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
-      BunServices.layer,
+      NodeServices.layer,
       Stdio.layerTest({ args: Effect.succeed(options.args ?? ["notebooks", command]) }),
       Layer.succeed(YesFlag, options.yes ?? true),
       Layer.succeed(CliArgs, { args: [] }),

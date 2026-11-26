@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { parseCliConfigDocumentFile } from "@supabase/config/internal";
 import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
@@ -219,7 +219,7 @@ describe("runConfigValidation", () => {
         expect(labels(baseline.problems)).toEqual(["base:db.major_version:invalid_value"]);
         expect(baseline.unknownValues).toBe(7);
         expect(baseline.deferred.length).toBeGreaterThan(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("never change what the switches and string-valued probes decide", () =>
@@ -231,7 +231,7 @@ describe("runConfigValidation", () => {
         expect(typed.deferred.map((item) => item.check)).toEqual(
           expect.arrayContaining(["auth.webauthn", "auth.sms.provider", "auth.hook"]),
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("never change what a remote reports", () =>
@@ -246,7 +246,7 @@ describe("runConfigValidation", () => {
           "staging:auth.email.smtp.user:missing_required",
         ]);
         expect(baseline.deferred.some((item) => item.remote === "staging")).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -270,7 +270,7 @@ port = 0
           (problem) => problem.path.join(".") === "auth.email.smtp.port",
         );
         expect(port?.location?.line).toBe(5);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("name the spelling the document uses for renamed keys", () =>
@@ -283,7 +283,7 @@ enabled = "maybe"
 
         expect(labels(result.problems)).toEqual(["base:auth.email.enabled:invalid_value"]);
         expect(result.problems[0]?.location?.line).toBe(4);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("keep the CLI wording where the CLI check and the table rule find one thing", () =>
@@ -302,7 +302,7 @@ admin_email = "a@test.dev"
           "base:auth.email.smtp.port:missing_required",
         ]);
         for (const problem of result.problems) expect(problem.reason).toMatch(/^required when/);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("keep the table rule's rejection when the CLI check is switched off", () =>
@@ -320,7 +320,7 @@ enabled = true
           "base:auth.external.github.client_id:missing_required",
           "base:auth.external.github.secret:missing_required",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -337,7 +337,7 @@ enabled = true
 `);
 
         expect(result.problems).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("an unsupported hook scheme is reported while its secrets are unknown", () =>
@@ -351,7 +351,7 @@ secrets = "env(HOOK_SECRETS)"
 `);
 
         expect(labels(result.problems)).toEqual(["base:auth.hook.send_sms.uri:invalid_value"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("coerces resolved env values to the type the key expects", () =>
@@ -381,7 +381,7 @@ instances = "env(COUNT)"
           }),
         );
         expect(labels(bad.problems)).toEqual(["base:functions.foo.verify_jwt:invalid_type"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reads registry keys from the raw env text, as the loader does", () =>
@@ -418,7 +418,7 @@ verify_jwt = "env(VERIFY)"
           lookupOf({ VERIFY: { state: "set", value: "false" } }),
         );
         expect(labels(verify.problems)).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("checks array literals of a registry key with its codec", () =>
@@ -445,7 +445,7 @@ schemas = ["a", 42]
         expect(literal.problems).toMatchObject(
           schemas.problems.map(({ path, code, reason }) => ({ path, code, reason })),
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("classifies a remote-only key against the remote's own keys", () =>
@@ -480,7 +480,7 @@ enabled = "env(FLAG)"
           lookupOf({}),
         );
         expect(base.problems).toMatchObject([{ code: "env_unset", severity: "error" }]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("checks literal array elements next to an env() element", () =>
@@ -498,7 +498,7 @@ schemas = ["env(SCHEMA)", 42]
 schemas = ["env(A)", "public"]
 `);
         expect(labels(valid.problems)).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports only the type of a non-string remote project_id", () =>
@@ -509,7 +509,7 @@ schemas = ["env(A)", "public"]
 project_id = []
 `);
         expect(labels(result.problems)).toEqual(["prod:project_id:invalid_type"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("a missing rp_id is reported while rp_display_name is unknown", () =>
@@ -525,7 +525,7 @@ rp_origins = ["http://localhost:3000"]
 `);
 
         expect(labels(result.problems)).toEqual(["base:auth.webauthn.rp_id:missing_required"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("a duration that start rejects is reported", () =>
@@ -537,7 +537,7 @@ max_frequency = "5x"
 `);
 
         expect(labels(result.problems)).toEqual(["base:auth.email.max_frequency:invalid_value"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -563,7 +563,7 @@ tenant = "tenant"
 
         expect(labels(result.problems)).toEqual(["base:auth.third_party:invalid_value"]);
         expect(result.deferred.map((item) => item.check)).not.toContain("auth.third_party");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("defer when an unknown value could decide it", () =>
@@ -572,7 +572,7 @@ tenant = "tenant"
 
         expect(result.problems).toEqual([]);
         expect(result.deferred.map((item) => item.check)).toContain("auth.third_party");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -591,7 +591,7 @@ enabled = "env(SMTP_ENABLED)"
           expect.arrayContaining(["auth.email.smtp.host", "auth.email.smtp.port"]),
         );
         expect(checks).not.toContain("auth.email.smtp.table.host");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -619,7 +619,7 @@ ${body}`;
           "base:api.port:invalid_value",
           "base:db.major_version:invalid_value",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("give a remote the error of a key it replaces with a wrong type", () =>
@@ -639,7 +639,7 @@ ${body}`;
         ]);
         const whole = result.problems.find((problem) => problem.remote === "whole");
         expect(whole?.location?.line).toBeGreaterThan(8);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("give a remote that only enables the api the missing TLS files", () =>
@@ -660,7 +660,7 @@ ${remote("staging", "aaaaaaaaaaaaaaaaaaaa", "[remotes.staging.api]\nenabled = tr
           "staging:api.tls.cert_path:invalid_value",
           "staging:api.tls.key_path:invalid_value",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("report remote project ids as written and never compare unknown ones", () =>
@@ -679,7 +679,7 @@ ${remote("env-b", "env(REF_B)")}
           "dup-b:project_id:remote_project_id",
         ]);
         expect(result.unknownValues).toBe(2);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -693,7 +693,7 @@ ${remote("env-b", "env(REF_B)")}
         expect(result.problems).toEqual([]);
         expect(result.complete).toBe(true);
         expect(result.unknownValues).toBeGreaterThan(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -707,7 +707,7 @@ ${remote("env-b", "env(REF_B)")}
         expect(result.deferred.filter((item) => item.check.startsWith("auth.external"))).toEqual(
           [],
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("has no errors under --resolve-env with nothing set", () =>
@@ -718,7 +718,7 @@ ${remote("env-b", "env(REF_B)")}
         );
 
         expect(result.problems.filter((problem) => problem.severity === "error")).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -752,7 +752,7 @@ site_url = "env(SITE_URL)"
         expect(labels(bad.problems)).toEqual(["base:db.port:invalid_value"]);
         expect(good.problems).toEqual([]);
         expect(good.unknownValues).toBe(0);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("makes an unset variable an error only when something needs it", () =>
@@ -768,7 +768,7 @@ site_url = "env(SITE_URL)"
         expect(byName["DB_PORT"]).toMatchObject({ code: "env_empty", severity: "error" });
         expect(byName["SITE_URL"]).toMatchObject({ code: "env_unset", severity: "error" });
         expect(byName["SITE_URL"]?.env?.uses).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("warns about an unset variable no check waited on", () =>
@@ -784,7 +784,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
 
         expect(result.problems).toMatchObject([{ code: "env_unset", severity: "warning" }]);
         expect(result.deferred).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
   it.effect("names the allowed choices of a codec enum without quotes", () =>
@@ -802,7 +802,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
       expect(result.problems.map(({ reason, help }) => `${reason} ${help}`).join()).not.toContain(
         "nope",
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the other remote of a duplicate project_id, never the id", () =>
@@ -817,7 +817,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
       expect(result.problems.map(({ reason, help }) => `${reason} ${help}`).join()).not.toContain(
         "abcdefghijklmnopqrst",
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports no duplicate between remotes that omit project_id", () =>
@@ -833,7 +833,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
       expect(result.problems.map((problem) => problem.reason)).not.toContainEqual(
         expect.stringContaining("same project_id"),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("runs no project_id checks for a remote that is not a table", () =>
@@ -843,7 +843,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
       );
 
       expect(result.problems).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describe("units read the values start reads", () => {
@@ -862,7 +862,7 @@ admin_email = "a@b.c"
         const result = yield* run(SMTP_STRING_PORT);
 
         expect(result.problems).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("accepts a port that env() supplies as a string", () =>
@@ -873,7 +873,7 @@ admin_email = "a@b.c"
         );
 
         expect(result.problems).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not apply the smtp table rule while the smtp table is not enabled", () =>
@@ -888,7 +888,7 @@ host = "h"
 `);
 
         expect(result.problems).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports each smtp field the table rule finds while another is unknown", () =>
@@ -910,7 +910,7 @@ host = "env(SMTP_HOST)"
           "base:auth.email.smtp.user:missing_required",
         ]);
         expect(result.deferred.map((item) => item.check)).toContain("auth.email.smtp.host");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("gives a table-rule finding its requirement as the reason, with help", () =>
@@ -933,7 +933,7 @@ client_id = "env(GITHUB_ID)"
             help: "set secret, or set enabled = false",
           },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports each external provider field on its own", () =>
@@ -951,7 +951,7 @@ secret = "env(GITHUB_SECRET)"
         expect(labels(result.problems)).toEqual([
           "base:auth.external.github.client_id:missing_required",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -973,7 +973,7 @@ version = "not-a-version!!"
           "base:local.services.realtime.version:invalid_value",
         ]);
         expect(result.complete).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("keeps the same result when the variable is unset under --resolve-env", () =>
@@ -985,7 +985,7 @@ version = "not-a-version!!"
           "base:local.services.realtime.version:invalid_value",
         ]);
         expect(result.complete).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports an invalid required key beside another service's error and completes", () =>
@@ -1004,7 +1004,7 @@ version = "not-a-version!!"
           "base:local.services.realtime.version:invalid_value",
         ]);
         expect(result.complete).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1021,7 +1021,7 @@ container.memory = "env(REALTIME_MEMORY)"
         expect(labels(result.problems)).toContain(
           "base:local.services.realtime.version:invalid_value",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1038,7 +1038,7 @@ rls_enabled_no_policy = "env(SEVERITY)"
           expect(labels(result.problems)).toContain(
             "base:db.migrations.checks.rls_disabled_in_pubic:invalid_value",
           );
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1053,7 +1053,7 @@ rls_enabled_no_policy = "env(SEVERITY)"
         expect(result.problems).toMatchObject([
           { code: "env_unset", severity: "error", env: { name: "PW_REQ" } },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("stay warnings on a string key whose literal is accepted", () =>
@@ -1064,7 +1064,7 @@ rls_enabled_no_policy = "env(SEVERITY)"
         );
 
         expect(result.problems).toMatchObject([{ code: "env_unset", severity: "warning" }]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1095,7 +1095,7 @@ signing_keys_path = "keys.json"
         );
 
         expect(labels(result.problems)).toContain("base:auth.anon_key:invalid_value");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports one role's key error while the other role's key is unknown", () =>
@@ -1113,7 +1113,7 @@ signing_keys_path = "keys.json"
 
         expect(labels(result.problems)).toContain("base:auth.service_role_key:invalid_value");
         expect(labels(result.problems)).not.toContain("base:auth.anon_key:invalid_value");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a content_path error while inline content is unknown", () =>
@@ -1128,7 +1128,7 @@ content = "env(INLINE)"
         expect(labels(result.problems)).toContain(
           "base:auth.email.template.invite.content_path:invalid_value",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a base provider error once when a remote edits a sibling provider", () =>
@@ -1148,7 +1148,7 @@ client_id = "x"
         const github = labels(result.problems).filter((item) => item.includes("external.github"));
         expect(github.length).toBeGreaterThan(0);
         expect(github.every((item) => item.startsWith("base:"))).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1176,7 +1176,7 @@ subject = "y"
           "base:auth.email.template.invite.content_path:invalid_value",
           "base:storage.buckets.bad#name:invalid_value",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a base bucket name error once when a remote edits a value inside it", () =>
@@ -1193,7 +1193,7 @@ public = true
 `);
 
         expect(labels(result.problems)).toEqual(["base:storage.buckets.bad#name:invalid_value"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a bucket name error under the remote that adds the bucket", () =>
@@ -1208,7 +1208,7 @@ public = true
 `);
 
         expect(labels(result.problems)).toEqual(["staging:storage.buckets.bad#name:invalid_value"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a missing key to the base when a remote only edits a sibling", () =>
@@ -1228,7 +1228,7 @@ image = "b"
         expect(labels(result.problems)).toEqual([
           "base:local.services.default.version:missing_required",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("gives a remote the missing key of a table only that remote adds", () =>
@@ -1245,7 +1245,7 @@ image = "b"
         expect(labels(result.problems)).toEqual([
           "staging:local.services.default.version:missing_required",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("marks a problem written in the base block as inherited", () =>
@@ -1266,7 +1266,7 @@ enabled = true
         expect(result.problems).toMatchObject([
           { remote: "prod", inBase: true, path: ["auth", "site_url"] },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("quotes a remote name that is not a bare key in the duplicate message", () =>
@@ -1277,7 +1277,7 @@ enabled = true
 
         expect(result.problems).toHaveLength(1);
         expect(result.problems[0]?.reason).toMatch(/^same project_id as remotes\."[^"]+"$/);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1296,7 +1296,7 @@ enabled = "maybe"
           reason: "invalid",
           waitsOn: ["auth.passkey.enabled"],
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("defer the checks that branch on an invalid custom provider flag", () =>
@@ -1316,7 +1316,7 @@ enabled = "maybe"
         expect(result.deferred.map((item) => item.check)).not.toContain(
           "auth.external.table.client_id",
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1338,7 +1338,7 @@ secret = "${CIPHERTEXT}"
 
         expect(result.problems).toEqual([]);
         expect(result.deferred.map((item) => item.check)).toContain("auth.captcha.secret");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("decrypt under --resolve-env with the project's private key", () =>
@@ -1350,7 +1350,7 @@ secret = "${CIPHERTEXT}"
 
         expect(result.problems).toEqual([]);
         expect(result.deferred).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
     it.effect("fail under --resolve-env without a key that decrypts them", () =>
@@ -1358,7 +1358,7 @@ secret = "${CIPHERTEXT}"
         const result = yield* run(FIXTURE, lookupOf({}));
 
         expect(labels(result.problems)).toEqual(["base:auth.captcha.secret:invalid_value"]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 });
@@ -1526,7 +1526,7 @@ describe("runUnitsInContext", () => {
       const major = runs.find((run) => run.unit === "db.major_version");
       expect(major?.waits).toEqual([]);
       expect(major?.findings.map((found) => found.path.join("."))).toEqual(["db.major_version"]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -1535,7 +1535,7 @@ describe("independent findings", () => {
     run(toml).pipe(
       Effect.map((result) => labels(result.problems)),
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
     );
 
   it.effect("reports a missing captcha provider while the secret is unknown", () =>
@@ -1714,7 +1714,7 @@ enabled = "env(SMTP_ENABLED)"
           "auth.email.smtp.port",
           "auth.email.smtp.user",
         ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("tells an env() deferral from one waiting on an invalid value", () =>
@@ -1733,7 +1733,7 @@ secret = "env(CAPTCHA_SECRET)"
       const reasons = Object.fromEntries(result.deferred.map((item) => [item.check, item.reason]));
       expect(reasons["auth.captcha.secret"]).toBe("env");
       expect(reasons["api.port"]).toBe("invalid");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -1816,7 +1816,7 @@ describe("runUnitsInContext file reads", () => {
 
       expect(reads).toEqual([]);
       expect(runs.find((run) => run.unit === "auth.signing_keys")?.waits).not.toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("opens the file once every value the check reads is known", () =>
@@ -1828,7 +1828,7 @@ describe("runUnitsInContext file reads", () => {
       );
 
       expect(reads.some((read) => read.endsWith("keys.json"))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("touches no file for an email template path while auth is unknown", () =>
@@ -1873,6 +1873,6 @@ describe("runUnitsInContext file reads", () => {
       ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
 
       expect(touched).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

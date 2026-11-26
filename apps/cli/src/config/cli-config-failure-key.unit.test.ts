@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigRemovedKeyError } from "@supabase/config";
 import { Effect, Option, Schema } from "effect";
@@ -24,7 +24,7 @@ const loadFailure = (config: string) =>
       values.load({ workdir, projectRef: Option.none() }),
     ).pipe(Effect.provide(configValuesLayer()), Effect.flip);
   }).pipe(
-    Effect.provide(BunServices.layer),
+    Effect.provide(NodeServices.layer),
     (effect) => withConfigEnv(definedEnv({}), effect),
     Effect.scoped,
   );

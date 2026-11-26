@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Console, Context, Effect, Layer, Option, Schema } from "effect";
 import { CliOutput, Command, Flag } from "effect/cli";
@@ -66,7 +66,7 @@ const runInputs = (args: ReadonlyArray<string>) =>
       withCliConfigFlags(config),
     );
     yield* Command.runWith(command, { version: "0.0.0-test" })(args).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );
     const inputs = seen[0];
     if (inputs === undefined) throw new Error("handler did not run");
@@ -255,7 +255,7 @@ describe("config-bound flags in machine-readable help", () => {
       yield* Command.runWith(command, { version: "0.0.0-test" })(["--help"]).pipe(
         Effect.provide(
           Layer.mergeAll(
-            BunServices.layer,
+            NodeServices.layer,
             CliOutput.layer(jsonCliOutputFormatter()),
             Layer.succeed(Console.Console, console),
           ),

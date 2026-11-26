@@ -1,6 +1,6 @@
 import { inspect } from "node:util";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Predicate } from "effect";
 import { convertCliConfigJsoncToToml } from "@supabase/config/convert";
@@ -60,7 +60,7 @@ const validate = Effect.fnUntraced(function* (
     ),
     Layer.effect(ConfigProvider.ConfigProvider, pinnedConfigProvider(options.env)),
     Layer.succeed(CliEnvNameSource, () => Object.keys(options.env ?? {})),
-    BunServices.layer,
+    NodeServices.layer,
   );
   const outcome = yield* configValidate({ resolveEnv: options.resolveEnv === true }).pipe(
     Effect.provide(layer),
@@ -161,7 +161,7 @@ describe("config validate integration", () => {
         errors: [],
         warnings: [],
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("validates the config.jsonc written by init with no warnings", () =>
@@ -194,14 +194,14 @@ describe("config validate integration", () => {
         errors: [],
         warnings: [],
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("accepts JSON and JSONC configs", () =>
     Effect.gen(function* () {
       const json = yield* validate({ "supabase/config.json": '{ "project_id": "demo" }' });
       expect(json.stdout).toBe("✓ supabase/config.json is valid\n");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("accepts a JSONC config with comments and trailing commas", () =>
@@ -210,7 +210,7 @@ describe("config validate integration", () => {
         "supabase/config.jsonc": '{\n  // name\n  "project_id": "demo",\n}\n',
       });
       expect(result.stdout).toBe("✓ supabase/config.jsonc is valid\n");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports every problem of the spec config in one run and exits 1 quietly", () =>
@@ -248,7 +248,7 @@ describe("config validate integration", () => {
           Checked remotes: staging
         "
       `);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the spec config as a JSON payload", () =>
@@ -352,7 +352,7 @@ describe("config validate integration", () => {
           "warnings": [],
         }
       `);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports problems in a JSONC config", () =>
@@ -375,7 +375,7 @@ describe("config validate integration", () => {
         ✗ 3 errors in supabase/config.jsonc
         "
       `);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps checking values and validations after a schema error", () =>
@@ -395,7 +395,7 @@ describe("config validate integration", () => {
       expect(result.stdout).toContain(
         "auth.captcha.secret  required when auth.captcha.enabled = true",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a removed key together with a typo and the rest", () =>
@@ -414,7 +414,7 @@ describe("config validate integration", () => {
         { code: "unknown_key", key: "api.prot" },
         { code: "invalid_value", key: "db.major_version" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps validating the base when a remote has a structural error", () =>
@@ -429,7 +429,7 @@ describe("config validate integration", () => {
       expect(result.stdout).toContain("api.max_rows");
       expect(result.stdout).toContain("[remote: prod]");
       expect(result.stdout).not.toContain("[remote: prod]\n    supabase/config.toml:3");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports every bad remote project_id and still validates every remote block", () =>
@@ -451,7 +451,7 @@ describe("config validate integration", () => {
         { code: "remote_project_id", key: "remotes.b.project_id", remote: "b" },
         { code: "invalid_value", key: "remotes.c.api.max_rows", remote: "c" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a duplicate remote project_id against the later remote", () =>
@@ -463,7 +463,7 @@ describe("config validate integration", () => {
       );
 
       expect(result.stdout).toContain("project_id  same project_id as remotes.a  [remote: b]");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still validates a duplicate remote and quotes a bracketed original", () =>
@@ -485,7 +485,7 @@ describe("config validate integration", () => {
         },
         { code: "invalid_value", remote: "b", key: "remotes.b.api.max_rows" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops and says so when the env files cannot be read", () =>
@@ -504,7 +504,7 @@ describe("config validate integration", () => {
         stopped_at: "env_file",
       });
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([{ code: "env_file" }]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops after a syntax error and reports it as incomplete", () =>
@@ -524,7 +524,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(json) ?? {}, "errors")).toMatchObject([
         { code: "syntax", line: 2 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops when config.json and config.jsonc both exist", () =>
@@ -549,7 +549,7 @@ describe("config validate integration", () => {
           help: "delete the file you don't use",
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("points at the schema declaration when the config schema is too new", () =>
@@ -560,7 +560,7 @@ describe("config validate integration", () => {
 
       expect(result.stdout).toContain("supabase/config.toml:1:10");
       expect(result.stdout).toContain("Stopped after the schema version check.");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("treats a config.toml beside config.json as an error", () =>
@@ -582,7 +582,7 @@ describe("config validate integration", () => {
           help: "delete the file you don't use",
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not let an unset base reference hide a remote's own error", () =>
@@ -597,7 +597,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "invalid_value", key: "remotes.prod.api.max_rows" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("masks the siblings of an env() reference held in an array", () =>
@@ -611,7 +611,7 @@ describe("config validate integration", () => {
 
       expect(result.stdout).toContain("UNSET_SCHEMA is not set. It is used at 3:");
       expect(reportedTexts(result)).not.toContain("hunter2-do-not-print");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps an unknown key whose value is an unresolved env() reference", () =>
@@ -624,7 +624,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "unknown_key", key: "api.prot" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a remotes key that is not a table, and a remote that is not a table", () =>
@@ -643,7 +643,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(entry) ?? {}, "errors")).toMatchObject([
         { code: "invalid_type", key: "remotes.staging", line: 3 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the real env file and failure kind when a root .env cannot be parsed", () =>
@@ -659,7 +659,7 @@ describe("config validate integration", () => {
         { code: "env_file", file: ".env", reason: "could not be parsed" },
       ]);
       expect(reportedTexts(result)).not.toContain("bad-line-do-not-print");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("locates a key under a table whose name contains a dot", () =>
@@ -674,7 +674,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
         expect.objectContaining({ code: "invalid_type", line: 7, column: 10 }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("validates a remote block whose project_id is unusable", () =>
@@ -694,7 +694,7 @@ describe("config validate integration", () => {
         { remote: "c", key: "remotes.c.db.major_version" },
       ]);
       expect(Reflect.get(data, "warnings")).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a cross-key error that reads no unresolved reference", () =>
@@ -709,7 +709,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { key: "auth.mfa.totp.enroll_enabled" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a cross-key error whose check does not read the unresolved gate", () =>
@@ -724,7 +724,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { key: "edge_runtime.deno_version" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a remote's own error when the base value is unknown", () =>
@@ -739,7 +739,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { key: "auth.site_url", remote: "prod" },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   const GATED_PRODUCERS: ReadonlyArray<{
@@ -878,7 +878,7 @@ describe("config validate integration", () => {
         expect(Reflect.get(payloadOf(open) ?? {}, "errors")).toContainEqual(
           expect.objectContaining({ key: error }),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("still reports a malformed literal remote project_id", () =>
@@ -891,7 +891,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "remote_project_id", remote: "prod", line: 3 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("scopes a removed-table rename hint to its remote", () =>
@@ -910,7 +910,7 @@ describe("config validate integration", () => {
           help: "rename [remotes.prod.inbucket] to [remotes.prod.local_smtp]",
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps a dotted remote name whole in a removed-table rename hint", () =>
@@ -929,7 +929,7 @@ describe("config validate integration", () => {
           help: 'rename [remotes."prod.eu".inbucket] to [remotes."prod.eu".local_smtp]',
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("quotes the empty choice of a codec enum", () =>
@@ -947,7 +947,7 @@ describe("config validate integration", () => {
             'expected one of "", letters_digits, lower_upper_letters_digits, lower_upper_letters_digits_symbols',
         },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not warn about unset env() references under a disabled custom provider", () =>
@@ -962,7 +962,7 @@ describe("config validate integration", () => {
       expect(payloadOf(result)).toMatchObject({ valid: true });
       expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toEqual([]);
       expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a remote's own error when it replaces an unset env() value with a table", () =>
@@ -977,7 +977,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
         expect.objectContaining({ remote: "prod", key: "remotes.prod.api.max_rows" }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("locates a codec failure under a provider name that contains a dot", () =>
@@ -990,7 +990,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toContainEqual(
         expect.objectContaining({ line: 3 }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each(["email", "sms"])(
@@ -1005,7 +1005,7 @@ describe("config validate integration", () => {
         expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
           { key: `auth.${provider}.enabled`, line: 3 },
         ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a present key with a bad value once, not also as missing", () =>
@@ -1018,7 +1018,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "invalid_value", key: "local.services.rest.version", line: 3 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("locates a remote without project_id inside that remote, not on the base key", () =>
@@ -1031,7 +1031,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { code: "remote_project_id", remote: "prod", line: 2 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the bigquery backend when a gcp key is missing", () =>
@@ -1047,7 +1047,7 @@ describe("config validate integration", () => {
       );
       expect(result.stdout).toContain('help: set gcp_project_id, or set backend = "postgres"');
       expect(result.stdout).toContain('help: set gcp_project_number, or set backend = "postgres"');
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names auth.passkey.enabled as the switch for missing webauthn keys", () =>
@@ -1060,7 +1060,7 @@ describe("config validate integration", () => {
 
       expect(result.stdout).toContain("help: set rp_id, or set auth.passkey.enabled = false");
       expect(result.stdout).not.toContain("set enabled = false");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("locates keys in a TOML file that starts with a byte order mark", () =>
@@ -1073,7 +1073,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { key: "db.major_version", line: 3, column: 17, end_line: 3, end_column: 19 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not treat an env() reference as a value of the wrong type", () =>
@@ -1084,7 +1084,7 @@ describe("config validate integration", () => {
 
       expect(result.exitCode).toBeUndefined();
       expect(result.stdout).toContain("✓ supabase/config.toml is valid");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("says how many values and checks the env() references left unchecked", () =>
@@ -1098,7 +1098,7 @@ describe("config validate integration", () => {
       expect(result.stdout).toMatch(
         /\n  1 value comes from env\(\) and \d+ checks? w(as|ere) not run; run with --resolve-env to check them\n/,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("lists the deferred checks and unknown values in the JSON payload", () =>
@@ -1116,7 +1116,7 @@ describe("config validate integration", () => {
         reason: "env",
         waits_on: ["auth.captcha.secret"],
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports a base error once, not again for every remote", () =>
@@ -1132,7 +1132,7 @@ describe("config validate integration", () => {
       expect(errors).toHaveLength(1);
       expect(errors).toMatchObject([{ key: "api.max_rows", line: 3 }]);
       expect(errors[0]).not.toHaveProperty("remote");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("locates a problem a remote causes in that remote", () =>
@@ -1147,7 +1147,7 @@ describe("config validate integration", () => {
       expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
         { remote: "a", key: "remotes.a.db.major_version", line: 5 },
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   describe("--resolve-env", () => {
@@ -1165,7 +1165,7 @@ describe("config validate integration", () => {
             "⚠ studio.openai_api_key  OPENAI is not set. It is used at 3:18, 5:17",
           );
           expect(result.stdout).toContain("✓ supabase/config.toml is valid · 1 warning");
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("warns, not errors, on an unset signing_keys_path nothing needs", () =>
@@ -1182,7 +1182,7 @@ describe("config validate integration", () => {
         expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
           { key: "auth.signing_keys_path" },
         ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("reports a variable set to an empty value", () =>
@@ -1195,7 +1195,7 @@ describe("config validate integration", () => {
         expect(Reflect.get(payloadOf(result) ?? {}, "warnings")).toMatchObject([
           { code: "env_empty", key: "studio.openai_api_key" },
         ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("lets an empty shell variable mask a value in a .env file", () =>
@@ -1209,7 +1209,7 @@ describe("config validate integration", () => {
           { code: "env_empty" },
         ]);
         expect(reportedTexts(result)).not.toContain("from-file");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("accepts variables the shell and the selected .env.<name> file supply", () =>
@@ -1228,7 +1228,7 @@ describe("config validate integration", () => {
         );
 
         expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("makes an unset variable an error when a check needs it", () =>
@@ -1245,7 +1245,7 @@ describe("config validate integration", () => {
           { code: "env_unset", key: "auth.captcha.secret", line: 5 },
         ]);
         expect(Reflect.get(payloadOf(result) ?? {}, "deferred")).not.toEqual([]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("makes an unset variable an error when it feeds a number key", () =>
@@ -1259,7 +1259,7 @@ describe("config validate integration", () => {
         expect(Reflect.get(payloadOf(result) ?? {}, "errors")).toMatchObject([
           { code: "env_unset", key: "api.port" },
         ]);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("checks a set value like a literal and never prints it", () =>
@@ -1272,7 +1272,7 @@ describe("config validate integration", () => {
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("api.port  expected");
         expect(reportedTexts(result)).not.toContain("hunter2-not-a-port");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("passes a fresh init project with warnings only", () =>
@@ -1287,7 +1287,7 @@ describe("config validate integration", () => {
 
         expect(result.exitCode).toBeUndefined();
         expect(payloadOf(result)).toMatchObject({ valid: true, errors: [], deferred: [] });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1304,7 +1304,7 @@ describe("config validate integration", () => {
         );
 
         leaks(result);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("masks a typo'd secret key and its neighbours", () =>
@@ -1327,7 +1327,7 @@ describe("config validate integration", () => {
           ),
         );
         leaks(text);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("masks a custom provider secret, db.vault and a multi-line secret", () =>
@@ -1341,7 +1341,7 @@ describe("config validate integration", () => {
         expect(result.stdout).toContain("auth.hook.send_email.secrets");
         leaks(result);
         expect(result.stdout).not.toContain("line2");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect(
@@ -1358,7 +1358,7 @@ describe("config validate integration", () => {
           expect(result.stdout).toContain("auth.hook.send_email.bogus");
           leaks(result);
           expect(result.stdout).not.toContain(padded.slice(0, 8));
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("masks the nested values of an inline table at a located value", () =>
@@ -1369,7 +1369,7 @@ describe("config validate integration", () => {
 
         expect(result.stdout).toContain("api.max_rows");
         leaks(result);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("masks the URL on the context and problem lines", () =>
@@ -1389,7 +1389,7 @@ describe("config validate integration", () => {
         expect(own.stdout).toContain("studio.api_url");
         expect(own.stdout).not.toContain("pass-secret");
         expect(own.stdout).not.toContain("tok-secret");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     const ADVERSARIAL: ReadonlyArray<readonly [string, Readonly<Record<string, string>>]> = [
@@ -1490,7 +1490,7 @@ describe("config validate integration", () => {
               expect(printed).not.toContain(marker);
             }
           }
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       );
     }
 
@@ -1502,7 +1502,7 @@ describe("config validate integration", () => {
 
         expect(result.stdout).toContain("db.major_version");
         leaks(result);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.effect("does not print a configured value in any message", () =>
@@ -1515,7 +1515,7 @@ describe("config validate integration", () => {
         );
 
         leaks(result);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   });
 
@@ -1528,7 +1528,7 @@ describe("config validate integration", () => {
       expect(result.failure).toMatchObject({ _tag: "ConfigValidateLoadError" });
       expect(result.failure?.message).toContain("file not found");
       expect(result.flushed).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects -o/--output in favour of --output-format", () =>
@@ -1541,7 +1541,7 @@ describe("config validate integration", () => {
           "the -o/--output flag is not supported by config validate; use --output-format json|stream-json instead.",
       });
       expect(result.stdout).toBe("");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("never reads the linked project ref", () =>
@@ -1555,7 +1555,7 @@ describe("config validate integration", () => {
 
       expect(result.failure).toBeUndefined();
       expect(result.stdout).toBe("✓ supabase/config.toml is valid\n");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails a config.json whose top level is not an object", () =>
@@ -1571,7 +1571,7 @@ describe("config validate integration", () => {
           errors: [{ code: "syntax", reason: "the top level must be an object" }],
         });
       }
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("attributes a deprecated key to a remote whose name contains a dot", () =>
@@ -1590,7 +1590,7 @@ describe("config validate integration", () => {
           key: "remotes.prod.eu.auth.email.enable_signup",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not suggest --resolve-env for checks skipped over an invalid value", () =>
@@ -1607,7 +1607,7 @@ describe("config validate integration", () => {
       expect(deferred).toContainEqual(
         expect.objectContaining({ check: "api.port", reason: "invalid" }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("defers requirement checks of an enabled custom provider whose values are unset", () =>
@@ -1624,7 +1624,7 @@ describe("config validate integration", () => {
         reason: "env",
         waits_on: ["auth.external.myidp.client_id", "auth.external.myidp.secret"],
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an unparseable bucket file_size_limit and accepts valid sizes", () =>
@@ -1642,7 +1642,7 @@ describe("config validate integration", () => {
         { format: "json" },
       );
       expect(Reflect.get(payloadOf(good) ?? {}, "errors")).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("defers a bucket file_size_limit held in an unset env() reference", () =>
@@ -1660,6 +1660,6 @@ describe("config validate integration", () => {
         reason: "env",
         waits_on: ["storage.buckets.avatars.file_size_limit"],
       });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

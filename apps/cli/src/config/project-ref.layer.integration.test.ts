@@ -1,5 +1,5 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -58,7 +58,7 @@ describe("projectRefLayer Management API requests", () => {
       Layer.provide(output.layer),
       Layer.provide(commandTargetLayer.pipe(Layer.provide(output.layer))),
       Layer.provide(api.factoryLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
     return { api, layer };
   }
@@ -127,7 +127,7 @@ describe("projectRefLayer Management API requests", () => {
       const ref = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
       expect(api.requests).toEqual([]);
-    }).pipe(Effect.provide([layer, BunServices.layer]));
+    }).pipe(Effect.provide([layer, NodeServices.layer]));
   });
 });
 
@@ -154,11 +154,11 @@ describe("projectRefLayer reads the checkout's link", () => {
       Layer.provide(output.layer),
       Layer.provide(commandTargetLayer.pipe(Layer.provide(output.layer))),
       Layer.provide(mockCommandPlatformApi({ response: { status: 200, body: [] } }).factoryLayer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
     return effect.pipe(
       Effect.provide(
-        Layer.mergeAll(layer, settings, BunServices.layer, projectStateModeLayer(mode)),
+        Layer.mergeAll(layer, settings, NodeServices.layer, projectStateModeLayer(mode)),
       ),
       Effect.map((value) => ({ value, stderr: output.stderrText })),
     );
@@ -190,7 +190,7 @@ describe("projectRefLayer reads the checkout's link", () => {
         poolerUrl: poolerUrlFor(VALID_REF),
       });
       expect(value.other).toEqual({ ref: FLAG_REF, source: "flag", matchesLinkedRef: false });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolves the stack-mode link and carries its pooler URL to the linked ref only", () =>
@@ -210,7 +210,7 @@ describe("projectRefLayer reads the checkout's link", () => {
         poolerUrl: poolerUrlFor(VALID_REF),
       });
       expect(value.other).toEqual({ ref: FLAG_REF, source: "flag", matchesLinkedRef: false });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("announces a stack-mode linked branch under its parent project", () =>
@@ -234,6 +234,6 @@ describe("projectRefLayer reads the checkout's link", () => {
         parent: { kind: "resolved", ref: VALID_REF, linkedRef: BRANCH_REF },
       });
       expect(stderr).toContain(`project alpha (${VALID_REF}) · branch feature-x (${BRANCH_REF})`);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

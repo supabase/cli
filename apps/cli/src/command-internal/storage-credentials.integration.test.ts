@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer } from "effect";
 
@@ -32,8 +32,8 @@ describe("resolveStorageCredentials for a remote project", () => {
           mockCommandSettings({ workdir: "/unused" }),
           mockRuntimeInfo(),
           unusedStackServices,
-          BunServices.layer,
-          BunCrypto.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     );

@@ -1,4 +1,4 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { $ } from "bun";
 import { Console, Effect, Path } from "effect";
 import process from "node:process";
@@ -210,6 +210,6 @@ const main = Effect.gen(function* () {
 await Effect.runPromise(
   main.pipe(
     Effect.catch((e) => Effect.die(e.cause)),
-    Effect.provide(BunPath.layer),
+    Effect.provide(NodePath.layer),
   ),
 );

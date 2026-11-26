@@ -1,6 +1,6 @@
 import type { ProvidedContext } from "vitest";
 
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { makeApiClient } from "@supabase/api/effect";
 import { Data, Effect, FileSystem, Layer, Path, Predicate } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -72,8 +72,8 @@ export function setup({ provide }: LiveSetupContext): Promise<() => Promise<void
       Effect.provide(
         Layer.mergeAll(
           FetchHttpClient.layer,
-          BunFileSystem.layer,
-          BunPath.layer,
+          NodeFileSystem.layer,
+          NodePath.layer,
           cliConfigProviderLayer,
         ),
       ),

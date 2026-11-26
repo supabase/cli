@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
@@ -56,7 +56,7 @@ const layerIn = (
   genTypesGeneratorLayer.pipe(
     Layer.provide(databaseRecording(issued, schemas)),
     Layer.provide(runtimeIn(cwd)),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
     Layer.provide(Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord(env))),
   );
 
@@ -108,7 +108,7 @@ const withFakeDart = <A, E, R>(
     yield* fs.writeFileString(path.join(bin, "dart"), FAKE_DART);
     yield* fs.chmod(path.join(bin, "dart"), 0o755);
     return yield* body({ cwd, bin });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 /** A stand-in `supabase-typegen` that echoes its arguments and its stdin. */
 const FAKE_TYPEGEN_BINARY = `#!/bin/sh
@@ -154,7 +154,7 @@ const withFakeSupabaseTypegen = <A, E, R>(
         return binary;
       }).pipe(Effect.orDie);
     return yield* body({ cwd, install });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const expectFakeSupabaseTypegenOutput = (output: string) => {
   expect(output).toContain("supabase-typegen args: --access-control internal\n");
@@ -237,7 +237,7 @@ describe.skipIf(process.platform === "win32")(
           expect(error.message).toContain("needs Dart 3.8.0 or newer");
         }).pipe(
           Effect.provide(
-            Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), BunServices.layer),
+            Layer.merge(layerIn(cwd, { PATH: `${bin}:/usr/bin:/bin` }), NodeServices.layer),
           ),
         ),
       ),

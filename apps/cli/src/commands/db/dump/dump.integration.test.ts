@@ -1,5 +1,5 @@
 import process from "node:process";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -529,7 +529,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DnsResolverFlag, "native"),
-    BunServices.layer,
+    NodeServices.layer,
   );
   return { layer, out, telemetry, resolver, docker, bundled, cache, projectHttp };
 }
@@ -958,7 +958,7 @@ describe("db dump integration", () => {
         `${key}:/run/supabase/tls/client.key:ro`,
       ]);
       expect(docker.lastOpts?.securityOpt).toEqual(["label:disable"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails before pg_dump runs when a TLS file is missing", () =>
@@ -975,7 +975,7 @@ describe("db dump integration", () => {
       );
       expect(failMessage(exit)).toContain(`failed to read sslrootcert ${missing}`);
       expect(docker.allOpts).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the image CA bundle without a host root cert", () =>
@@ -1033,7 +1033,7 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.cmd[2]).toContain(
         "(umask 077 && cp /run/supabase/tls/client.key /tmp/supabase-client.key) || exit 1\n",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("verifies a pinned Supabase project against the bundled CA in a native pg_dump", () =>
@@ -1063,7 +1063,7 @@ describe("db dump integration", () => {
       expect(env["PGSSLROOTCERT"]).toMatch(/supabase-root-.*\.crt$/u);
       expect(rootCertDuringRun).toBe(rootCaBundle());
       expect(yield* fs.exists(env["PGSSLROOTCERT"] ?? "")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("mounts the linked project's TLS files into a Windows tool container", () =>
@@ -1087,7 +1087,7 @@ describe("db dump integration", () => {
         { source: root, target: "/run/supabase/tls/root.crt", readOnly: true },
       ]);
       expect(bundled.lastOpts?.securityOpt).toEqual(["label:disable"]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects a TLS file path that a Docker bind mount cannot carry", () => {
@@ -1217,7 +1217,7 @@ describe("db dump integration", () => {
             PGSSLMODE: "verify-full",
             PGSSLROOTCERT: expected,
           });
-        }).pipe(Effect.provide(BunServices.layer)),
+        }).pipe(Effect.provide(NodeServices.layer)),
       );
     },
   );
@@ -1528,7 +1528,7 @@ describe("db dump integration", () => {
       );
       expect(exitCode).toBe(0);
       expect(stdout).toBe("true");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live.skipIf(process.platform === "win32")(
@@ -1553,7 +1553,7 @@ describe("db dump integration", () => {
         );
         expect(exitCode).toBe(0);
         expect(yield* readUtf8(file)).toBe("false");
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("windows: warns when a piped stdout dump contains non-ASCII text", () => {
@@ -1671,7 +1671,7 @@ describe("db dump permissions through the real resolver and cache", () => {
         requests: asRecordedRequests(requests),
         exact: true,
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect("does not mint a login role when --password is given", () => {
@@ -1703,7 +1703,7 @@ describe("db dump permissions through the real resolver and cache", () => {
         requests: asRecordedRequests(requests),
         exact: true,
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 
   it.effect(
@@ -1728,7 +1728,7 @@ describe("db dump permissions through the real resolver and cache", () => {
           requests: [],
           exact: true,
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     },
   );
 
@@ -1760,6 +1760,6 @@ describe("db dump permissions through the real resolver and cache", () => {
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   });
 });

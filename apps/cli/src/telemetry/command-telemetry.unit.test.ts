@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 import { Flag } from "effect/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
@@ -110,7 +110,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           mockTelemetryRuntime({ consent, deviceId: "device-1", sessionId: "session-1" }),
         ),
       ),
@@ -158,7 +158,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["backups", "list"]),
           }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -193,7 +193,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -221,7 +221,7 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) }),
-            commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.exit,
@@ -311,7 +311,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["backups", "list", "--output", "yaml"]),
           }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -342,7 +342,7 @@ describe("withCommandTelemetry", () => {
               "json",
             ]),
           }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -368,7 +368,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
           }),
-          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -398,7 +398,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
           }),
-          commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -423,7 +423,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -451,7 +451,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "lint", "-s", "public"]),
           }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -485,7 +485,7 @@ describe("withCommandTelemetry", () => {
             Stdio.layerTest({
               args: Effect.succeed(["fixture", "watch", "-f", "--service", "database"]),
             }),
-            commandRuntimeLayer(["fixture", "watch"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["fixture", "watch"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -514,7 +514,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
           }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -542,7 +542,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "query", "-f", "query.sql"]),
           }),
-          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -580,7 +580,7 @@ describe("withCommandTelemetry", () => {
             ]),
           }),
           commandRuntimeLayer(["db", "schema", "declarative", "generate"]).pipe(
-            Layer.provide(BunCrypto.layer),
+            Layer.provide(NodeCrypto.layer),
           ),
         ),
       ),
@@ -619,7 +619,7 @@ describe("withCommandTelemetry", () => {
             ]),
           }),
           commandRuntimeLayer(["db", "schema", "declarative", "sync"]).pipe(
-            Layer.provide(BunCrypto.layer),
+            Layer.provide(NodeCrypto.layer),
           ),
         ),
       ),
@@ -655,7 +655,7 @@ describe("withCommandTelemetry", () => {
               "--disable-db-ssl-enforcement",
             ]),
           }),
-          commandRuntimeLayer(["ssl-enforcement", "update"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["ssl-enforcement", "update"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -686,7 +686,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
           }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -722,7 +722,7 @@ describe("withCommandTelemetry", () => {
             mockOutput({ format: "text" }).layer,
             Layer.succeed(TargetPolicy, { group, consent: "none" }),
             Stdio.layerTest({ args: Effect.succeed(["functions", "list", ...args]) }),
-            commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.map(() => analytics.captured[0]?.properties.flags),
@@ -867,7 +867,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
-          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -903,7 +903,7 @@ describe("withCommandTelemetry", () => {
             Stdio.layerTest({
               args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]),
             }),
-            commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -934,7 +934,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) }),
-          commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -963,7 +963,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
-          commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -995,7 +995,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
           }),
-          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1018,7 +1018,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1040,7 +1040,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1066,7 +1066,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1106,7 +1106,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["migration", "list"]) }),
-          commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1133,7 +1133,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1161,7 +1161,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1192,7 +1192,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "json" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1226,7 +1226,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "json" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["config", "validate"]) }),
-          commandRuntimeLayer(["config", "validate"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["config", "validate"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1257,7 +1257,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "json" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) }),
-          commandRuntimeLayer(["db", "advisors"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "advisors"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1296,7 +1296,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "json" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1344,7 +1344,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "json" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
-          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
     );
@@ -1365,7 +1365,7 @@ describe("withCommandTelemetry", () => {
           processControl.layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) }),
-          commandRuntimeLayer(["unknown", "command"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["unknown", "command"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1400,7 +1400,7 @@ describe("withCommandTelemetry", () => {
             processControl.layer,
             mockOutput({ format: "json" }).layer,
             Stdio.layerTest({ args: Effect.succeed(["config", "diff", "--exit-code"]) }),
-            commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -1437,7 +1437,7 @@ describe("withCommandTelemetry", () => {
             processControl.layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -1469,7 +1469,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) }),
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.exit,
@@ -1509,7 +1509,7 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "json" }).layer,
             Stdio.layerTest({ args: Effect.succeed(["branches", "create"]) }),
-            commandRuntimeLayer(["branches", "create"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["branches", "create"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.exit,
@@ -1550,7 +1550,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) }),
-          commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1585,7 +1585,7 @@ describe("withCommandTelemetry", () => {
               "abcdefghijklmnopqrst",
             ]),
           }),
-          commandRuntimeLayer(["backups", "restore"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "restore"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1609,7 +1609,7 @@ describe("withCommandTelemetry", () => {
           mockOutput({ format: "text" }).layer,
           mockProcessControl().layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           // `table` is valid on the shared global union but not for a resource command.
           Layer.succeed(OutputFlag, Option.some("table" as const)),
         ),
@@ -1638,7 +1638,7 @@ describe("withCommandTelemetry", () => {
           mockOutput({ format: "text" }).layer,
           mockProcessControl().layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) }),
-          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(OutputFlag, Option.some("csv" as const)),
         ),
       ),
@@ -1663,7 +1663,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["link"]) }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(NodeCrypto.layer)),
           stitch.layer,
         ),
       ),
@@ -1687,7 +1687,7 @@ describe("withCommandTelemetry", () => {
           mockOutput({ format: "text" }).layer,
           mockProcessControl().layer,
           Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) }),
-          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(OutputFlag, Option.some("yaml" as const)),
         ),
       ),
@@ -1714,7 +1714,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["link"]) }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(NodeCrypto.layer)),
           stitch.layer,
         ),
       ),
@@ -1740,7 +1740,7 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -1769,7 +1769,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
           }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1798,7 +1798,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
           }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1826,7 +1826,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
           }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1854,7 +1854,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
           }),
-          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -1878,7 +1878,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(DebugFlag, true),
         ),
       ),
@@ -1912,7 +1912,7 @@ describe("withCommandTelemetry", () => {
               "--debug",
             ]),
           }),
-          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(DebugFlag, true),
         ),
       ),
@@ -1943,7 +1943,7 @@ describe("withCommandTelemetry", () => {
             Stdio.layerTest({
               args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
             }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
             Layer.succeed(WorkdirFlag, Option.some("/tmp/project")),
           ),
         ),
@@ -1970,7 +1970,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
           }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(DnsResolverFlag, "https" as const),
         ),
       ),
@@ -1996,7 +1996,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["backups", "list", "--agent", "yes"]),
           }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(AgentFlag, "yes" as const),
         ),
       ),
@@ -2028,7 +2028,7 @@ describe("withCommandTelemetry", () => {
             Stdio.layerTest({
               args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
             }),
-            commandRuntimeLayer(["db", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["db", "diff"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -2052,7 +2052,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -2077,7 +2077,7 @@ describe("withCommandTelemetry", () => {
           Stdio.layerTest({
             args: Effect.succeed(["test", "db", "--", "--linked"]),
           }),
-          commandRuntimeLayer(["test", "db"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["test", "db"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
       Effect.tap(() =>
@@ -2100,7 +2100,7 @@ describe("withCommandTelemetry", () => {
           mockProcessControl().layer,
           mockOutput({ format: "text" }).layer,
           Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) }),
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
           Layer.succeed(OutputFlag, Option.some("json" as const)),
         ),
       ),
@@ -2134,7 +2134,7 @@ describe("withCommandTelemetry", () => {
             Stdio.layerTest({
               args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
             }),
-            commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(NodeCrypto.layer)),
           ),
         ),
         Effect.tap(() =>
@@ -2162,7 +2162,7 @@ describe("withCommandTelemetry", () => {
             mockProcessControl().layer,
             mockOutput({ format: "text" }).layer,
             Stdio.layerTest({ args: Effect.succeed(args) }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(NodeCrypto.layer)),
             telemetryState.layer,
           ),
         ),

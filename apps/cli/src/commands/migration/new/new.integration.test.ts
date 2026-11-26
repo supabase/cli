@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { badArgument } from "effect/PlatformError";
@@ -44,7 +44,7 @@ function nonMaterializingFsLayer(
             : real.writeFile(filePath, data, options),
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -55,7 +55,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry.layer,
     mockStdin(opts.isTTY ?? true, opts.piped),
     mockCommandSettings({ workdir }),
-    BunServices.layer,
+    NodeServices.layer,
     ...(opts.openDoesNotMaterialize === true || opts.writeDoesNotMaterialize === true
       ? [nonMaterializingFsLayer(workdir, opts)]
       : []),
@@ -231,7 +231,7 @@ describe("migration new", () => {
         telemetry.layer,
         failingStdin,
         mockCommandSettings({ workdir: tmp.current }),
-        BunServices.layer,
+        NodeServices.layer,
       );
       return Effect.gen(function* () {
         const error = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.flip);

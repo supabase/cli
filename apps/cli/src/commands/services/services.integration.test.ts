@@ -1,7 +1,7 @@
 import { legacyProjectStateLayer } from "../../shared/config/legacy-project-state.layer.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { CliOutput, Command } from "effect/cli";
 import {
   Cause,
@@ -104,8 +104,8 @@ function setup(
     cachedRefs,
     layer: Layer.mergeAll(
       cliConfigValuesTestLayer,
-      BunServices.layer,
-      legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+      NodeServices.layer,
+      legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
       FetchHttpClient.layer,
       mockRuntimeInfo({
         cwd: opts.workdir ?? defaultWorkdir.current,
@@ -270,9 +270,9 @@ describe("services", () => {
       const args = ["services"];
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
-        BunServices.layer,
-        BunCrypto.layer,
-        legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+        NodeServices.layer,
+        NodeCrypto.layer,
+        legacyProjectStateLayer.pipe(Layer.provide(NodeServices.layer)),
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
         out.layer,
@@ -304,7 +304,7 @@ describe("services", () => {
       expect(out.stdoutText).toContain("supabase/postgres");
       expect(out.stdoutText).toContain("supabase/gotrue");
       expect(out.stderrText).not.toContain("Access token not provided");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prints the services table by default", () => {
@@ -349,7 +349,7 @@ describe("services", () => {
           local: postgresVersionForDbMajorVersion(15),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the stack artifact catalog when the stack backend is selected", () =>
@@ -381,7 +381,7 @@ describe("services", () => {
         }),
       );
       expect(rows.map((row) => row.name)).not.toContain("ghcr.io/supabase/cli/vector");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("applies the stack PostgreSQL environment override", () =>
@@ -404,7 +404,7 @@ describe("services", () => {
           local: catalogUpstreamVersion("postgres", { additional: true }),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the pinned OrioleDB build selected by SUPABASE_DB_ORIOLEDB_VERSION", () =>
@@ -428,7 +428,7 @@ describe("services", () => {
         }),
       );
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
@@ -457,7 +457,7 @@ describe("services", () => {
         );
         expect(out.stderrText).toContain("unsupported PostgreSQL major version: 16");
         expect(out.stderrText).toContain("using default stack catalog versions");
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports malformed config causes before falling back to the stack catalog", () =>
@@ -476,7 +476,7 @@ describe("services", () => {
       );
       expect(out.stderrText).toMatch(/^failed to read config:/);
       expect(out.stderrText).toContain("using default stack catalog versions");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an invalid supabase.lock before falling back to the bundled versions", () =>
@@ -497,7 +497,7 @@ describe("services", () => {
       );
       expect(out.stderrText).toContain("supabase/supabase.lock");
       expect(out.stderrText).toContain("using default stack catalog versions");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads config.json over config.toml for local image selection", () =>
@@ -517,7 +517,7 @@ describe("services", () => {
           local: postgresVersionForDbMajorVersion(15),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("applies linked-project remote config overrides when choosing the local image", () =>
@@ -544,7 +544,7 @@ major_version = 15
           local: postgresVersionForDbMajorVersion(15),
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("warns and skips the remote lookup for a malformed linked project ref", () =>
@@ -557,7 +557,7 @@ major_version = 15
 
       expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
       expect(out.stdoutText).toContain("supabase/postgres");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A token present doesn't bypass the format guard (the warning is
@@ -573,7 +573,7 @@ major_version = 15
 
       expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
       expect(out.stdoutText).toContain("supabase/postgres");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("fetches and merges remote versions for a valid ref when logged in", () =>
@@ -702,7 +702,7 @@ major_version = 15
         "Run supabase link to update services set to linked (the default) in supabase/supabase.lock",
       );
       expect(stack.out.stderrText).not.toContain("You are running different service versions");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports pinned legacy temp service versions", () =>
@@ -723,7 +723,7 @@ major_version = 15
           expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
         ]),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the Deno 1 edge-runtime image instead of the temp pin", () =>
@@ -741,7 +741,7 @@ major_version = 15
           local: "v1.68.4",
         }),
       );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect.each([
@@ -773,7 +773,7 @@ major_version = 15
           expect(causeText).toContain("CliConfigValueError");
           expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
         }
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("prints config load errors and falls back to the default matrix", () =>
@@ -787,7 +787,7 @@ major_version = 15
       expect(out.stdoutText).toContain("supabase/postgres");
       expect(out.stdoutText).not.toContain("v9.9.9");
       expect(out.stderrText).not.toBe("");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits structured JSON for --output pretty combined with --output-format json", () => {
@@ -877,7 +877,7 @@ major_version = 15
 
       expect(out.stderrText).toContain("failed to load project ref: ");
       expect(out.stdoutText).toContain("supabase/postgres");
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("flushes telemetry state after the command finishes", () => {

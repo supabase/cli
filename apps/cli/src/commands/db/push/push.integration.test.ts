@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -226,7 +226,7 @@ function setup(
         yield* fs.writeFileString(abs, content);
       }
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
   const out = mockOutput({
     format: opts.format ?? "text",
@@ -288,7 +288,7 @@ function setup(
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
-    BunServices.layer,
+    NodeServices.layer,
     mockTty({ stdinIsTty: opts.interactive ?? true }),
     mockStdin(opts.interactive ?? true),
     Layer.succeed(CliArgs, { args: ["db", "push"] }),
@@ -638,7 +638,7 @@ describe("db push", () => {
         Effect.provide(layer),
       );
       expect(out.stdoutText).toBe("Local database is up to date.\n");
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
   });
 
   it.effect("seeds despite db.seed.enabled = false when --include-seed is passed", () => {
@@ -1070,7 +1070,7 @@ describe("db push", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1099,7 +1099,7 @@ describe("db push", () => {
       });
     }).pipe(
       Effect.scoped,
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
@@ -1127,7 +1127,7 @@ describe("db push", () => {
         });
       }).pipe(
         Effect.scoped,
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
         provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
       );
     },

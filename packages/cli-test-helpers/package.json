@@ -13,7 +13,7 @@
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {

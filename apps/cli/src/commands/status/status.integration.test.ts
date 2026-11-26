@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -373,8 +373,8 @@ function setup(opts: SetupOpts = {}) {
   const recorder = recordingFileSystem();
   const layer = Layer.mergeAll(
     cliConfigValuesTestLayer,
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     recorder.layer,
     runtimeInfoLayer,
     out.layer,
@@ -465,8 +465,8 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
 
   const layer = Layer.mergeAll(
     cliConfigValuesTestLayer,
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     runtimeInfoLayer,
     outputLayer.pipe(Layer.provide(stdio.layer)),
     cliSettings,
@@ -682,7 +682,7 @@ project_id = "short"
         );
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
@@ -699,7 +699,7 @@ project_id = "short"
         expect(causeText).toContain(`failed to change workdir: chdir ${filePath}: not a directory`);
       }
       expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
@@ -790,7 +790,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       expect(out.stderrText).toContain("local development setup is running.");
       expect(out.stdoutText).toContain("Project URL");
       expect(out.stdoutText).toContain("Database");
-    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
@@ -878,7 +878,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         );
         expect(inspectCall?.args).toContain(localDbContainerId(projectId));
         expect(inspectCall?.args).not.toContain(localDbContainerId("ancestor-project"));
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.effect(

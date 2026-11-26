@@ -1,4 +1,4 @@
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
@@ -25,7 +25,7 @@ const capturedFlags = (
         mockProcessControl().layer,
         mockOutput({ format: "text" }).layer,
         stdio,
-        commandRuntimeLayer(command).pipe(Layer.provide(BunCrypto.layer)),
+        commandRuntimeLayer(command).pipe(Layer.provide(NodeCrypto.layer)),
       ),
     ),
     Effect.map(() => analytics.captured[0]?.properties.flags),

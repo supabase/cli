@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -501,7 +501,7 @@ describe("login integration", () => {
       expect(yield* fs.readFileString(path.join(tempRoot.current, ".supabase", "profile"))).toBe(
         profilePath,
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("explicit --profile supabase heals a stale persisted profile file", () => {

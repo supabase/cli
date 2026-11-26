@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Option } from "effect";
 
 import {
@@ -97,8 +97,8 @@ function ambientStubs() {
   );
 
   return Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     // The runtime layer under test builds the real `commandSettingsLayer` against the
     // real filesystem — see `isolatedHomeLayer`'s docs.
     isolatedHomeLayer(tempRoot.current),

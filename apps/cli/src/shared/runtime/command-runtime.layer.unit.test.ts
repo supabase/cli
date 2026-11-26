@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { Effect } from "effect";
 
 import { commandRuntimeLayer } from "./command-runtime.layer.ts";
@@ -24,6 +24,6 @@ describe("commandRuntimeLayer", () => {
       expect(first.commandRunId).toMatch(UUID_V4);
       expect(second.commandRunId).toMatch(UUID_V4);
       expect(first.commandRunId).not.toBe(second.commandRunId);
-    }).pipe(Effect.provide(BunCrypto.layer)),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

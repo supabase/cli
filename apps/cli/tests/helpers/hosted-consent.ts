@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import type { Command } from "effect/cli";
@@ -133,7 +133,7 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         const layer = consentLayer(runtime, options.yes ?? false, policy);
 
         if (scenario.setup !== undefined) {
-          yield* scenario.setup(workdir).pipe(Effect.provide(BunServices.layer));
+          yield* scenario.setup(workdir).pipe(Effect.provide(NodeServices.layer));
         }
 
         const invocation = scenario.invoke({ workdir, out, api });

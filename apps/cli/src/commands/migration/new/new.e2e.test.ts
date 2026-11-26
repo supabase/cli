@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -29,7 +29,7 @@ describe("supabase migration new", () => {
         expect(stripAnsi(stdout)).toContain(
           `Created new migration at supabase/migrations/${files[0]}`,
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     E2E_TIMEOUT_MS,
   );
 });

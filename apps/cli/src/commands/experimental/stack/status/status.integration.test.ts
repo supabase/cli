@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -40,7 +40,7 @@ import { seedLock } from "../../../../../tests/helpers/stack-lock.ts";
 import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const stackId = "a".repeat(64);
-const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(NodeServices.layer, NodeCrypto.layer));
 type StatusOutputFormat = "text" | "json" | "stream-json";
 type OpenedStack = Effect.Success<ReturnType<(typeof StackApi.Service)["open"]>>;
 type StackInstance = Effect.Success<OpenedStack["services"]["list"]>[number];
@@ -306,15 +306,15 @@ const runStatus = (input: {
       telemetry.layer,
       mockCommandSettings({ workdir: projectRoot, supabaseHome: root }),
       cliConfigValuesTestLayer,
-      BunServices.layer,
-      BunCrypto.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
       runtimeInfoLayer,
     );
     if (input.config === "explicit" || input.config === "multiline-functions-env")
       yield* seedLock(root).pipe(Effect.provide(layer));
     const effect = stackStatus(input.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, root, requested };
-  }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 it.effect("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {

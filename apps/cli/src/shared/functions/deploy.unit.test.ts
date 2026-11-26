@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it, layer } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Path, Predicate, Schema } from "effect";
 
@@ -100,7 +100,7 @@ const createSlashVendoredFunctionProject = Effect.fnUntraced(function* (indexTsC
   return { ...project, vendorIndexPath };
 });
 
-layer(BunServices.layer)(
+layer(NodeServices.layer)(
   "buildDockerBinds — import-map key matching (spec-strict) and the file-mapped-key guard",
   (it) => {
     it.effect(
@@ -735,7 +735,7 @@ layer(BunServices.layer)(
   },
 );
 
-layer(BunServices.layer)("discoverFunctionSlugs — function directories on disk", (it) => {
+layer(NodeServices.layer)("discoverFunctionSlugs — function directories on disk", (it) => {
   it.effect.skipIf(process.platform === "win32")(
     "includes symlinked function directories and skips files, links to files, broken links and entrypoint-less directories",
     () =>

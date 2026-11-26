@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Exit, Layer, Stdio } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { runCli } from "../shared/cli/run.ts";
@@ -15,7 +15,7 @@ const args = await Effect.runPromise(
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
-  }).pipe(Effect.provide(BunServices.layer)),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const selectionExit = await Effect.runPromiseExit(
@@ -29,7 +29,7 @@ const selectionExit = await Effect.runPromiseExit(
       cwd: process.cwd(),
     });
     return { projectState, stackBackend, computeEnabled };
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliConfigProviderLayer))),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, cliConfigProviderLayer))),
 );
 const selectedFeatures = Exit.isSuccess(selectionExit)
   ? selectionExit.value

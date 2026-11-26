@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { gunzipSync } from "node:zlib";
 import { Cause, DateTime, Effect, Exit, FileSystem, Option, Path } from "effect";
@@ -58,11 +58,11 @@ const withTemp = <A, E, R>(
       const dir = yield* fs.makeTempDirectoryScoped({ prefix });
       return yield* run(dir, fs, path);
     }),
-  ).pipe(Effect.provide(BunServices.layer));
+  ).pipe(Effect.provide(NodeServices.layer));
 
 describe("packageComputeDirectory", () => {
   const pack = (root: string) =>
-    packageComputeDirectory(root).pipe(Effect.provide(BunServices.layer));
+    packageComputeDirectory(root).pipe(Effect.provide(NodeServices.layer));
 
   it.effect("packages files and nested directories in a stable order", () =>
     withTemp("supabase-compute-package-", (dir, fs, path) =>
@@ -135,7 +135,7 @@ describe("packageComputeDirectory", () => {
         yield* fs.symlink(target, path.join(dir, "nested", "dep"));
 
         const exit = yield* packageComputeDirectory(dir).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.exit,
         );
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
@@ -191,7 +191,7 @@ describe("packageComputeDirectory", () => {
       Effect.gen(function* () {
         const exclude = yield* compileComputeExclude({ name: "api", patterns });
         return yield* packageComputeDirectory(root, exclude);
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
 
     it.effect("leaves a matched file out of the archive", () =>
       withTemp("supabase-compute-package-", (dir, fs, path) =>
@@ -343,7 +343,7 @@ describe("packageComputeDirectory", () => {
         );
 
         const exit = yield* packageComputeDirectory(dir).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.exit,
         );
 
@@ -374,7 +374,7 @@ describe("packageComputeDirectory", () => {
         );
 
         const exit = yield* packageComputeDirectory(dir).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.exit,
         );
 
@@ -403,7 +403,7 @@ describe("packageComputeDirectory tar limits", () => {
         yield* fs.writeFileString(path.join(dir, "a".repeat(120)), "contents");
 
         const exit = yield* packageComputeDirectory(dir).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.exit,
         );
 
@@ -435,7 +435,7 @@ describe("packageComputeDirectory tar limits", () => {
         yield* fs.utimes(file, 8 ** 11, 8 ** 11);
 
         const exit = yield* packageComputeDirectory(dir).pipe(
-          Effect.provide(BunServices.layer),
+          Effect.provide(NodeServices.layer),
           Effect.exit,
         );
 

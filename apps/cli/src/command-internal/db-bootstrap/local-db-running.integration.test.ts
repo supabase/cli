@@ -1,4 +1,6 @@
-import { BunCrypto, BunHttpServer, BunServices, BunSocketServer } from "@effect/platform-bun";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
+import { createServer } from "node:http";
+import { NodeCrypto, NodeHttpServer, NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schedule, Stream } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -68,7 +70,7 @@ const makeEngineServer = (
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbeng-" });
     const socketPath = path.join(dir, "d.sock");
     const requestedUrls: Array<string> = [];
-    const server = yield* BunHttpServer.make({ unix: socketPath });
+    const server = yield* NodeHttpServer.make(() => createServer(), { path: socketPath });
     yield* server.serve(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -90,7 +92,7 @@ const makeRawEngineServer = (reply: string | undefined) =>
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ldbraw-" });
     const socketPath = path.join(dir, "d.sock");
-    const server = yield* BunSocketServer.make({ path: socketPath });
+    const server = yield* NodeSocketServer.make({ path: socketPath });
     yield* server
       .run((socket) =>
         Effect.scoped(
@@ -121,7 +123,7 @@ const missingSocketEndpoint = Effect.gen(function* () {
 });
 
 const localDockerEngineTestLayer = localDockerEngineLayer.pipe(
-  Layer.provide([BunServices.layer, BunCrypto.layer]),
+  Layer.provide([NodeServices.layer, NodeCrypto.layer]),
   Layer.provide(runtimeInfoLayer),
 );
 
@@ -151,7 +153,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(answer).toEqual(Option.some({ exists: true, running: true, status: "running" }));
           expect(engine.requestedUrls).toEqual(["/containers/supabase_db_engine-probe/json"]);
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live.each([
@@ -182,7 +184,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             );
             expect(answer).toEqual(Option.some({ exists: true, running, status }));
           }),
-        ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("answers absent for an Engine 404", () =>
@@ -197,7 +199,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           );
           expect(answer).toEqual(Option.some({ exists: false }));
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("gives no answer for a responder that does not identify as a Docker engine", () =>
@@ -238,7 +240,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(absent).toEqual(Option.none());
           expect(viaServerHeader).toEqual(Option.some({ exists: false }));
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("gives no answer for an empty or malformed Engine 200 body", () =>
@@ -263,7 +265,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           expect(empty).toEqual(Option.none());
           expect(malformed).toEqual(Option.none());
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live(
@@ -280,7 +282,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             );
             expect(answer).toEqual(Option.none());
           }),
-        ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live(
@@ -295,7 +297,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             );
             expect(answer).toEqual(Option.none());
           }),
-        ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       15_000,
     );
 
@@ -311,7 +313,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           );
           expect(answer).toEqual(Option.none());
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("gives no answer when the peer resets after the headers", () =>
@@ -327,7 +329,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
           );
           expect(answer).toEqual(Option.none());
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
 
     it.live("traces the request, the decline, and the fallback through DebugLogger", () => {
@@ -379,7 +381,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             lines.some((l) => l.startsWith("debug:") && l.includes("no definitive Engine answer")),
           ).toBe(true);
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
     });
 
     it.live(
@@ -406,7 +408,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
             );
             expect(answer).toEqual(Option.none());
           }),
-        ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+        ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
       15_000,
     );
   });
@@ -420,7 +422,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
         );
         expect(answer).toEqual(Option.none());
       }),
-    ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 
   it.live("gives no answer for an endpoint the transport cannot address (ssh)", () =>
@@ -457,7 +459,7 @@ describe("isLocalDbRunning", () => {
     ).pipe(
       Effect.provide(
         configValuesLayer({ output: mockOutput().layer, env: options.env }).pipe(
-          Layer.provideMerge(Layer.mergeAll(BunServices.layer, spawnerLayer)),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, spawnerLayer)),
         ),
       ),
     );
@@ -592,7 +594,7 @@ describe("isLocalDbRunning", () => {
             ["container", "inspect", "supabase_db_engine-probe"],
           ]);
         }),
-      ).pipe(Effect.provide([BunServices.layer, BunCrypto.layer]));
+      ).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer]));
     },
   );
 });
@@ -610,7 +612,7 @@ describe("localDbState", () => {
     ).pipe(
       Effect.provide(
         configValuesLayer({ output: mockOutput().layer }).pipe(
-          Layer.provideMerge(Layer.mergeAll(BunServices.layer, spawnerLayer)),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, spawnerLayer)),
         ),
       ),
       Effect.provideService(LocalDockerEngine, {

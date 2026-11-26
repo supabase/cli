@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 
@@ -32,7 +32,7 @@ describe("readServiceVersionOverrides", () => {
       const workdir = yield* makeWorkdir;
       yield* writePin(workdir, "storage-version", "v1.77.1-versions\n");
       expect(yield* readPins(workdir)).toEqual({ storage: "v1.77.1-versions" });
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails on a doubled-v storage pin without rewriting it", () =>
@@ -50,7 +50,7 @@ describe("readServiceVersionOverrides", () => {
         }),
       );
       expect(yield* fs.readFileString(pinPath)).toBe("vv1.77.1-versions\n");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails on a doubled-v postgrest pin", () =>
@@ -64,7 +64,7 @@ describe("readServiceVersionOverrides", () => {
             'invalid postgrest image tag "vv12.2.0" in supabase/.temp/rest-version; run supabase link again',
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails when a pin is not a docker tag", () =>
@@ -73,6 +73,6 @@ describe("readServiceVersionOverrides", () => {
       yield* writePin(workdir, "storage-version", "v1.77.1 bad");
       const exit = yield* readPins(workdir).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -309,8 +309,8 @@ describe("start container env precedence goldens", () => {
           unusedStackServices,
           cliConfigValuesTestLayer,
           Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
-          BunServices.layer,
-          BunCrypto.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
           out.layer,
           mockCommandSettings({ workdir }),
           mockTelemetryStateTracked().layer,
@@ -391,7 +391,7 @@ describe("start container env precedence goldens", () => {
         yield* Effect.promise(() =>
           ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });

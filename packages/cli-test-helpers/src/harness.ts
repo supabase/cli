@@ -1,4 +1,4 @@
-import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { tmpdir, platform as osPlatform } from "node:os";
@@ -62,7 +62,7 @@ function runHarness<A>(
         SubprocessError: (error) => Effect.die(error.cause),
         PlatformError: (error) => Effect.die(error.cause ?? error),
       }),
-      Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
     ),
   );
 }

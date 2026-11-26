@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { containerPeer, isLoopback } from "../../../../packages/stack/tests/api-tls.ts";
@@ -7,7 +7,7 @@ import { refusedTlsStart, stackTarget } from "./target.ts";
 
 /* Where this host's Docker containers arrive from, measured on its own, picks the expectation. */
 const peer = await Effect.runPromise(
-  containerPeer({ engine: "docker", argv: [] }).pipe(Effect.provide(BunServices.layer)),
+  containerPeer({ engine: "docker", argv: [] }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 /* Plain HTTP on a TLS API port is for loopback peers only, so where this engine's containers

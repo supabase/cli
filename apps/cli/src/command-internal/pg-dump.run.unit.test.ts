@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
 
 import { DockerRun } from "./docker-run.service.ts";
@@ -41,7 +41,7 @@ describe("streamPgDump", () => {
             mockRuntimeInfo({ platform: "linux" }),
             Layer.succeed(NetworkIdFlag, Option.none()),
             ConfigProvider.layer(configProvider),
-            BunServices.layer,
+            NodeServices.layer,
           ),
         ),
       );

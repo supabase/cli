@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -33,7 +33,7 @@ describe("pull CLI surface", () => {
         expect(cleanStderr).not.toContain("Unrecognized flag");
         expect(cleanStderr).toContain("Cannot find project ref. Have you run supabase link?");
         expect(exitCode).toBe(1);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("`supabase pull -o json` is rejected by the handler, pointing at --output-format", () =>
@@ -52,6 +52,6 @@ describe("pull CLI surface", () => {
         "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
       );
       expect(exitCode).toBe(1);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

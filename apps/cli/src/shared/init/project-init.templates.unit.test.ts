@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Predicate } from "effect";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
@@ -180,7 +180,7 @@ describe("project init templates", () => {
       expect(lines(renderTomlTemplate("demo-project", true))).toEqual(
         lines(yield* renderExpectedNativeEject),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("models every template action in the scaffold, so it cannot silently drift", () =>
@@ -190,7 +190,7 @@ describe("project init templates", () => {
       // to match before shipping.
       const unresolvedActions = (yield* renderExpectedInitOutput).match(/\{\{[^}]*\}\}/g) ?? [];
       expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw template escapes", () => {
@@ -230,7 +230,7 @@ describe("project init templates", () => {
       expect(loaded?.document).toHaveProperty("auth.email.enable_signup", true);
       expect(loaded?.document).toHaveProperty("auth.sms.enable_signup", false);
       expect(loaded?.deprecatedPaths).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it("renders a config with no keys the schema does not recognize", () => {
@@ -323,7 +323,7 @@ describe("project init templates", () => {
   it.effect("matches the .gitignore scaffold", () =>
     Effect.gen(function* () {
       expect(INIT_GITIGNORE_TEMPLATE).toBe(yield* readVendoredTemplate("gitignore"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("matches the VS Code extensions scaffold", () =>
@@ -331,7 +331,7 @@ describe("project init templates", () => {
       expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-extensions.json.golden"),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("matches the VS Code settings scaffold", () =>
@@ -339,7 +339,7 @@ describe("project init templates", () => {
       expect(VSCODE_SETTINGS_TEMPLATE).toBe(
         yield* readVendoredTemplate("vscode-settings.json.golden"),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.each([
@@ -364,7 +364,7 @@ describe("project init templates", () => {
   it.effect("matches the IntelliJ scaffold", () =>
     Effect.gen(function* () {
       expect(INTELLIJ_DENO_TEMPLATE).toBe(yield* readVendoredTemplate("idea-deno.xml"));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

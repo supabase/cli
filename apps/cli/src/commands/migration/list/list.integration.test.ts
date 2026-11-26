@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
@@ -154,11 +154,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     commandRuntimeLayer(["migration", "list"]).pipe(
-      Layer.provide([BunServices.layer, BunCrypto.layer]),
+      Layer.provide([NodeServices.layer, NodeCrypto.layer]),
     ),
     branchApi.layer,
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
   );
   return {
     layer,

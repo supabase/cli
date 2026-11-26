@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
@@ -147,7 +147,7 @@ describe("diffDeclarativeToMigrations", () => {
         extensions: ["pgcrypto"],
         extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],
       });
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(engine, BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(engine, NodeServices.layer)));
   });
 
   const stubEngine = (calls: PgDeltaDeclarativePlanInput[]) =>
@@ -188,7 +188,7 @@ describe("diffDeclarativeToMigrations", () => {
         `malformed export manifest ${path.join(declDir, ".pgdelta-export.json")}: ${jsonParseErrorMessage("{ not json at all")}`,
       );
       expect(calls).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), NodeServices.layer)));
   });
 
   it.effect("fails when the declarative dir is absent", () => {
@@ -203,7 +203,7 @@ describe("diffDeclarativeToMigrations", () => {
       ).pipe(Effect.flip);
       expect(error.message).toContain("No declarative schema directory found");
       expect(calls).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(stubEngine(calls), NodeServices.layer)));
   });
 });
 
@@ -254,6 +254,6 @@ describe("generateDeclarativeOutput", () => {
           strictCoverage: true,
         },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(engine, BunServices.layer)));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(engine, NodeServices.layer)));
   });
 });

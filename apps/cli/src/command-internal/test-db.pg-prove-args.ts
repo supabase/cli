@@ -1,10 +1,10 @@
-import { BunPath } from "@effect/platform-bun";
+import { NodePath } from "@effect/platform-node";
 import { Effect, Option, Path } from "effect";
 import { postgresMajor } from "@supabase/stack/internal/artifacts";
 import { toDockerMountPath } from "./docker-path.ts";
 
-const nodePath = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
-const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
+const nodePath = Effect.runSync(Effect.provide(Path.Path, NodePath.layer));
+const posixPath = Effect.runSync(Effect.provide(Path.Path, NodePath.layerPosix));
 
 interface PostgresClientMount {
   readonly source: string;

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
@@ -293,7 +293,7 @@ describe("ssl-enforcement get integration", () => {
         Effect.provide(layer),
       );
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () =>
@@ -319,7 +319,7 @@ describe("ssl-enforcement get integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
@@ -435,7 +435,7 @@ describe("ssl-enforcement get integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describeHostedTargetSelection("ssl-enforcement get", {

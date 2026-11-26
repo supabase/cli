@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
@@ -31,8 +31,8 @@ const testRoot = Command.make("supabase").pipe(
 function setup(args: ReadonlyArray<string>) {
   const out = mockOutput({ format: "text" });
   const layer = Layer.mergeAll(
-    BunServices.layer,
-    BunCrypto.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     commandTargetLayer.pipe(Layer.provide(out.layer)),

@@ -43,7 +43,7 @@ export type StopFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // `stop` talks directly to Docker and needs no Management API access, so it provides only
 // the services the handler and instrumentation consume, not `managementApiRuntimeLayer`.
-// `ChildProcessSpawner` comes from `BunServices` in the root runtime instead.
+// `ChildProcessSpawner` comes from `NodeServices` in the root runtime instead.
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 const stopRuntimeLayer = Layer.mergeAll(

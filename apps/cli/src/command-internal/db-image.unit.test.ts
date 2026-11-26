@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { orioledbVersions } from "@supabase/stack/internal/artifacts";
@@ -39,7 +39,7 @@ const resolve = (workdir: string, majorVersion: number, orioledbVersion?: string
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* resolveDbImage(fs, path, workdir, majorVersion, orioledbVersion);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("resolveDbImage", () => {
   beforeEach(() => {
@@ -64,7 +64,7 @@ describe("resolveDbImage", () => {
         image: dockerfileServiceImage("pg", false),
         configImage: currentPostgres,
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rewrites to the OrioleDB image on a 15/17 project", () =>
@@ -84,7 +84,7 @@ describe("resolveDbImage", () => {
         image: "supabase/postgres:orioledb-15.1.0.55",
         configImage: "supabase/postgres:orioledb-15.1.0.55",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores orioledb_version on a non-15/17 project", () =>
@@ -94,7 +94,7 @@ describe("resolveDbImage", () => {
         image: pg14Image,
         configImage: pg14Image,
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describe("pinned version with the slim-images flag on", () => {
@@ -106,7 +106,7 @@ describe("resolveDbImage", () => {
           image: pg14Image,
           configImage: pg14Image,
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("slims a pinned OrioleDB tag and keeps an unpinned one on docker.io", () => {
@@ -123,7 +123,7 @@ describe("resolveDbImage", () => {
           image: "supabase/postgres:17.0.0.000-orioledb",
           configImage: "supabase/postgres:17.0.0.000-orioledb",
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
@@ -136,7 +136,7 @@ describe("resolveDbImage", () => {
           image: pinned,
           configImage: pg15Image,
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("keeps a historical PG15 pin on docker.io", () => {
@@ -148,7 +148,7 @@ describe("resolveDbImage", () => {
           image: "supabase/postgres:15.8.1.100",
           configImage: "supabase/postgres:15.8.1.100",
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("rewrites a current PG15 pin to its catalog-pinned slim image", () => {
@@ -162,7 +162,7 @@ describe("resolveDbImage", () => {
           image: pinned,
           configImage: pg15Image,
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("keeps a historical default-major pin on docker.io", () => {
@@ -174,7 +174,7 @@ describe("resolveDbImage", () => {
           image: "supabase/postgres:17.9.9.999",
           configImage: "supabase/postgres:17.9.9.999",
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
 
     it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
@@ -188,7 +188,7 @@ describe("resolveDbImage", () => {
           image: pinned,
           configImage: currentPostgres,
         });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
     });
   });
 });

@@ -1,4 +1,4 @@
-import { BunCrypto } from "@effect/platform-bun";
+import { NodeCrypto } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Layer, Option, Stdio } from "effect";
 import { useTempWorkdir, VALID_REF } from "../../../tests/helpers/command-mocks.ts";
@@ -595,7 +595,7 @@ describe("issues telemetry", () => {
           layer,
           analytics.layer,
           Stdio.layerTest({ args: Effect.succeed(["issues"]) }),
-          commandRuntimeLayer(["issues"]).pipe(Layer.provide(BunCrypto.layer)),
+          commandRuntimeLayer(["issues"]).pipe(Layer.provide(NodeCrypto.layer)),
         ),
       ),
     );

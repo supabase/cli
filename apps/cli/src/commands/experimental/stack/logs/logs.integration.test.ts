@@ -6,7 +6,7 @@ import {
   buildTestRuntime,
   mockCommandPlatformApi,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { TestClock } from "effect/testing";
 import {
@@ -62,7 +62,7 @@ import { projectStateModeLayer } from "../../../../shared/config/project-state-m
 import { selection } from "../../../../../tests/helpers/pins.ts";
 
 const decodeRows = Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.JsonObject)));
-const live = Layer.provideMerge(stackApiLayer, Layer.merge(BunServices.layer, BunCrypto.layer));
+const live = Layer.provideMerge(stackApiLayer, Layer.merge(NodeServices.layer, NodeCrypto.layer));
 
 type SavedInstance = SavedStack["instances"][number];
 const mail = (id: string): SavedInstance => ({
@@ -735,7 +735,7 @@ describe("retained local logs", () => {
                   position: { generation: 1, byteOffset: 1_000_000 },
                 }),
               ),
-              Stream.provide(Layer.merge(BunServices.layer, BunCrypto.layer)),
+              Stream.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
             ),
           );
       const f = yield* fixture({

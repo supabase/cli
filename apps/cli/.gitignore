@@ -1,4 +1,5 @@
 dist/
+dist-node/
 coverage/
 supabase/
 !docs/supabase/

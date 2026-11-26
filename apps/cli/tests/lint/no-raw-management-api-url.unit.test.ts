@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
@@ -102,7 +102,7 @@ describe("no-raw-management-api-url", () => {
         );
         lintedFiles = new Set(Object.keys({ ...flagged, ...allowed }));
         expect(report.number_of_files).toBe(lintedFiles.size);
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
@@ -111,7 +111,7 @@ describe("no-raw-management-api-url", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* fs.remove(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 

@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -402,7 +402,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         apiMaxRetries: Option.none(),
       });
     }),
-  ).pipe(Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const testProjectRefLayer = (linked: boolean) => {
@@ -534,7 +534,7 @@ export function setupCompute(options: ComputeSetupOptions) {
           Layer.provide(tty),
           Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
           Layer.provide(out.layer),
-          Layer.provide(BunServices.layer),
+          Layer.provide(NodeServices.layer),
         )
       : testProjectRefLayer(options.linked !== false);
   const linkedProjectCache =
@@ -566,7 +566,7 @@ export function setupCompute(options: ComputeSetupOptions) {
       Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       processControl.layer,
-      BunServices.layer,
+      NodeServices.layer,
     ),
   };
 }

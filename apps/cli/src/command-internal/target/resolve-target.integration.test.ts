@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -213,7 +213,7 @@ const run = (
       kind: attributes?.get("target.kind"),
       selection: attributes?.get("target.selection"),
     };
-  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 const succeeded = <A>(exit: Exit.Exit<A, unknown>): A => {
   if (!Exit.isSuccess(exit)) throw new Error(`expected success, got ${stringifyJson(exit)}`);

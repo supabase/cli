@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { SecureRandom } from "effect/crypto";
@@ -69,9 +69,9 @@ const startFlags = () => ({
 
 const makeLayers = (root: string) => {
   const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
-  const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+  const liveStackApi = stackApiLayer.pipe(Layer.provide(NodeServices.layer));
   const resolver = stackTargetResolverLayer.pipe(
-    Layer.provide(Layer.mergeAll(BunServices.layer, settings, liveStackApi)),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, settings, liveStackApi)),
   );
   const output = mockOutput();
   const telemetry = mockTelemetryStateTracked();
@@ -94,7 +94,7 @@ const makeLayers = (root: string) => {
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
     stdinLayer.pipe(Layer.provide(tty)),
     tty,
-  ).pipe(Layer.provideMerge(BunServices.layer));
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 };
 
 describe("native stack Storage gateway", () => {
@@ -178,7 +178,7 @@ describe("native stack Storage gateway", () => {
             yield* destroyTestStacks(api, path.join(root, "stacks"), path.join(root, "cache"));
           }),
         ).pipe(Effect.provide(layers));
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     { timeout: 180_000 },
   );
 });

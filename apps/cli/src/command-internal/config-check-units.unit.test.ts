@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { cliConfigSmtpIssues, decodeCliConfigWithoutTableRules } from "@supabase/config/internal";
@@ -41,7 +41,7 @@ const firstMessage = (
       ),
     );
     return Result.isFailure(result) ? result.failure.message : undefined;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const auth = (extra: Record<string, unknown>) => ({
   auth: { enabled: true, site_url: "http://localhost:3000", ...extra },
@@ -468,7 +468,7 @@ describe("config check unit scopes", () => {
             commonPrefix(paths),
           );
         }
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
@@ -500,7 +500,7 @@ describe("counting units", () => {
       const findings = [];
       for (const entry of entries) findings.push(...(yield* unit.run(view, io, entry)));
       return findings;
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   const twoProviders = decodeConfig({
     project_id: "test",
@@ -705,7 +705,7 @@ describe("switches that hold an unusable value", () => {
         id === "auth.external.required" ? "my_oidc" : undefined,
       );
       return { calls, findings };
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(NodeServices.layer));
 
   it.effect("defer the webauthn check instead of counting a bad passkey flag as off", () =>
     Effect.gen(function* () {

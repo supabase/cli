@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Console, Data, Effect, FileSystem, Path } from "effect";
 
 import { COMPUTE_RUNTIMES, type ComputeRuntime } from "./compute-runtimes.ts";
@@ -96,5 +96,5 @@ const readComputeStacksEffect = Effect.gen(function* () {
 });
 
 export function readComputeStacks(): Promise<Record<ComputeRuntime, ComputeStack>> {
-  return Effect.runPromise(readComputeStacksEffect.pipe(Effect.provide(BunServices.layer)));
+  return Effect.runPromise(readComputeStacksEffect.pipe(Effect.provide(NodeServices.layer)));
 }

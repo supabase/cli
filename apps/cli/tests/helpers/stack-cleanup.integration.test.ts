@@ -1,11 +1,11 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { StackApi, stackApiLayer } from "../../src/command-internal/stack-api.ts";
 import { destroyTestStacks } from "./stack-cleanup.ts";
 import { selection } from "./pins.ts";
 
-const liveStackApi = stackApiLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer]));
+const liveStackApi = stackApiLayer.pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer]));
 
 describe("test stack cleanup", () => {
   it.live(
@@ -50,7 +50,7 @@ describe("test stack cleanup", () => {
           const discovered = yield* api.discover({ stateRoot });
           expect(discovered).toHaveLength(0);
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, liveStackApi))),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, liveStackApi))),
     { timeout: 30_000 },
   );
 });

@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -98,9 +98,9 @@ const runCommand = (
           CliOutput.layer(textCliOutputFormatter()),
           Layer.succeed(CliArgs, { args }),
           mockOutput({ format: "text" }).layer,
-          BunServices.layer,
-          BunCrypto.layer,
-          legacyProjectStateLayer.pipe(Layer.provide([BunServices.layer, BunCrypto.layer])),
+          NodeServices.layer,
+          NodeCrypto.layer,
+          legacyProjectStateLayer.pipe(Layer.provide([NodeServices.layer, NodeCrypto.layer])),
           mockRuntimeInfo(),
           mockAnalytics().layer,
           mockTelemetryRuntime(),
@@ -112,7 +112,7 @@ const runCommand = (
       Effect.exit,
     );
     return Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
-  }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer]));
+  }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer]));
 
 describe("--password with a direct database target", () => {
   it("is discovered on commands that accept a direct target", () => {

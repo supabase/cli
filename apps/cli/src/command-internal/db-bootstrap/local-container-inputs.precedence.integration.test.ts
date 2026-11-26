@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
@@ -145,8 +145,8 @@ describe("local container inputs precedence goldens", () => {
         pinShellEnv(fixture.shellEnv ?? {});
 
         const layer = Layer.mergeAll(
-          BunServices.layer,
-          BunCrypto.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
           cliConfigValuesTestLayer,
           Layer.succeed(ConfigEnvPins, fixture.shellEnv ?? {}),
           mockRuntimeInfo({ platform: "linux" }),
@@ -204,7 +204,7 @@ describe("local container inputs precedence goldens", () => {
         yield* Effect.promise(() =>
           ctx.expect(goldenText).toMatchFileSnapshot(`${GOLDEN_DIR}/${fixture.golden}.json`),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });

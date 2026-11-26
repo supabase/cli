@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -8,7 +8,7 @@ const makeTempWorkdir = (prefix: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.makeTempDirectory({ prefix });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("cleanupStartSecrets", () => {
   it.effect("removes a NAMED container's secret directory keyed off container.name", () => {
@@ -32,7 +32,7 @@ describe("cleanupStartSecrets", () => {
         );
         expect(yield* fs.exists(secretDir)).toBe(false);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 
@@ -59,7 +59,7 @@ describe("cleanupStartSecrets", () => {
           );
           expect(yield* fs.exists(secretDir)).toBe(false);
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       });
     },
   );
@@ -87,7 +87,7 @@ describe("cleanupStartSecrets", () => {
         expect(yield* fs.exists(secretDir)).toBe(false);
         yield* fs.remove(ownWorkdir, { recursive: true, force: true });
         yield* fs.remove(otherWorkdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 
@@ -101,7 +101,7 @@ describe("cleanupStartSecrets", () => {
           workdir,
         );
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 
@@ -122,7 +122,7 @@ describe("cleanupStartSecrets", () => {
           );
           expect(yield* fs.exists(canary)).toBe(true);
           yield* fs.remove(workdir, { recursive: true, force: true });
-        }).pipe(Effect.provide(BunServices.layer));
+        }).pipe(Effect.provide(NodeServices.layer));
       });
     },
   );
@@ -140,7 +140,7 @@ describe("cleanupStartSecrets", () => {
         yield* cleanupStartSecrets([{ id: "abc123", name: "", workdir: "" }], workdir);
         expect(yield* fs.exists(otherProjectSecretDir)).toBe(true);
         yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(NodeServices.layer));
     });
   });
 });

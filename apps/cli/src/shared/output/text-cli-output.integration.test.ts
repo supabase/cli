@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Console, Effect, Exit, Option } from "effect";
 import { Argument, CliError, CliOutput, Command, Flag } from "effect/cli";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -77,7 +77,7 @@ describe("text help presentation", () => {
         ).pipe(
           Effect.provide([
             textCliOutputLayer({ rootCommand: command, args }, streams),
-            BunServices.layer,
+            NodeServices.layer,
           ]),
           Effect.provideService(Console.Console, console),
           Effect.exit,
@@ -166,7 +166,7 @@ describe("text help presentation", () => {
                   detected ? Option.some("test-agent") : Option.none(),
                 ),
               ),
-              BunServices.layer,
+              NodeServices.layer,
             ]),
             Effect.provideService(Console.Console, console),
             Effect.exit,
@@ -196,7 +196,7 @@ describe("text help presentation", () => {
               { rootCommand: command, args: ["--help"] },
               { stdout: colors ? color : pipe, stderr: pipe },
             ),
-            BunServices.layer,
+            NodeServices.layer,
           ]),
           Effect.provideService(Console.Console, console),
         );
@@ -214,7 +214,7 @@ describe("text help presentation", () => {
         yield* Command.runWith(command, { version: "1.2.3" })(args).pipe(
           Effect.provide([
             textCliOutputLayer({ rootCommand: command, args }, { stdout: pipe, stderr: pipe }),
-            BunServices.layer,
+            NodeServices.layer,
           ]),
           Effect.provideService(Console.Console, console),
         );
@@ -229,7 +229,7 @@ describe("text help presentation", () => {
       vi.stubEnv("CLICOLOR_FORCE", "1");
       const { console, calls } = fakeConsole();
       yield* Command.runWith(command, { version: "test" })(["--help"]).pipe(
-        Effect.provide([CliOutput.layer(jsonCliOutputFormatter()), BunServices.layer]),
+        Effect.provide([CliOutput.layer(jsonCliOutputFormatter()), NodeServices.layer]),
         Effect.provideService(Console.Console, console),
       );
       expect(calls).toHaveLength(1);

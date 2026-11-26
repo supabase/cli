@@ -1,4 +1,4 @@
-import { BunChildProcessSpawner, BunFileSystem, BunPath } from "@effect/platform-bun";
+import { NodeChildProcessSpawner, NodeFileSystem, NodePath } from "@effect/platform-node";
 import {
   Cause,
   Clock,
@@ -73,8 +73,8 @@ interface StackE2eCleanupManager {
 
 type HostServices = FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner;
 
-const hostLayer: Layer.Layer<HostServices> = BunChildProcessSpawner.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+const hostLayer: Layer.Layer<HostServices> = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
 );
 
 /* Promise edge of the real environment: a host failure rejects with the original error. */

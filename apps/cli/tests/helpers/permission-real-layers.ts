@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -42,7 +42,7 @@ export function realLinkedProjectCache(opts: {
   const identityStitch = identityStitchLayer.pipe(
     Layer.provide(analytics.layer),
     Layer.provide(mockTelemetryRuntime()),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
   return linkedProjectCacheLayer.pipe(
     Layer.provide(opts.httpClient),
@@ -50,7 +50,7 @@ export function realLinkedProjectCache(opts: {
     Layer.provide(mockCommandCredentialsLayer),
     Layer.provide(identityStitch),
     Layer.provide(analytics.layer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -65,9 +65,9 @@ export function realDbConfigResolver(opts: {
   readonly dbConnection: Layer.Layer<DbConnection>;
   readonly env: Record<string, string | undefined>;
   /** Replaces the platform services the resolver reads files through. */
-  readonly services?: typeof BunServices.layer;
+  readonly services?: typeof NodeServices.layer;
 }): Layer.Layer<DbConfigResolver> {
-  const services = opts.services ?? BunServices.layer;
+  const services = opts.services ?? NodeServices.layer;
   const out = mockOutput();
   const deps = Layer.mergeAll(
     mockCommandSettings({
@@ -94,7 +94,7 @@ export function realDbConfigResolver(opts: {
       Layer.provide(services),
     ),
     services,
-    BunCrypto.layer,
+    NodeCrypto.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(opts.env, { preserveEmptyStrings: true })),
     configValuesLayer({ env: definedEnv(opts.env) }),
   );

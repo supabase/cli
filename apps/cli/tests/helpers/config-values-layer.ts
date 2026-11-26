@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Layer } from "effect";
 
 import {
@@ -65,7 +65,7 @@ export const configValuesLayer = (
         cliConfigValuesLayer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              BunServices.layer,
+              NodeServices.layer,
               options.output ?? mockOutput().layer,
               options.debugLogger ?? Layer.empty,
               Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs(options.flags)),

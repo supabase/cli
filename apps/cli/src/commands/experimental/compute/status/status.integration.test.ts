@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path } from "effect";
 import {
@@ -87,7 +87,7 @@ describe("compute status", () => {
           ),
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("picks the project, reads the compute and records the linked project", () =>
@@ -130,7 +130,7 @@ describe("compute status", () => {
           exact: true,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the deployed runtime, not a stale config.toml entry", () =>
@@ -157,7 +157,7 @@ describe("compute status", () => {
         expect(runtimeLine).toContain("dockerfile");
         expect(runtimeLine).not.toContain("node");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("falls back to the declared count when no tally came back", () =>
@@ -178,7 +178,7 @@ describe("compute status", () => {
 
         expect(out.stdoutText).toContain("2 declared");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("warns rather than lying when the instance read-through failed", () =>
@@ -205,7 +205,7 @@ describe("compute status", () => {
 
         expect(out.stderrText).toContain("backend unreachable");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Mid-scale the snapshot and the desired spec disagree; reading the numerator
@@ -237,7 +237,7 @@ describe("compute status", () => {
         expect(out.stdoutText).toContain("3/3 ready");
         expect(out.stdoutText).not.toContain("3/1 ready");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Deletion is asynchronous, so pushing here races the tombstone or resurrects
@@ -269,7 +269,7 @@ describe("compute status", () => {
         expect(out.stdoutText).toContain("deleting");
         expect(out.stdoutText).not.toContain("re-run supabase compute push");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("points a failed build at the retry, with the reason", () =>
@@ -300,7 +300,7 @@ describe("compute status", () => {
         // The retry hint is a success trailer, which lands on stderr.
         expect(out.stderrText).toContain("supabase compute push api");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("shows a compute being torn down as deleting", () =>
@@ -321,7 +321,7 @@ describe("compute status", () => {
 
         expect(out.stdoutText).toContain("deleting");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails with `not deployed` and points at push", () =>
@@ -356,7 +356,7 @@ describe("compute status", () => {
           requests: http.driftRequests,
         });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
@@ -388,7 +388,7 @@ describe("compute status", () => {
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("private alpha") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("points at the project ref when no such project exists", () =>
@@ -415,7 +415,7 @@ describe("compute status", () => {
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
         expect(error).toMatchObject({ suggestion: expect.stringContaining("supabase link") });
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("names the unserved route instead of an undeployed compute", () =>
@@ -446,7 +446,7 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses a name that could never have been written", () =>
@@ -464,7 +464,7 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(InvalidComputeNameError);
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports the compute's source directory even when it lives outside supabase/", () =>
@@ -489,7 +489,7 @@ describe("compute status", () => {
 
         expect(out.stdoutText).toContain(path.join("packages", "api"));
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A `source` that escapes the project cannot be resolved, so the describe
@@ -516,7 +516,7 @@ describe("compute status", () => {
         expect(out.stdoutText).toContain("active");
         expect(out.stdoutText).not.toContain("Source");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("emits the same facts as structured data in json mode", () =>
@@ -560,7 +560,7 @@ describe("compute status", () => {
         // The detail lines are text-mode only.
         expect(out.stdoutText).toBe("");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The JSON layer appends each success to stdout, so emitting the payload twice
@@ -585,7 +585,7 @@ describe("compute status", () => {
         );
         expect(results).toHaveLength(1);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // A compute deployed from another checkout has no entry and no directory here,
@@ -610,7 +610,7 @@ describe("compute status", () => {
         expect(out.stdoutText).not.toContain("compute/stray");
         expect(out.stdoutText).not.toContain("Source");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `root` is an ordinary compute name: a valid DNS label, and `[compute]` has no
@@ -635,7 +635,7 @@ describe("compute status", () => {
         expect(out.stdoutText).toContain("active");
         expect(http.routeKeys).toEqual([`GET ${computeRoute("/root")}`]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // `state_reason`, `image_version`, `deleting` and `instances_error` are all
@@ -661,7 +661,7 @@ describe("compute status", () => {
         expect(out.stdoutText).toContain("compute_name = ");
         expect(out.stdoutText).not.toContain("undefined");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The project is consulted only for the optional Source row, so an unrelated
@@ -691,7 +691,7 @@ describe("compute status", () => {
         expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/compute/api`]);
         expect(out.stdoutText).toContain("active");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // The URL is derived from the exposure the platform reports, not assumed: a
@@ -719,7 +719,7 @@ describe("compute status", () => {
         expect(out.stdoutText).not.toContain("URL");
         expect(out.stdoutText).not.toContain("https://");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses -o env before making any request at all", () =>
@@ -741,7 +741,7 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(ComputeEnvNotSupportedError);
         expect(http.routeKeys).toEqual([]);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("flushes telemetry when the compute name is invalid", () =>
@@ -758,7 +758,7 @@ describe("compute status", () => {
 
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

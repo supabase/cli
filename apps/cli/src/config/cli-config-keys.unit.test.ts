@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { CliConfigSchema } from "@supabase/config";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "@supabase/stack/defaults";
 import { describe, expect, it } from "@effect/vitest";
@@ -272,7 +272,7 @@ describe("config key registry", () => {
 
       expect(mismatched).toEqual([]);
       expect(CliConfigKeys.db.rootKey.defaultValue(context)).toBe(DEFAULT_POSTGRES_ROOT_KEY);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("keeps every schema leaf in the registry unless it is explicitly excluded", () => {

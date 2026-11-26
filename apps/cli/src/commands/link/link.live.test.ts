@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { expect } from "vitest";
 
@@ -27,6 +27,6 @@ test("links a project and writes its workspace cache", ({
         ),
       );
       expect(cache.ref).toBe(project.ref);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(NodeServices.layer)),
     { signal },
   ));

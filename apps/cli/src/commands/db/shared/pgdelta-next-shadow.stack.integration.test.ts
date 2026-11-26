@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
 import { Effect, FileSystem, Layer, Option } from "effect";
@@ -97,7 +97,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         const output = mockOutput().layer;
         const apiLayer = stackApiLayer.pipe(
           Layer.provide(FetchHttpClient.layer),
-          Layer.provide([BunServices.layer, BunCrypto.layer]),
+          Layer.provide([NodeServices.layer, NodeCrypto.layer]),
         );
         const shadowLayer = pgDeltaNextShadowLayer.pipe(
           Layer.provide(apiLayer),
@@ -114,7 +114,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.provide(Layer.succeed(CliArgs, { args: [] })),
           // Without a reachable container engine, automatic selection keeps the shadows native.
           Layer.provide(engines.hidingLayer),
-          Layer.provide([BunServices.layer, BunCrypto.layer]),
+          Layer.provide([NodeServices.layer, NodeCrypto.layer]),
         );
         const services = Layer.mergeAll(
           FetchHttpClient.layer,
@@ -129,7 +129,7 @@ describe("pg-delta next stack shadow provisioning", () => {
           Layer.succeed(NetworkIdFlag, Option.none()),
           Layer.succeed(CliArgs, { args: [] }),
           shadowLayer,
-        ).pipe(Layer.provideMerge(BunServices.layer));
+        ).pipe(Layer.provideMerge(NodeServices.layer));
 
         const urls = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -169,7 +169,7 @@ describe("pg-delta next stack shadow provisioning", () => {
       }).pipe(
         Effect.scoped,
         (body) => withConfigEnv({ SUPABASE_SHADOW_CACHE: "1" }, body),
-        Effect.provide(BunServices.layer),
+        Effect.provide(NodeServices.layer),
       ),
     180_000,
   );

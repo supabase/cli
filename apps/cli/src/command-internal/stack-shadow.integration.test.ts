@@ -5,7 +5,7 @@ import {
   type Stack,
 } from "@supabase/stack/effect";
 import { CliConfigSchema } from "@supabase/config";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
@@ -125,7 +125,7 @@ const recordingApi = (
         ),
       });
     }),
-  ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+  ).pipe(Layer.provide(stackApiLayer), Layer.provide(NodeServices.layer));
 const input = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -216,7 +216,7 @@ describe("stack shadow databases", () => {
       expect(yield* runtime("feature")).toBe("docker");
     }).pipe(
       Effect.provide(Layer.mergeAll(stackApiLayer, runtimeInfoLayer)),
-      Effect.provide([BunServices.layer, BunCrypto.layer]),
+      Effect.provide([NodeServices.layer, NodeCrypto.layer]),
     ),
   );
 
@@ -380,7 +380,7 @@ describe("stack shadow databases", () => {
           const api = yield* StackApi;
           expect(yield* api.discover({ stateRoot: path.join(root, "stacks") })).toEqual([]);
         }).pipe(Effect.provide(layers));
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     420_000,
   );
 
@@ -423,7 +423,7 @@ describe("stack shadow databases", () => {
         }).pipe(Effect.provide(layers));
         for (const shadowRoot of roots) expect(yield* fs.exists(shadowRoot)).toBe(false);
         expect(output.stderrText).not.toContain("Failed to destroy");
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     180_000,
   );
 
@@ -483,7 +483,7 @@ describe("stack shadow databases", () => {
             }),
           );
         }).pipe(Effect.provide(layers));
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     180_000,
   );
 
@@ -520,7 +520,7 @@ describe("stack shadow databases", () => {
         expect(output.stderrText).not.toContain("Failed to destroy");
         expect(roots).toHaveLength(1);
         for (const root of roots) expect(yield* fs.exists(root)).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     120_000,
   );
 
@@ -558,7 +558,7 @@ describe("stack shadow databases", () => {
             /`supabase stack list`.*`supabase stack stop --stack <id>`.*`supabase stack prune --dry-run`/,
           ),
         });
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     120_000,
   );
 
@@ -597,7 +597,7 @@ describe("stack shadow databases", () => {
                 ),
             });
           }),
-        ).pipe(Layer.provide(stackApiLayer), Layer.provide([BunServices.layer, BunCrypto.layer]));
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide([NodeServices.layer, NodeCrypto.layer]));
 
         yield* stackWithShadowDatabase(input(fs, path, root), () => Effect.void, {
           runtime: "native",
@@ -618,7 +618,7 @@ describe("stack shadow databases", () => {
         expect(output.stderrText).toMatch(
           /Failed to destroy shadow stack [0-9a-f]{64}: Docker CLI or daemon isn't reachable\.\n/u,
         );
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     120_000,
   );
 
@@ -684,7 +684,7 @@ describe("stack shadow databases", () => {
                 ),
             });
           }),
-        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide(NodeServices.layer));
         const base = input(fs, path, root);
         const setup = {
           ...base,
@@ -707,7 +707,7 @@ describe("stack shadow databases", () => {
         );
 
         expect(pins).toEqual([target.pin]);
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
   }
 
@@ -796,7 +796,7 @@ describe("stack shadow databases", () => {
                 ),
             });
           }),
-        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide(NodeServices.layer));
         const base = input(fs, path, root);
 
         yield* stackWithShadowDatabase(
@@ -822,7 +822,7 @@ describe("stack shadow databases", () => {
         );
 
         expect(pins).toEqual([remote.pin]);
-      }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
     );
   }
 
@@ -858,6 +858,6 @@ describe("stack shadow databases", () => {
         "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
       );
       expect(roots).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide([BunServices.layer, BunCrypto.layer])),
+    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeCrypto.layer])),
   );
 });

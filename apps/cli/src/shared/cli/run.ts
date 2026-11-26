@@ -1,4 +1,4 @@
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { NodeCrypto, NodeServices } from "@effect/platform-node";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
@@ -596,14 +596,17 @@ export function withoutParseErrorHelpDump<A, E, R>(
 }
 
 function cliProjectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return cliProjectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
+  return cliProjectContextLayer.pipe(
+    Layer.provide(runtimeLayer),
+    Layer.provide(NodeServices.layer),
+  );
 }
 
 function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   return cliSettingsLayer.pipe(
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -612,7 +615,7 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
     Layer.provide(cliSettingsLayerFor(runtimeLayer)),
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 }
 
@@ -692,7 +695,7 @@ export function cliProgramFor<
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(cliArgsLayer(cliArgs)),
     Layer.provideMerge(
-      Layer.mergeAll(BunServices.layer, BunCrypto.layerSecureRandom, BunCrypto.layerDigest),
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom, NodeCrypto.layerDigest),
     ),
   );
   return withoutParseErrorHelpDump(
@@ -731,7 +734,7 @@ export const runCli = Effect.fnUntraced(function* <
   const rawArgs = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(NodeServices.layer));
   const cliArgs = prepareCliArgs(rootCommand, rawArgs);
   const { args } = cliArgs;
 
@@ -755,7 +758,7 @@ export const runCli = Effect.fnUntraced(function* <
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(ttyLayer),
-    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(NodeServices.layer),
   );
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
@@ -800,8 +803,8 @@ export const runCli = Effect.fnUntraced(function* <
   );
   const handledProgramLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
-    Layer.provideMerge(BunServices.layer),
-    Layer.provideMerge(BunCrypto.layerSecureRandom),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(NodeCrypto.layerSecureRandom),
     Layer.provideMerge(cliConfigProviderLayer),
   );
 
