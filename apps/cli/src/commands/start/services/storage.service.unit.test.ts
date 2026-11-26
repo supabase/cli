@@ -63,27 +63,26 @@ describe("buildStorageEnv", () => {
     const env = buildStorageEnv(baseEnvInput);
     expect(env).toMatchObject({
       STORAGE_BACKEND: "file",
-      FILE_STORAGE_BACKEND_PATH: "/mnt",
+      STORAGE_FILE_BACKEND_PATH: "/mnt",
       TENANT_ID: "stub",
-      GLOBAL_S3_BUCKET: "stub",
+      STORAGE_S3_BUCKET: "stub",
       TUS_URL_PATH: "/storage/v1/upload/resumable",
       S3_PROTOCOL_PREFIX: "/storage/v1",
       UPLOAD_FILE_SIZE_LIMIT: "52428800000",
       UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
-      SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
+      UPLOAD_SIGNED_URL_EXPIRATION_TIME: "7200",
     });
   });
 
   describe("image-transformation / ImgProxy gate", () => {
-    test("ENABLE_IMAGE_TRANSFORMATION and IMGPROXY_URL reflect the caller-resolved compound flag", () => {
+    test("IMAGE_TRANSFORMATION_ENABLED and IMGPROXY_URL reflect the caller-resolved compound flag", () => {
       const disabled = buildStorageEnv({
         ...baseEnvInput,
         imageTransformationEnabled: false,
       });
-      expect(disabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("false");
+      expect(disabled["IMAGE_TRANSFORMATION_ENABLED"]).toBe("false");
 
       const enabled = buildStorageEnv({ ...baseEnvInput, imageTransformationEnabled: true });
-      expect(enabled["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
       expect(enabled["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
     });
 
@@ -249,19 +248,17 @@ describe("buildStorageContainerSpec", () => {
     expect(spec.labels).toEqual({});
   });
 
-  test("propagates the image-transformation gate through to ENABLE_IMAGE_TRANSFORMATION", () => {
+  test("propagates the image-transformation gate through to IMAGE_TRANSFORMATION_ENABLED", () => {
     const withImgproxy = buildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: true,
     });
-    expect(withImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("true");
     expect(withImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("true");
 
     const withoutImgproxy = buildStorageContainerSpec({
       ...input,
       imageTransformationEnabled: false,
     });
-    expect(withoutImgproxy.env["ENABLE_IMAGE_TRANSFORMATION"]).toBe("false");
     expect(withoutImgproxy.env["IMAGE_TRANSFORMATION_ENABLED"]).toBe("false");
   });
 

@@ -68,14 +68,13 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         ANON_KEY: creation.config.anonKey ?? anon,
         SERVICE_KEY: creation.config.serviceRoleKey ?? service,
         AUTH_JWT_SECRET: jwt,
-        PGRST_JWT_SECRET: jwt,
         ...(creation.config.jwks === undefined ? {} : { JWT_JWKS: creation.config.jwks }),
         // The Storage image sets NODE_ENV=production, which forces https into TUS upload URLs.
         NODE_ENV: "development",
         TENANT_ID: "stub",
-        REGION: "local",
+        SERVER_REGION: "local",
         STORAGE_S3_REGION: creation.config.s3Region ?? DEFAULT_LOCAL_S3_REGION,
-        GLOBAL_S3_BUCKET: "stub",
+        STORAGE_S3_BUCKET: "stub",
         STORAGE_BACKEND: "file",
         DB_HOST: db.host,
         DB_PORT: db.port,
@@ -90,7 +89,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         S3_PROTOCOL_ACCESS_KEY_SECRET:
           creation.config.s3SecretAccessKey ?? DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
         UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
-        SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
+        UPLOAD_SIGNED_URL_EXPIRATION_TIME: "7200",
         ...(creation.config.s3ProtocolEnabled === undefined
           ? {}
           : { S3_PROTOCOL_ENABLED: String(creation.config.s3ProtocolEnabled) }),
@@ -112,7 +111,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           : { VECTOR_MAX_INDEXES: String(creation.config.vectorMaxIndexes) }),
         ...(creation.config.fileSizeLimit === undefined
           ? {}
-          : { FILE_SIZE_LIMIT: creation.config.fileSizeLimit }),
+          : { UPLOAD_FILE_SIZE_LIMIT: creation.config.fileSizeLimit }),
         ...(creation.config.imgproxyUrl === undefined
           ? {}
           : {
