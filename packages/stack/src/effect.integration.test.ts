@@ -1727,19 +1727,20 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-/** Binds an ephemeral port picked by the OS, so the conflict never collides with another test. */
-const holdPort = Effect.acquireRelease(
-  Effect.callback<Net.Server, Error>((resume) => {
-    const server = Net.createServer();
-    server.once("error", (cause) => resume(Effect.fail(cause)));
-    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
-  }),
-  (server) =>
-    Effect.callback<void>((resume) => {
-      if (!server.listening) return resume(Effect.void);
-      server.close(() => resume(Effect.void));
+/** Binds a fixed port this file owns; a released OS ephemeral port could be taken before the stack rebinds it. */
+const holdPort = (port: number) =>
+  Effect.acquireRelease(
+    Effect.callback<Net.Server, Error>((resume) => {
+      const server = Net.createServer();
+      server.once("error", (cause) => resume(Effect.fail(cause)));
+      server.listen(port, "127.0.0.1", () => resume(Effect.succeed(server)));
     }),
-);
+    (server) =>
+      Effect.callback<void>((resume) => {
+        if (!server.listening) return resume(Effect.void);
+        server.close(() => resume(Effect.void));
+      }),
+  );
 
 it.live(
   "fails a start whose requested fixed port is taken, keeping the requested intent saved",
@@ -1770,11 +1771,8 @@ it.live(
             "the stopped stack keeps its automatic port",
           ).toEqual(expect.any(Number));
 
-          const holder = yield* holdPort;
-          const address = holder.address();
-          const conflictingPort =
-            typeof address === "object" && address !== null ? address.port : 0;
-          expect(conflictingPort).toBeGreaterThan(0);
+          const conflictingPort = FIXED_API_PORT + 2;
+          const holder = yield* holdPort(conflictingPort);
 
           const requestedConflicting = {
             ...rest,
