@@ -1429,7 +1429,7 @@ describe("makeSupabaseApiClient", () => {
 
         yield* client.execute(operationDefinitions.v2ListNotebooks, {
           ref: "abcdefghijklmnopqrst",
-          page: { size: 100, after: "cursor-1" },
+          page: { size: "100", after: "cursor-1" },
           filter: { name: "sales" },
         });
 

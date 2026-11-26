@@ -12622,6 +12622,7 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
           "compute_not_enabled",
           "compute_request_rejected",
           "compute_unavailable",
+          "environment_root_project_required",
           "environment_secret_not_found",
           "environment_variable_already_exists",
           "environment_variable_limit_reached",
@@ -13052,6 +13053,48 @@ export const V2DeleteAComputeInstanceInput = Schema.Struct({
   name: Schema.String.check(
     Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", "u")).annotate({
       expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2DeleteEnvironmentSecretInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+  name: Schema.String.check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$", "u")).annotate({
+      expected: "a string matching the RegExp ^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+    }),
+  ),
+});
+export const V2DeleteEnvironmentVariableInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+  name: Schema.String.check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$", "u")).annotate({
+      expected: "a string matching the RegExp ^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
     }),
   ),
 });
@@ -15492,7 +15535,7 @@ export const V2GetWarehouseStatusOutput = Schema.Struct({
               message: Schema.String,
             }).annotate({
               description:
-                "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are omitted.",
+                "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are returned as `null`.",
             }),
             Schema.Null,
           ]),
@@ -16538,6 +16581,67 @@ export const V2ListAllComputeInstancesOutput = Schema.Struct({
     }),
   ),
 });
+export const V2ListEnvironmentSecretsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+});
+export const V2ListEnvironmentSecretsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("environment_secret").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Name of the variable or secret." }),
+      attributes: Schema.Struct({
+        created_at: Schema.String.annotate({ format: "date-time" }),
+        updated_at: Schema.String.annotate({ format: "date-time" }),
+      }),
+    }),
+  ),
+});
+export const V2ListEnvironmentVariablesInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+});
+export const V2ListEnvironmentVariablesOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("environment_variable").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Name of the variable or secret." }),
+      attributes: Schema.Struct({
+        value: Schema.String.annotate({ description: "Value of the variable." })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          )
+          .check(
+            Schema.isMaxCodePoints(24576).annotate({
+              expected: "a string with at most 24576 code points",
+            }),
+          ),
+        created_at: Schema.String.annotate({ format: "date-time" }),
+        updated_at: Schema.String.annotate({ format: "date-time" }),
+      }),
+    }),
+  ),
+});
 export const V2ListLogDrainsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -16672,27 +16776,29 @@ export const V2ListNotebooksInput = Schema.Struct({
     ),
   page: Schema.optionalKey(
     Schema.Struct({
-      size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(1).annotate({
-              expected: "a value greater than or equal to 1",
-            }),
-          )
-          .check(
-            Schema.isLessThanOrEqualTo(100).annotate({
-              expected: "a value less than or equal to 100",
-            }),
-          ),
-      ),
-      after: Schema.optionalKey(
-        Schema.String.check(
+      before: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+        }).check(
           Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
         ),
       ),
-      before: Schema.optionalKey(
-        Schema.String.check(
+      after: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+        }).check(
           Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      size: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+        }).check(
+          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
+            expected: "a string matching the RegExp ^-?\\d+$",
+          }),
         ),
       ),
     }),
@@ -16771,21 +16877,32 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   ),
   page: Schema.optionalKey(
     Schema.Struct({
-      size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      before: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+        })
           .check(
-            Schema.isGreaterThanOrEqualTo(1).annotate({
-              expected: "a value greater than or equal to 1",
+            Schema.isMinCodePoints(20).annotate({
+              expected: "a string with at least 20 code points",
             }),
           )
           .check(
-            Schema.isLessThanOrEqualTo(100).annotate({
-              expected: "a value less than or equal to 100",
+            Schema.isMaxCodePoints(20).annotate({
+              expected: "a string with at most 20 code points",
+            }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
             }),
           ),
       ),
       after: Schema.optionalKey(
-        Schema.String.annotate({ description: "Project ref" })
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+        })
           .check(
             Schema.isMinCodePoints(20).annotate({
               expected: "a string with at least 20 code points",
@@ -16802,23 +16919,14 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
             }),
           ),
       ),
-      before: Schema.optionalKey(
-        Schema.String.annotate({ description: "Project ref" })
-          .check(
-            Schema.isMinCodePoints(20).annotate({
-              expected: "a string with at least 20 code points",
-            }),
-          )
-          .check(
-            Schema.isMaxCodePoints(20).annotate({
-              expected: "a string with at most 20 code points",
-            }),
-          )
-          .check(
-            Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
-              expected: "a string matching the RegExp ^[a-z]+$",
-            }),
-          ),
+      size: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+        }).check(
+          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
+            expected: "a string matching the RegExp ^-?\\d+$",
+          }),
+        ),
       ),
     }),
   ),
@@ -16996,21 +17104,12 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
   ),
   page: Schema.optionalKey(
     Schema.Struct({
-      size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(1).annotate({
-              expected: "a value greater than or equal to 1",
-            }),
-          )
-          .check(
-            Schema.isLessThanOrEqualTo(100).annotate({
-              expected: "a value less than or equal to 100",
-            }),
-          ),
-      ),
-      after: Schema.optionalKey(
-        Schema.String.annotate({ format: "uuid" }).check(
+      before: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+          format: "uuid",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -17022,8 +17121,12 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           }),
         ),
       ),
-      before: Schema.optionalKey(
-        Schema.String.annotate({ format: "uuid" }).check(
+      after: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+          format: "uuid",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -17032,6 +17135,15 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
           ).annotate({
             expected:
               "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+      ),
+      size: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+        }).check(
+          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
+            expected: "a string matching the RegExp ^-?\\d+$",
           }),
         ),
       ),
@@ -17146,27 +17258,29 @@ export const V2ListOrganizationProjectsInput = Schema.Struct({
   ),
   page: Schema.optionalKey(
     Schema.Struct({
-      size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(1).annotate({
-              expected: "a value greater than or equal to 1",
-            }),
-          )
-          .check(
-            Schema.isLessThanOrEqualTo(100).annotate({
-              expected: "a value less than or equal to 100",
-            }),
-          ),
-      ),
-      after: Schema.optionalKey(
-        Schema.String.check(
+      before: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+        }).check(
           Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
         ),
       ),
-      before: Schema.optionalKey(
-        Schema.String.check(
+      after: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+        }).check(
           Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      size: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+        }).check(
+          Schema.isPattern(new RegExp("^-?\\d+$", "u")).annotate({
+            expected: "a string matching the RegExp ^-?\\d+$",
+          }),
         ),
       ),
     }),
@@ -19044,6 +19158,40 @@ export const V2PreviewAProjectTransferOutput = Schema.Struct({
     }),
   }),
 });
+export const V2ProjectGetDownloadableBackupsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ProjectGetDownloadableBackupsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("project_downloadable_backup").annotate({
+        description: "Resource type.",
+      }),
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      attributes: Schema.Struct({
+        is_physical_backup: Schema.Boolean,
+        inserted_at: Schema.String,
+        project_id: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        status: Schema.Union([
+          Schema.Literals(["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]),
+          OpenString,
+        ]),
+      }),
+    }),
+  ),
+});
 export const V2ProjectsRefWebhooksDeliveriesIdGetInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
@@ -20750,7 +20898,7 @@ export const V2ResyncWarehouseReplicationInput = Schema.Struct({
     }),
     attributes: Schema.Struct({
       schema: Schema.String.annotate({
-        description: "Literal source PostgreSQL schema. Omit table to select its current tables.",
+        description: "Literal source PostgreSQL schema of the table.",
       }).check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" })),
       table: Schema.String.annotate({
         description: "Literal name of the single source table to reset and recopy.",
@@ -21013,6 +21161,115 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
           observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
         }),
       ),
+    }),
+  }),
+});
+export const V2SetEnvironmentSecretInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+  name: Schema.String.check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$", "u")).annotate({
+      expected: "a string matching the RegExp ^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("environment_secret").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      value: Schema.String.annotate({
+        description:
+          "Value of the secret. It is encrypted at rest and never returned by the API. Must be a single line. Escape line breaks yourself, for example as `\\n`.",
+      })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+        .check(
+          Schema.isMaxCodePoints(24576).annotate({
+            expected: "a string with at most 24576 code points",
+          }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[^\\r\\n]*$", "u")).annotate({
+            expected: "a string matching the RegExp ^[^\\r\\n]*$",
+          }),
+        ),
+    }),
+  }),
+});
+export const V2SetEnvironmentSecretOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("environment_secret").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Name of the variable or secret." }),
+    attributes: Schema.Struct({
+      created_at: Schema.String.annotate({ format: "date-time" }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
+    }),
+  }),
+});
+export const V2SetEnvironmentVariableInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  environment: Schema.Literals(["production", "development"]),
+  name: Schema.String.check(
+    Schema.isMaxCodePoints(256).annotate({ expected: "a string with at most 256 code points" }),
+  ).check(
+    Schema.isPattern(new RegExp("^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$", "u")).annotate({
+      expected: "a string matching the RegExp ^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("environment_variable").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      value: Schema.String.annotate({
+        description:
+          "Value of the variable. Must be a single line. Escape line breaks yourself, for example as `\\n`.",
+      })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+        .check(
+          Schema.isMaxCodePoints(24576).annotate({
+            expected: "a string with at most 24576 code points",
+          }),
+        )
+        .check(
+          Schema.isPattern(new RegExp("^[^\\r\\n]*$", "u")).annotate({
+            expected: "a string matching the RegExp ^[^\\r\\n]*$",
+          }),
+        ),
+    }),
+  }),
+});
+export const V2SetEnvironmentVariableOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("environment_variable").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Name of the variable or secret." }),
+    attributes: Schema.Struct({
+      value: Schema.String.annotate({ description: "Value of the variable." })
+        .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+        .check(
+          Schema.isMaxCodePoints(24576).annotate({
+            expected: "a string with at most 24576 code points",
+          }),
+        ),
+      created_at: Schema.String.annotate({ format: "date-time" }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
     }),
   }),
 });
@@ -22017,6 +22274,8 @@ export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
 export const V2DeleteAComputeInstanceOutput = Schema.Void;
+export const V2DeleteEnvironmentSecretOutput = Schema.Void;
+export const V2DeleteEnvironmentVariableOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
@@ -22210,6 +22469,8 @@ export const openApiOperationIdMap = {
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
   "v2-create-warehouse-setup": "v2CreateWarehouseSetup",
   "v2-delete-a-compute-instance": "v2DeleteAComputeInstance",
+  "v2-delete-environment-secret": "v2DeleteEnvironmentSecret",
+  "v2-delete-environment-variable": "v2DeleteEnvironmentVariable",
   "v2-delete-log-drain": "v2DeleteLogDrain",
   "v2-delete-notebook": "v2DeleteNotebook",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
@@ -22234,6 +22495,8 @@ export const openApiOperationIdMap = {
   "v2-get-warehouse-table-layout": "v2GetWarehouseTableLayout",
   "v2-get-warehouse-teardown": "v2GetWarehouseTeardown",
   "v2-list-all-compute-instances": "v2ListAllComputeInstances",
+  "v2-list-environment-secrets": "v2ListEnvironmentSecrets",
+  "v2-list-environment-variables": "v2ListEnvironmentVariables",
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
@@ -22259,6 +22522,7 @@ export const openApiOperationIdMap = {
     "v2OrganizationsSlugWebhooksEndpointsIdTestPost",
   "v2-organizations-slug-webhooks-endpoints-post": "v2OrganizationsSlugWebhooksEndpointsPost",
   "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
+  "v2-project-get-downloadable-backups": "v2ProjectGetDownloadableBackups",
   "v2-projects-ref-webhooks-deliveries-id-get": "v2ProjectsRefWebhooksDeliveriesIdGet",
   "v2-projects-ref-webhooks-deliveries-id-retry-post": "v2ProjectsRefWebhooksDeliveriesIdRetryPost",
   "v2-projects-ref-webhooks-endpoints-delete": "v2ProjectsRefWebhooksEndpointsDelete",
@@ -22275,6 +22539,8 @@ export const openApiOperationIdMap = {
   "v2-restart-warehouse-replication": "v2RestartWarehouseReplication",
   "v2-resync-warehouse-replication": "v2ResyncWarehouseReplication",
   "v2-run-project-advisors": "v2RunProjectAdvisors",
+  "v2-set-environment-secret": "v2SetEnvironmentSecret",
+  "v2-set-environment-variable": "v2SetEnvironmentVariable",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
   "v2-update-notebook": "v2UpdateNotebook",
@@ -25293,6 +25559,34 @@ export const operationDefinitions = {
     inputSchema: V2DeleteAComputeInstanceInput,
     outputSchema: V2DeleteAComputeInstanceOutput,
   },
+  v2DeleteEnvironmentSecret: {
+    id: "v2DeleteEnvironmentSecret",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/environments/{environment}/secrets/{name}",
+    pathParams: ["ref", "environment", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteEnvironmentSecretInput,
+    outputSchema: V2DeleteEnvironmentSecretOutput,
+  },
+  v2DeleteEnvironmentVariable: {
+    id: "v2DeleteEnvironmentVariable",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/environments/{environment}/variables/{name}",
+    pathParams: ["ref", "environment", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteEnvironmentVariableInput,
+    outputSchema: V2DeleteEnvironmentVariableOutput,
+  },
   v2DeleteLogDrain: {
     id: "v2DeleteLogDrain",
     description: "Delete a project log drain",
@@ -25472,7 +25766,7 @@ export const operationDefinitions = {
   v2GetWarehouseCapacity: {
     id: "v2GetWarehouseCapacity",
     description:
-      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time\nrange, using the project’s stored Warehouse placement. Use `since` or both `from` and `to`;\nthe default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges,\n`rate_window_seconds`, source-sample freshness, availability, coverage, and full series with\ndimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission\nincludes active plus pending grants. The configured admission limit does not imply an open\ngate or spare capacity. Missing, stale, and insufficient observations remain unavailable or\n`null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time.\nRates and latency quantiles describe the effective rate window at each point, not the entire\nrequested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not\ndiscard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/capacity",
     pathParams: ["ref"],
@@ -25486,7 +25780,7 @@ export const operationDefinitions = {
   v2GetWarehouseConnection: {
     id: "v2GetWarehouseConnection",
     description:
-      "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: usql -W 'flightsql://postgres@<host>:443?tls=enabled'.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Returns the public Arrow Flight SQL endpoint resolved from the project's Warehouse routing, with TLS required on port 443. Status is configured availability and query connectivity is not checked, so DNS readiness does not prove a query will succeed. Login uses a role in the source project database with that role's existing password (postgres uses the project database password), including when the catalog and storage are in another project. The role needs supabase_warehouse_reader membership, which is separate from Management API authorization. No passwords, tokens, catalog credentials or private endpoints are returned, and endpoint, host and port are null unless status is available or pending. Example client: `usql -W 'flightsql://postgres@<host>:443?tls=enabled'`.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/warehouse/connection",
     pathParams: ["ref"],
@@ -25622,6 +25916,34 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListAllComputeInstancesInput,
     outputSchema: V2ListAllComputeInstancesOutput,
+  },
+  v2ListEnvironmentSecrets: {
+    id: "v2ListEnvironmentSecrets",
+    description:
+      "Returns the names of the secrets. Secret values are never returned.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/environments/{environment}/secrets",
+    pathParams: ["ref", "environment"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListEnvironmentSecretsInput,
+    outputSchema: V2ListEnvironmentSecretsOutput,
+  },
+  v2ListEnvironmentVariables: {
+    id: "v2ListEnvironmentVariables",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "GET",
+    path: "/v2/projects/{ref}/environments/{environment}/variables",
+    pathParams: ["ref", "environment"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListEnvironmentVariablesInput,
+    outputSchema: V2ListEnvironmentVariablesOutput,
   },
   v2ListLogDrains: {
     id: "v2ListLogDrains",
@@ -25895,6 +26217,19 @@ export const operationDefinitions = {
     inputSchema: V2PreviewAProjectTransferInput,
     outputSchema: V2PreviewAProjectTransferOutput,
   },
+  v2ProjectGetDownloadableBackups: {
+    id: "v2ProjectGetDownloadableBackups",
+    description: "Gets backups that might be downloadable, but potentially not restorable.",
+    method: "GET",
+    path: "/v2/projects/{ref}/backups/downloadable-backups",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectGetDownloadableBackupsInput,
+    outputSchema: V2ProjectGetDownloadableBackupsOutput,
+  },
   v2ProjectsRefWebhooksDeliveriesIdGet: {
     id: "v2ProjectsRefWebhooksDeliveriesIdGet",
     description: "Get details of a specific delivery attempt.",
@@ -26061,7 +26396,7 @@ export const operationDefinitions = {
   v2RestartWarehouseReplication: {
     id: "v2RestartWarehouseReplication",
     description:
-      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "POST",
     path: "/v2/projects/{ref}/warehouse/replication/restart",
     pathParams: ["ref"],
@@ -26098,6 +26433,34 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2RunProjectAdvisorsInput,
     outputSchema: V2RunProjectAdvisorsOutput,
+  },
+  v2SetEnvironmentSecret: {
+    id: "v2SetEnvironmentSecret",
+    description:
+      "Encrypts the value with the environment's data encryption key and stores it. The value cannot be read back.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "PUT",
+    path: "/v2/projects/{ref}/environments/{environment}/secrets/{name}",
+    pathParams: ["ref", "environment", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2SetEnvironmentSecretInput,
+    outputSchema: V2SetEnvironmentSecretOutput,
+  },
+  v2SetEnvironmentVariable: {
+    id: "v2SetEnvironmentVariable",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+    method: "PUT",
+    path: "/v2/projects/{ref}/environments/{environment}/variables/{name}",
+    pathParams: ["ref", "environment", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2SetEnvironmentVariableInput,
+    outputSchema: V2SetEnvironmentVariableOutput,
   },
   v2TransferAProject: {
     id: "v2TransferAProject",
