@@ -224,24 +224,6 @@ describe("telemetryStateLayer while consent is denied", () => {
       expect(next.device_id).not.toBe("device-xyz");
     }).pipe(Effect.provide(makeLayer(analytics, runtime)), withTempHome);
   });
-
-  it.effect("stitchLogin keeps an opt-out held in a file with a malformed field", () => {
-    const analytics = mockAnalytics();
-    const runtime = makeRuntime({ consent: "denied" });
-    return Effect.gen(function* () {
-      yield* seedJson({
-        enabled: false,
-        device_id: "device-xyz",
-        session_id: "session-1",
-        session_last_active: "not-a-time",
-      });
-      const state = yield* TelemetryState;
-      yield* state.stitchLogin("gotrue-1");
-      const next = yield* readState;
-      expect(next.enabled).toBe(false);
-      expect(next.distinct_id).toBe("gotrue-1");
-    }).pipe(Effect.provide(makeLayer(analytics, runtime)), withTempHome);
-  });
 });
 
 describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {

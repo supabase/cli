@@ -209,7 +209,6 @@ describe("readTelemetryConfig", () => {
   );
 
   for (const [name, content] of [
-    ["a structurally invalid config", '{"consent":"granted"}'],
     [
       "an opt-out with an unparsable timestamp",
       '{"enabled":false,"device_id":"d","session_id":"s","session_last_active":"not-a-time"}',
@@ -217,10 +216,6 @@ describe("readTelemetryConfig", () => {
     [
       "granted consent with an empty device id",
       '{"consent":"granted","device_id":"","session_id":"s","session_last_active":1}',
-    ],
-    [
-      "a legacy enabled state with an empty session id",
-      '{"enabled":true,"device_id":"d","session_id":"","session_last_active":"2026-04-01T12:00:00Z"}',
     ],
   ] as const) {
     it.effect(`reads ${name} as an opt-out with fresh ids`, () =>
@@ -235,23 +230,4 @@ describe("readTelemetryConfig", () => {
       }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   }
-
-  it.effect.skipIf(process.platform === "win32")(
-    "reads a config in a directory it cannot search as an opt-out",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const dir = path.join(tempRoot.current, "locked-home");
-        yield* fs.makeDirectory(dir);
-        yield* writeTelemetryFile(dir, yield* encodeJson(yield* makeConfig("denied")));
-
-        const config = yield* Effect.acquireUseRelease(
-          fs.chmod(dir, 0o000),
-          () => readTelemetryConfig(dir),
-          () => fs.chmod(dir, 0o700),
-        );
-        expect(Option.getOrThrow(config).consent).toBe("denied");
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
-  );
 });

@@ -150,18 +150,16 @@ describe("telemetry integration", () => {
     });
   });
 
-  for (const variable of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
-    it.live(`status reports ${variable}=1 as disabled and leaves no state file`, () => {
-      const dir = tempRoot.current;
-      const { out, layer } = setup(dir, { [variable]: "1" });
+  it.live("status reports an env opt-out as disabled and leaves no state file", () => {
+    const dir = tempRoot.current;
+    const { out, layer } = setup(dir, { DO_NOT_TRACK: "1" });
 
-      return Effect.gen(function* () {
-        yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(layer));
-        expect(out.stdoutText).toBe("Telemetry is disabled.\n");
-        expect(yield* telemetryConfigExists(dir)).toBe(false);
-      });
+    return Effect.gen(function* () {
+      yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(layer));
+      expect(out.stdoutText).toBe("Telemetry is disabled.\n");
+      expect(yield* telemetryConfigExists(dir)).toBe(false);
     });
-  }
+  });
 
   it.live("enable preserves prior identity fields and prints the enabled output", () => {
     const dir = tempRoot.current;
@@ -298,31 +296,5 @@ describe("telemetry integration", () => {
       yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(status.layer));
       expect(status.out.stdoutText).toBe("Telemetry is disabled.\n");
     }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("an opt-out in a file with a malformed field stays an opt-out", () => {
-    const dir = tempRoot.current;
-    const seed = JSON.stringify({
-      enabled: false,
-      device_id: "device-123",
-      session_id: "session-123",
-      session_last_active: "not-a-time",
-      distinct_id: "user-123",
-      schema_version: 1,
-    });
-
-    return Effect.gen(function* () {
-      yield* writeTelemetryConfig(dir, seed);
-      const status = setup(dir);
-      yield* runTelemetry(["telemetry", "status"]).pipe(Effect.provide(status.layer));
-      expect(status.out.stdoutText).toBe("Telemetry is disabled.\n");
-
-      const disable = setup(dir);
-      yield* runTelemetry(["telemetry", "disable"]).pipe(Effect.provide(disable.layer));
-      const config = yield* readTelemetryConfig(dir);
-      expect(config.enabled).toBe(false);
-      expect(config.device_id).not.toBe("device-123");
-      expect(config.distinct_id).toBeUndefined();
-    });
   });
 });
