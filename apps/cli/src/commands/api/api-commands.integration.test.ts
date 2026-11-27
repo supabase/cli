@@ -1042,6 +1042,17 @@ describe("generated warehouse commands", () => {
       },
     );
 
+    it.effect("asks for a positive integer instead of showing the id pattern", () => {
+      const { sent, run } = setup(["warehouse", "tables", "get", "abc"], { route: ok(body) });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toMatchObject({
+          message: "The request is not valid: <table-id>: Expected a positive integer",
+        });
+        expect(sent).toEqual([]);
+      });
+    });
+
     it.effect.each(["", ".."])(
       "rejects the table id %j as a usage error and sends nothing",
       (value) => {
@@ -1228,6 +1239,26 @@ describe("generated warehouse commands", () => {
           });
           expect(sent).toHaveLength(preview ? 0 : 1);
         }
+      });
+    });
+
+    it.effect("locates a nested --sort-by failure by its JSON pointer", () => {
+      const sortBy = encodeJson({
+        kind: "columns",
+        columns: [{ name: "a", direction: "sideways" }],
+      });
+      const { sent, run } = setup([...argv, "--sort-by", sortBy, "--dry-run"], {
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandUsageError);
+        expect(failure).toMatchObject({
+          message: expect.stringContaining(
+            '--sort-by /columns/0/direction: Expected "asc" | "desc"',
+          ),
+        });
+        expect(sent).toEqual([]);
       });
     });
 
@@ -2630,10 +2661,10 @@ describe("generated warehouse commands", () => {
         "  Setup status       ready",
         "  Pipeline ID        42",
         "  Steps",
-        "     NAME                  | STATUS    | MESSAGE            ",
-        "    -----------------------|-----------|--------------------",
-        "     create_pipeline       | succeeded | -                  ",
-        "     import_foreign_schema | failed    | line one\\nline two ",
+        "     NAME                  | STATUS    | MESSAGE                ",
+        "    -----------------------|-----------|------------------------",
+        "     create_pipeline       | succeeded | -                      ",
+        "     import_foreign_schema | failed    | line one\\u000aline two ",
         "  Tables",
         "     SCHEMA | NAME   | STATE   | LAG MS | LAST SYNCED AT       | COPY NAME         | REPLICATION STATE | WAREHOUSE SIZE BYTES ",
         "    --------|--------|---------|--------|----------------------|-------------------|-------------------|----------------------",

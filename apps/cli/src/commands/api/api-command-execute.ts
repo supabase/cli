@@ -21,7 +21,8 @@ import { Output } from "../../shared/output/output.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
 import { readPointer } from "./api-command-pointer.ts";
 import { definitionOf, type ApiRequestPreview } from "./api-command-request.ts";
-import { renderDryRunText, renderResponseText, singleLine } from "./api-command.format.ts";
+import { escapeControlCharacters } from "../../shared/output/escape-control-characters.ts";
+import { renderDryRunText, renderResponseText } from "./api-command.format.ts";
 import {
   ApiCommandNetworkError,
   ApiCommandOperationFailedError,
@@ -377,7 +378,7 @@ export const writeApiResponse = Effect.fnUntraced(function* (
   if (format === "text") {
     if (Option.isNone(parsed)) {
       const lines = text.endsWith("\n") ? text.slice(0, -1) : text;
-      return yield* output.raw(`${lines.split("\n").map(singleLine).join("\n")}\n`);
+      return yield* output.raw(`${lines.split("\n").map(escapeControlCharacters).join("\n")}\n`);
     }
     return yield* output.raw(renderResponseText(parsed.value));
   }

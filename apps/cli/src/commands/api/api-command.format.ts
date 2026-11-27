@@ -1,4 +1,5 @@
 import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { escapeControlCharacters } from "../../shared/output/escape-control-characters.ts";
 import type { ApiRequestPreview } from "./api-command-request.ts";
 
 const INDENT = "  ";
@@ -13,28 +14,12 @@ const isObject = (value: unknown): value is JsonObject =>
 
 const isScalar = (value: unknown): boolean => value === null || typeof value !== "object";
 
-const CONTROL_ESCAPES: Readonly<Record<string, string>> = {
-  "\r": "\\r",
-  "\n": "\\n",
-  "\t": "\\t",
-};
-
-/**
- * Keeps a value on one line and inert in a terminal: line breaks, tabs and the other control
- * characters (C0, DEL, C1), bidi controls and line separators become visible `\uXXXX` escapes.
- */
-export const singleLine = (text: string): string =>
-  text.replace(
-    // oxlint-disable-next-line no-control-regex -- escaping control characters is the purpose
-    /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu,
-    (char) => CONTROL_ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-
-const compactJson = (value: unknown): string => singleLine(JSON.stringify(value) ?? "null");
+const compactJson = (value: unknown): string =>
+  escapeControlCharacters(JSON.stringify(value) ?? "null");
 
 /** `snake_case` becomes a sentence-case label; known acronyms stay upper-case. */
 const humanize = (key: string): string =>
-  singleLine(key)
+  escapeControlCharacters(key)
     .split("_")
     .filter((word) => word !== "")
     .map((word, index) => {
@@ -47,8 +32,8 @@ const humanize = (key: string): string =>
 const scalarText = (value: unknown): string => {
   if (value === null || value === undefined) return "-";
   if (typeof value === "boolean") return value ? "yes" : "no";
-  if (typeof value === "string") return value === "" ? "-" : singleLine(value);
-  return singleLine(String(value));
+  if (typeof value === "string") return value === "" ? "-" : escapeControlCharacters(value);
+  return escapeControlCharacters(String(value));
 };
 
 const cellText = (value: unknown): string =>
@@ -220,7 +205,8 @@ const rawBlock = (title: string, values: Readonly<Record<string, unknown>>) => {
   return [
     title,
     ...entries.map(
-      ([key, value]) => `${INDENT}${singleLine(key).padEnd(width)}${INDENT}${cellText(value)}`,
+      ([key, value]) =>
+        `${INDENT}${escapeControlCharacters(key).padEnd(width)}${INDENT}${cellText(value)}`,
     ),
   ];
 };
@@ -234,10 +220,10 @@ export const renderDryRunText = (preview: ApiRequestPreview): string => {
           "Body",
           ...JSON.stringify(preview.body, null, 2)
             .split("\n")
-            .map((line) => `${INDENT}${singleLine(line)}`),
+            .map((line) => `${INDENT}${escapeControlCharacters(line)}`),
         ];
   return `${[
-    `Dry run: ${singleLine(preview.method)} ${singleLine(preview.path)}`,
+    `Dry run: ${escapeControlCharacters(preview.method)} ${escapeControlCharacters(preview.path)}`,
     ...rawBlock("Query", preview.query),
     ...rawBlock("Headers", preview.headers),
     ...body,

@@ -38,7 +38,7 @@ import {
 } from "./api-command-execute.ts";
 import { type ApiFlagLocation, apiFlag } from "./api-command-flags.ts";
 import { type ApiNoun, nouns } from "./api-command-policy.ts";
-import { singleLine } from "./api-command.format.ts";
+import { escapeControlCharacters } from "../../shared/output/escape-control-characters.ts";
 import {
   assembleInput,
   consentDetails,
@@ -281,7 +281,9 @@ const handle = Effect.fn("api-command.run")(function* (
             timeoutMillis,
             accepted: acceptance,
             onPoll: ({ status, elapsedMillis }) =>
-              update(`${polling} (status: ${singleLine(status)}, ${formatElapsed(elapsedMillis)})`),
+              update(
+                `${polling} (status: ${escapeControlCharacters(status)}, ${formatElapsed(elapsedMillis)})`,
+              ),
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");

@@ -505,12 +505,6 @@ const requireNoPathItemParameters = (
   }
 };
 
-const requireExperimental = (operation: Operation, fail: (reason: string) => void): void => {
-  if (asString(operation.node["x-scalar-stability"]) !== "experimental") {
-    fail("only operations marked experimental can be generated (x-scalar-stability)");
-  }
-};
-
 const requireOneWait = (
   ownPoll: ApiCommandPoll | undefined,
   linkedRead: string | undefined,
@@ -712,7 +706,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       }
     }
 
-    requireExperimental(operation, fail);
     requireNoPathItemParameters(operation, fail);
     const summary = asString(operation.node.summary);
     if (summary === undefined) fail("operation has no summary");
@@ -1016,7 +1009,6 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
       fail("polling target is missing from the typed client; regenerate @supabase/api");
       continue;
     }
-    requireExperimental(operation, fail);
     requireNoPathItemParameters(operation, fail);
     requireOneWait(poll, polledLinkTarget(spec, operations, operation), fail);
     if (!generated.includes(inspectId)) {

@@ -9,7 +9,9 @@ describe("renderResponseText", () => {
   });
 
   it("escapes line breaks and control characters so every value stays on one line", () => {
-    expect(renderResponseText({ message: "a\nb\tc\u0001d" })).toBe("Message  a\\nb\\tc\\u0001d\n");
+    expect(renderResponseText({ message: "a\nb\tc\u0001d" })).toBe(
+      "Message  a\\u000ab\\u0009c\\u0001d\n",
+    );
   });
 
   it("escapes C1, bidi and line-separator characters so terminals cannot reorder or split a value", () => {
@@ -19,7 +21,7 @@ describe("renderResponseText", () => {
   });
 
   it("escapes control characters in keys so labels stay on one line", () => {
-    expect(renderResponseText({ "a\nb\u001bc": 1 })).toBe("A\\nb\\u001bc  1\n");
+    expect(renderResponseText({ "a\nb\u001bc": 1 })).toBe("A\\u000ab\\u001bc  1\n");
   });
 
   it("prints a dash for null and empty strings, arrays and objects", () => {

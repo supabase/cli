@@ -6,7 +6,7 @@ import type { ApiFlagValue } from "./api-command-flags.ts";
 import { readPointer, writePointer } from "./api-command-pointer.ts";
 import { ApiCommandUsageError } from "../../command-internal/command-errors/api-command.errors.ts";
 import type { ApiCommandEntry } from "./api-command.model.ts";
-import { singleLine } from "./api-command.format.ts";
+import { escapeControlCharacters } from "../../shared/output/escape-control-characters.ts";
 
 /** Parsed flag values keyed by flag name; `None` means the flag was absent. */
 export type ApiFlagValues = Readonly<Record<string, Option.Option<ApiFlagValue>>>;
@@ -224,7 +224,10 @@ const flagAt = (entry: ApiCommandEntry, path: Path) => {
 
 const pointerOf = (path: Path) => path.map((key) => `/${String(key)}`).join("");
 
-/** The CLI surface that supplies the input at `path`: a flag, a positional argument, or the JSON pointer. */
+/**
+ * The CLI surface that supplies the input at `path`: a flag (followed by the JSON pointer inside
+ * its value when the issue is nested), a positional argument, or the JSON pointer.
+ */
 const surfaceAt = (entry: ApiCommandEntry, path: Path): string => {
   const pointer = pointerOf(path);
   for (const binding of entry.bindings) {
@@ -235,10 +238,22 @@ const surfaceAt = (entry: ApiCommandEntry, path: Path): string => {
       binding.location === "body" &&
       (pointer === binding.pointer || pointer.startsWith(`${binding.pointer}/`))
     ) {
-      return `--${binding.flag}`;
+      const inner = pointer.slice(binding.pointer.length);
+      return inner === "" ? `--${binding.flag}` : `--${binding.flag} ${inner}`;
     }
   }
   return pointer === "" ? "the request" : pointer;
+};
+
+const POSITIVE_INTEGER_PATTERN = "^[1-9]\\d*$";
+
+/** Replaces the raw regular expression in a pattern failure with wording a user can act on. */
+const readableMessage = (message: string): string => {
+  const pattern = /^Expected a string matching the RegExp (.+)$/s.exec(message)?.[1];
+  if (pattern === undefined) return message;
+  return pattern === POSITIVE_INTEGER_PATTERN
+    ? "Expected a positive integer"
+    : `Expected a value matching ${pattern}`;
 };
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
@@ -255,7 +270,7 @@ const describeIssues = (entry: ApiCommandEntry, issue: SchemaIssue.Issue): strin
       const path = (found.path ?? []).map((segment) =>
         typeof segment === "object" ? segment.key : segment,
       );
-      return `${surfaceAt(entry, path)}: ${found.message}`;
+      return `${surfaceAt(entry, path)}: ${readableMessage(found.message)}`;
     }),
   );
   return [...lines].join("; ");
@@ -353,7 +368,9 @@ export const previewRequest = (entry: ApiCommandEntry, decoded: object): ApiRequ
 };
 
 const detailLine = (name: string, value: unknown): string =>
-  singleLine(`${name}: ${typeof value === "string" ? value : (JSON.stringify(value) ?? "null")}`);
+  escapeControlCharacters(
+    `${name}: ${typeof value === "string" ? value : (JSON.stringify(value) ?? "null")}`,
+  );
 
 /**
  * The `name: value` lines a consent prompt lists for a validated request: each path parameter

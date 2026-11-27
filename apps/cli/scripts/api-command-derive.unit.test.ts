@@ -530,13 +530,13 @@ describe("deriveApiCommands", () => {
     expect(describe("This endpoint is currently in its **Alpha** stage.")).toBeUndefined();
   });
 
-  it("generates only operations marked experimental", () => {
+  it("generates an operation whatever its stability", () => {
     const result = derive({
-      "create-thing": operation({ ...create, "x-scalar-stability": "beta" }),
+      "create-thing": operation({ ...create, "x-scalar-stability": "stable" }),
     });
 
-    expect(result.entries).toEqual([]);
-    expect(result.problems.join("\n")).toContain("only operations marked experimental");
+    expect(result.problems).toEqual([]);
+    expect(result.entries).toHaveLength(1);
   });
 
   it("names array body flags in the singular and keeps other fields as they are", () => {
@@ -1002,17 +1002,6 @@ describe("deriveApiCommands", () => {
 
       expect(result.problems).toEqual([]);
       expect(result.pollTargets.map((target) => target.operationId)).toEqual(["get-thing"]);
-    });
-
-    it("rejects a poll-only read that is not experimental", () => {
-      const result = deriveHidden({
-        "create-thing": changeThing(link({})),
-        "get-thing": { ...hiddenThing, "x-scalar-stability": "stable" },
-      });
-
-      expect(result.problems).toEqual([
-        "get-thing: only operations marked experimental can be generated (x-scalar-stability)",
-      ]);
     });
 
     it.each([
