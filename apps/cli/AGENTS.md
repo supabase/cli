@@ -259,7 +259,8 @@ Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on 
 `executeRaw` caller that builds its own status error attaches it with `planGateFromResponse`. The
 json and stream-json error object carries it, the text layer's `fail` prints the upgrade hint from
 it, and `withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a
-mapped status error must forward it.
+mapped status error must forward it. Where `upgrade_url` points decides the hint wording and the
+event's `fix_kind`; see `fixKindFromUpgradeUrl` in `src/shared/output/normalize-error.ts`.
 
 ## Targets and hosted consent
 

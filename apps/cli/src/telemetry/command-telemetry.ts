@@ -6,7 +6,11 @@ import {
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
 import { failureBesideClosedStdout } from "../shared/output/errors.ts";
-import { normalizeCause } from "../shared/output/normalize-error.ts";
+import {
+  addonProjectRefFromUpgradeUrl,
+  fixKindFromUpgradeUrl,
+  normalizeCause,
+} from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   CreateTicketFlag,
@@ -39,6 +43,7 @@ import {
   PropErrorCategory,
   PropExitCode,
   PropFeatureKey,
+  PropFixKind,
   PropOrgSlug,
   PropOutputFormat,
   PropStackBackend,
@@ -569,8 +574,13 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           const id = svc.stitchedDistinctId();
           return id === undefined ? Option.none() : Option.some(id);
         });
+        const entitlement =
+          failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;
         const failedProjectRef =
-          failureCause === undefined ? undefined : failureProjectRef(failureCause);
+          failureCause === undefined
+            ? undefined
+            : (failureProjectRef(failureCause) ??
+              (entitlement && addonProjectRefFromUpgradeUrl(entitlement.upgrade_url)));
         const contextWithProject: AnalyticsContext =
           failedProjectRef === undefined
             ? analyticsContext
@@ -587,14 +597,13 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
                   processControlledFailure ?? processControlledFailureActionability(command),
                 )
               : {};
-        const entitlement =
-          failureCause !== undefined ? normalizeCause(failureCause).entitlement : undefined;
 
         if (entitlement !== undefined) {
           yield* analytics
             .capture(EventUpgradeSuggested, {
               [PropFeatureKey]: entitlement.feature,
               [PropOrgSlug]: orgSlugFromUpgradeUrl(entitlement.upgrade_url),
+              [PropFixKind]: fixKindFromUpgradeUrl(entitlement.upgrade_url),
             })
             .pipe(
               withAnalyticsContext(captureContext),

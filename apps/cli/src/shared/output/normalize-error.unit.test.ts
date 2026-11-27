@@ -1,3 +1,5 @@
+import { styleText } from "node:util";
+
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/cli";
@@ -7,11 +9,27 @@ import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
 import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { CliProjectHomeNotDirectoryError } from "../config/cli-project-home.service.ts";
-import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
+import {
+  formatCliError,
+  normalizeCause,
+  normalizeCliError,
+  upgradeHint,
+} from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([branchesCommand, networkRestrictionsCommand, ssoCommand]),
 );
+
+describe("upgradeHint", () => {
+  test("names a project add-on, not the plan, for a project add-ons URL", () => {
+    const url =
+      "https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/addons?panel=pitr";
+
+    expect(upgradeHint(url)).toBe(
+      `This feature needs a project add-on. Add-ons: ${styleText("bold", url)}`,
+    );
+  });
+});
 
 describe("normalizeCliError", () => {
   test("falls back to tagged error fields when no explicit mapping exists", () => {
