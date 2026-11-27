@@ -3,6 +3,7 @@ import { Cause, Effect, Exit, Layer, Predicate } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import { commandExecutorLayer } from "../../command-internal/command-executor.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import {
   buildTestRuntime,
@@ -25,6 +26,7 @@ const tmp = useTempWorkdir("supabase-migration-alias-int-");
 describe("migration command integration", () => {
   it.effect("accepts the plural migrations alias", () => {
     const layer = Layer.mergeAll(
+      commandExecutorLayer,
       buildTestRuntime({
         out: mockOutput({ format: "text" }),
         api: mockCommandPlatformApi(),

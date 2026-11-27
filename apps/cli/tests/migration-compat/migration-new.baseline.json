@@ -1,0 +1,30 @@
+{
+  "revision": "99e278c29380953b2a92758648fa8a53086792ab",
+  "argv": ["migration", "new", "--workdir", "<workdir>", "--output-format", "<format>"],
+  "cases": {
+    "json/success": {
+      "exitCode": 0,
+      "stdout": "{\"path\":\"<workdir>/supabase/migrations/<migration-timestamp>_compat.sql\",\"message\":\"Migration created\"}\n",
+      "stderr": "",
+      "requests": []
+    },
+    "json/invalid-name": {
+      "exitCode": 1,
+      "stdout": "{\"_tag\":\"Error\",\"error\":{\"code\":\"MigrationNewWriteError\",\"message\":\"invalid migration name: \\\"../../../escape\\\" must not escape the supabase/migrations directory\"}}\n",
+      "stderr": "",
+      "requests": []
+    },
+    "stream-json/success": {
+      "exitCode": 0,
+      "stdout": "{\"type\":\"result\",\"data\":{\"path\":\"<workdir>/supabase/migrations/<migration-timestamp>_compat.sql\",\"message\":\"Migration created\"},\"timestamp\":\"2026-11-27T17:26:52.327Z\"}\n",
+      "stderr": "",
+      "requests": []
+    },
+    "stream-json/invalid-name": {
+      "exitCode": 1,
+      "stdout": "{\"type\":\"error\",\"error\":{\"code\":\"MigrationNewWriteError\",\"message\":\"invalid migration name: \\\"../../../escape\\\" must not escape the supabase/migrations directory\"},\"timestamp\":\"2026-11-27T17:26:52.466Z\"}\n",
+      "stderr": "",
+      "requests": []
+    }
+  }
+}

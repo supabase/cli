@@ -130,7 +130,7 @@ const runCommand = (options: {
           : command.pipe(
               withManagedHandler({
                 output: Schema.Struct({ value: Schema.String }),
-                handler,
+                handler: () => Effect.map(handler(), (output) => ({ output })),
                 runtime,
               }),
             );

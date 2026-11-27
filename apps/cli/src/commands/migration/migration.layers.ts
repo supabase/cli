@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
@@ -10,6 +10,7 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { bundledPostgresClientLayer } from "../../command-internal/bundled-postgres-client.ts";
@@ -17,17 +18,17 @@ import { stackCatalogSetupLayer } from "../../command-internal/stack-catalog-set
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
-/**
- * Runtime layer for `supabase migration new`: the resolved CLI config, telemetry
- * flush, and piped stdin, with no DB connection, Management API, or Docker.
- * `Output`, `Analytics`, `FileSystem`, `Path`, `Clock`, and `Tty` come from the root.
- */
-export const migrationNewRuntimeLayer = Layer.mergeAll(
-  cliSettings,
-  telemetryStateLayer,
-  stdinLayer,
-  commandRuntimeLayer(["migration", "new"]),
-);
+/** Keeps stdin scoped to file creation and completion services available for result delivery. */
+export const migrationNewRuntime = {
+  required: stdinLayer,
+  completion: Layer.mergeAll(
+    cliSettings,
+    telemetryStateLayer,
+    commandRuntimeLayer(["migration", "new"]),
+    // Local file creation never resolves a linked project, so completion has no ref to cache.
+    Layer.succeed(LinkedProjectCache, { cache: () => Effect.void }),
+  ),
+};
 
 const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
