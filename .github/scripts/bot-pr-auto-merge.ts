@@ -3,7 +3,8 @@
  *
  * Only a fixed set of bot-owned branch families is eligible, and only while every push to the
  * branch came from that family's bot. A push by anyone else removes the bot approval and
- * auto-merge. Set `DRY_RUN=true` to log decisions without writing. The workflow runs only from
+ * auto-merge. A maintainer hold (`do not merge` label, draft, or a dismissed bot approval) revokes
+ * the same way and is never re-approved. Set `DRY_RUN=true` to log decisions without writing. The workflow runs only from
  * the default branch and never checks out PR code.
  */
 import { appendFileSync } from "node:fs";
@@ -56,6 +57,17 @@ export interface PrReview {
   state: string;
 }
 
+export interface BotPrState {
+  open: boolean;
+  draft: boolean;
+  baseRef: string;
+  headRef: string;
+  headSha: string;
+  labels: string[];
+  autoMergeEnabled: boolean;
+  inMergeQueue: boolean;
+}
+
 export type Provenance =
   | { verdict: "trusted" }
   | { verdict: "pending"; reason: string }
@@ -69,8 +81,14 @@ export interface BotPrIo {
   listReviews: (prNumber: number) => Promise<PrReview[]>;
   /** Approve the PR head as the approver account. Throws `ApprovalGuardViolation` for an unapprovable PR. */
   approve: (pr: BotPr) => Promise<void>;
-  /** Enable squash auto-merge pinned to the PR head. Throws `ApprovalGuardViolation` for an unapprovable PR. */
-  enableAutoMerge: (pr: BotPr) => Promise<void>;
+  /** Read the PR's current state. */
+  refresh: (pr: BotPr) => Promise<BotPrState>;
+  /**
+   * Enable squash auto-merge pinned to the PR head, or enqueue the PR when auto-merge is
+   * unavailable. Throws `ApprovalGuardViolation` for an unapprovable PR.
+   */
+  queue: (pr: BotPr) => Promise<void>;
+  dequeue: (pr: BotPr) => Promise<void>;
   disableAutoMerge: (pr: BotPr) => Promise<void>;
   dismissReview: (pr: BotPr, reviewId: number, message: string) => Promise<void>;
   assignApprover: (pr: BotPr) => Promise<void>;
@@ -125,9 +143,6 @@ export function assessProvenance(
   let creationFound = false;
   let newest: ActivityEvent | undefined;
   for (const event of events) {
-    if (!["branch_creation", "push", "force_push"].includes(event.type)) {
-      continue;
-    }
     if (event.actor !== bot) {
       return { verdict: "tainted", actor: event.actor ?? "an unknown actor" };
     }
@@ -171,14 +186,45 @@ export interface BotPrSweepOptions {
   dryRun: boolean;
 }
 
+function holdReason(state: BotPrState, approval: PrReview | undefined): string | undefined {
+  if (state.labels.some((label) => label.toLowerCase() === DO_NOT_MERGE_LABEL)) {
+    return `labelled \`${DO_NOT_MERGE_LABEL}\``;
+  }
+  if (state.draft) {
+    return "draft";
+  }
+  if (approval?.state === "DISMISSED") {
+    return "approval dismissed";
+  }
+  return undefined;
+}
+
 async function handlePr(
   io: BotPrIo,
   pr: BotPr,
   bot: string,
   dryRun: boolean,
-): Promise<Pick<BotPrSweepEntry, "verdict" | "actions">> {
+  actions: string[],
+): Promise<string> {
   const provenance = assessProvenance(await io.listBranchActivity(pr.headRef), bot, pr.headSha);
-  const actions: string[] = [];
+  const state = await io.refresh(pr);
+  if (provenance.verdict === "pending") {
+    return `pending (${provenance.reason})`;
+  }
+  if (!state.open || state.headSha !== pr.headSha) {
+    return "pending (head moved)";
+  }
+
+  const live: BotPr = {
+    ...pr,
+    draft: state.draft,
+    baseRef: state.baseRef,
+    headRef: state.headRef,
+    headSha: state.headSha,
+    labels: state.labels,
+    autoMergeEnabled: state.autoMergeEnabled,
+  };
+  const failures: string[] = [];
   const act = async (label: string, run: () => Promise<void>): Promise<void> => {
     if (dryRun) {
       console.log(`[dry-run] PR #${pr.number}: would ${label}`);
@@ -188,46 +234,67 @@ async function handlePr(
     await run();
     actions.push(label);
   };
-
-  if (provenance.verdict === "pending") {
-    return { verdict: `pending (${provenance.reason})`, actions };
-  }
-
-  const approval = latestApproverReview(await io.listReviews(pr.number));
-  const approved = approval?.state === "APPROVED";
-
-  if (provenance.verdict === "tainted") {
-    if (approved && approval) {
-      await act("dismiss approval", () =>
-        io.dismissReview(
-          pr,
-          approval.id,
-          `${provenance.actor} pushed to this branch, so the automatic approval no longer applies. A maintainer needs to review this pull request.`,
-        ),
-      );
+  const attempt = async (label: string, run: () => Promise<void>): Promise<void> => {
+    try {
+      await act(label, run);
+    } catch (error) {
+      failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (pr.autoMergeEnabled) {
-      await act("disable auto-merge", () => io.disableAutoMerge(pr));
+  };
+
+  let approval: PrReview | undefined;
+  let reviewsError: unknown;
+  try {
+    approval = latestApproverReview(await io.listReviews(pr.number));
+  } catch (error) {
+    reviewsError = error;
+  }
+  const hold = holdReason(state, approval);
+  if (provenance.verdict === "trusted" && !hold) {
+    if (reviewsError) {
+      throw reviewsError;
     }
-    return { verdict: `tainted (push by ${provenance.actor})`, actions };
+    assertApprovable(live);
+    if (!pr.assignees.includes(APPROVER_LOGIN)) {
+      await act("assign approver", () => io.assignApprover(live));
+    }
+    if (approval?.state !== "APPROVED") {
+      await act("approve", () => io.approve(live));
+    }
+    if (!state.inMergeQueue && !state.autoMergeEnabled) {
+      await act("queue", () => io.queue(live));
+    }
+    return "trusted";
   }
 
-  assertApprovable(pr);
-  if (!pr.assignees.includes(APPROVER_LOGIN)) {
-    await act("assign approver", () => io.assignApprover(pr));
+  const message =
+    provenance.verdict === "tainted"
+      ? `${provenance.actor} pushed to this branch, so the automatic approval no longer applies. A maintainer needs to review this pull request.`
+      : "This pull request is on hold, so the automatic approval no longer applies. A maintainer needs to approve it.";
+  if (state.inMergeQueue) {
+    await attempt("dequeue", () => io.dequeue(live));
   }
-  if (!approved) {
-    await act("approve", () => io.approve(pr));
+  if (state.autoMergeEnabled) {
+    await attempt("disable auto-merge", () => io.disableAutoMerge(live));
   }
-  if (!pr.autoMergeEnabled) {
-    await act("enable auto-merge", () => io.enableAutoMerge(pr));
+  if (reviewsError) {
+    failures.push(
+      `list reviews: ${reviewsError instanceof Error ? reviewsError.message : String(reviewsError)}`,
+    );
+  } else if (approval?.state === "APPROVED") {
+    await attempt("dismiss approval", () => io.dismissReview(live, approval.id, message));
   }
-  return { verdict: "trusted", actions };
+  if (failures.length > 0) {
+    throw new Error(`Revocation incomplete for PR #${pr.number}: ${failures.join("; ")}`);
+  }
+  return provenance.verdict === "tainted"
+    ? `tainted (push by ${provenance.actor})`
+    : `held (${hold})`;
 }
 
 /**
  * Sweep every open `develop` PR, approving and queueing trusted bot PRs and revoking both on
- * tainted ones. Per-PR failures are recorded and do not stop the sweep.
+ * tainted or held ones. Per-PR failures are recorded and do not stop the sweep.
  */
 export async function sweepBotPrs(
   io: BotPrIo,
@@ -239,18 +306,16 @@ export async function sweepBotPrs(
     if (!bot) {
       continue;
     }
+    const actions: string[] = [];
     try {
-      entries.push({
-        number: pr.number,
-        headRef: pr.headRef,
-        ...(await handlePr(io, pr, bot, dryRun)),
-      });
+      const verdict = await handlePr(io, pr, bot, dryRun, actions);
+      entries.push({ number: pr.number, headRef: pr.headRef, verdict, actions });
     } catch (error) {
       entries.push({
         number: pr.number,
         headRef: pr.headRef,
         verdict: "error",
-        actions: [],
+        actions,
         error: error instanceof Error ? error.message : String(error),
         guardViolation: error instanceof ApprovalGuardViolation,
       });
@@ -303,15 +368,30 @@ async function githubFetch(
   return response;
 }
 
-async function graphql(token: string, query: string, variables: object): Promise<void> {
+async function graphql<T = unknown>(token: string, query: string, variables: object): Promise<T> {
   const response = await githubFetch("https://api.github.com/graphql", token, {
     method: "POST",
     body: JSON.stringify({ query, variables }),
   });
-  const payload = (await response.json()) as { errors?: Array<{ message: string }> };
+  const payload = (await response.json()) as {
+    data?: T;
+    errors?: Array<{ message: string }>;
+  };
   if (payload.errors?.length) {
     throw new Error(`GraphQL errors: ${payload.errors.map((e) => e.message).join("; ")}`);
   }
+  return payload.data as T;
+}
+
+interface GraphqlPullRequest {
+  state: string;
+  isDraft: boolean;
+  baseRefName: string;
+  headRefName: string;
+  headRefOid: string;
+  labels: { nodes: Array<{ name: string }> };
+  autoMergeRequest: { enabledAt: string | null } | null;
+  isInMergeQueue: boolean;
 }
 
 interface RestPull {
@@ -422,20 +502,98 @@ export function createBotPrIo({ repository, appToken, approverToken }: BotPrIoCo
       });
     },
 
-    async enableAutoMerge(pr) {
+    async refresh(pr) {
+      const [owner, name] = repository.split("/");
+      const data = await graphql<{ repository: { pullRequest: GraphqlPullRequest } }>(
+        appToken,
+        `
+          query ($owner: String!, $name: String!, $number: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $number) {
+                state
+                isDraft
+                baseRefName
+                headRefName
+                headRefOid
+                labels(first: 100) {
+                  nodes {
+                    name
+                  }
+                }
+                autoMergeRequest {
+                  enabledAt
+                }
+                isInMergeQueue
+              }
+            }
+          }
+        `,
+        { owner, name, number: pr.number },
+      );
+      const current = data.repository.pullRequest;
+      return {
+        open: current.state === "OPEN",
+        draft: current.isDraft,
+        baseRef: current.baseRefName,
+        headRef: current.headRefName,
+        headSha: current.headRefOid,
+        labels: current.labels.nodes.map((label) => label.name),
+        autoMergeEnabled: current.autoMergeRequest != null,
+        inMergeQueue: current.isInMergeQueue,
+      };
+    },
+
+    async queue(pr) {
       assertApprovable(pr);
+      const variables = { id: pr.nodeId, oid: pr.headSha };
+      try {
+        await graphql(
+          appToken,
+          `
+            mutation ($id: ID!, $oid: GitObjectID!) {
+              enablePullRequestAutoMerge(
+                input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $oid }
+              ) {
+                clientMutationId
+              }
+            }
+          `,
+          variables,
+        );
+      } catch (autoMergeError) {
+        try {
+          await graphql(
+            appToken,
+            `
+              mutation ($id: ID!, $oid: GitObjectID!) {
+                enqueuePullRequest(input: { pullRequestId: $id, expectedHeadOid: $oid }) {
+                  clientMutationId
+                }
+              }
+            `,
+            variables,
+          );
+        } catch (enqueueError) {
+          const message = (error: unknown) =>
+            error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Could not queue PR #${pr.number}: auto-merge failed (${message(autoMergeError)}); enqueue failed (${message(enqueueError)})`,
+          );
+        }
+      }
+    },
+
+    async dequeue(pr) {
       await graphql(
         appToken,
         `
-          mutation ($id: ID!, $oid: GitObjectID!) {
-            enablePullRequestAutoMerge(
-              input: { pullRequestId: $id, mergeMethod: SQUASH, expectedHeadOid: $oid }
-            ) {
+          mutation ($id: ID!) {
+            dequeuePullRequest(input: { id: $id }) {
               clientMutationId
             }
           }
         `,
-        { id: pr.nodeId, oid: pr.headSha },
+        { id: pr.nodeId },
       );
     },
 
@@ -494,9 +652,9 @@ async function main(): Promise<void> {
     appendFileSync(summaryPath, `${renderSummary(entries, dryRun)}\n`);
   }
 
-  const violations = entries.filter((entry) => entry.guardViolation);
-  if (violations.length > 0) {
-    throw new Error(violations.map((entry) => entry.error).join("; "));
+  const failed = entries.filter((entry) => entry.error);
+  if (failed.length > 0) {
+    throw new Error(failed.map((entry) => entry.error).join("; "));
   }
 }
 

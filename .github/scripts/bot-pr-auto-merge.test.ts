@@ -6,6 +6,7 @@ import {
   type ActivityEvent,
   type BotPr,
   type BotPrIo,
+  type BotPrState,
   type PrReview,
   assertApprovable,
   createBotPrIo,
@@ -57,12 +58,18 @@ function fakeIo(
     activity?: (headRef: string) => ActivityEvent[];
     reviews?: PrReview[];
     failOn?: number;
+    failCall?: string;
+    failReviews?: boolean;
+    refresh?: Partial<BotPrState>;
   } = {},
 ): Fake {
   const writes: string[] = [];
   const record = (name: string, target: BotPr) => {
     if (target.number === options.failOn) {
       throw new Error(`io failure on #${target.number}`);
+    }
+    if (name === options.failCall) {
+      throw new Error(`${name} failed`);
     }
     writes.push(`${name}:${target.number}`);
   };
@@ -71,13 +78,30 @@ function fakeIo(
     listBranchActivity: async (headRef) =>
       options.activity?.(headRef) ??
       cleanHistory(headRef.startsWith("dependabot/") ? DEPENDABOT : RELEASER),
-    listReviews: async () => options.reviews ?? [],
+    listReviews: async () => {
+      if (options.failReviews) {
+        throw new Error("reviews unavailable");
+      }
+      return options.reviews ?? [];
+    },
     approve: async (target) => {
       record("approve", target);
     },
-    enableAutoMerge: async (target) => {
-      record("enableAutoMerge", target);
+    refresh: async (target) => ({
+      open: true,
+      draft: target.draft,
+      baseRef: target.baseRef,
+      headRef: target.headRef,
+      headSha: target.headSha,
+      labels: target.labels,
+      autoMergeEnabled: target.autoMergeEnabled,
+      inMergeQueue: false,
+      ...options.refresh,
+    }),
+    queue: async (target) => {
+      record("queue", target);
     },
+    dequeue: async (target) => record("dequeue", target),
     disableAutoMerge: async (target) => record("disableAutoMerge", target),
     dismissReview: async (target, reviewId) => record(`dismiss(${reviewId})`, target),
     assignApprover: async (target) => record("assign", target),
@@ -125,36 +149,31 @@ describe("sweepBotPrs deploy protection", () => {
     expect(writes).toEqual([]);
   });
 
-  test("refuses a deploy pull request that bypasses the base filter and reports a guard violation", async () => {
-    const bypassing = pr({
-      number: 7771,
-      baseRef: "develop",
-      headRef: "sync/api-package",
-      labels: ["do not merge"],
-    });
+  test("holds a labelled pull request that bypasses the base filter without writing or failing", async () => {
+    const bypassing = pr({ number: 7771, labels: ["do not merge"] });
     const { io, writes } = fakeIo([bypassing]);
 
     const entries = await run(io);
 
     expect(writes).toEqual([]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      number: 7771,
-      verdict: "error",
-      actions: [],
-      guardViolation: true,
-    });
-    expect(entries[0]?.error).toContain("do not merge");
+    expect(entries).toEqual([
+      {
+        number: 7771,
+        headRef: "sync/api-package",
+        verdict: "held (labelled `do not merge`)",
+        actions: [],
+      },
+    ]);
   });
 
-  test("never auto-merges a deploy-shaped pull request even when its head family and author match", async () => {
-    const shaped = pr({ number: 7771, headRef: "slim-bump/x", labels: ["do not merge"] });
-    const { io, writes } = fakeIo([shaped]);
+  test("reports a guard violation when the live base is no longer develop", async () => {
+    const { io, writes } = fakeIo([pr()], { refresh: { baseRef: "main" } });
 
     const entries = await run(io);
 
     expect(writes).toEqual([]);
-    expect(entries[0]?.guardViolation).toBe(true);
+    expect(entries[0]).toMatchObject({ verdict: "error", actions: [], guardViolation: true });
+    expect(entries[0]?.error).toContain("base is `main`");
   });
 });
 
@@ -181,13 +200,13 @@ describe("sweepBotPrs provenance", () => {
 
     const entries = await run(io);
 
-    expect(writes).toEqual(["assign:1", "approve:1", "enableAutoMerge:1"]);
+    expect(writes).toEqual(["assign:1", "approve:1", "queue:1"]);
     expect(entries).toEqual([
       {
         number: 1,
         headRef: "sync/api-package",
         verdict: "trusted",
-        actions: ["assign approver", "approve", "enable auto-merge"],
+        actions: ["assign approver", "approve", "queue"],
       },
     ]);
   });
@@ -200,7 +219,7 @@ describe("sweepBotPrs provenance", () => {
     await run(io);
 
     expect(writes).toContain("approve:1");
-    expect(writes).toContain("enableAutoMerge:1");
+    expect(writes).toContain("queue:1");
   });
 
   test("withholds approval after a human pushed to the branch", async () => {
@@ -228,8 +247,22 @@ describe("sweepBotPrs provenance", () => {
 
     const entries = await run(io);
 
-    expect(writes).toEqual(["dismiss(99):1", "disableAutoMerge:1"]);
-    expect(entries[0]?.actions).toEqual(["dismiss approval", "disable auto-merge"]);
+    expect(writes).toEqual(["disableAutoMerge:1", "dismiss(99):1"]);
+    expect(entries[0]?.actions).toEqual(["disable auto-merge", "dismiss approval"]);
+  });
+
+  test("treats a merge event by a human as tainted", async () => {
+    const { io, writes } = fakeIo([pr()], {
+      activity: () => [
+        { type: "pr_merge", actor: "jgoux", after: SHA },
+        { type: "branch_creation", actor: RELEASER, after: SHA },
+      ],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual([]);
+    expect(entries[0]?.verdict).toBe("tainted (push by jgoux)");
   });
 
   test("treats a push with a null actor as tainted", async () => {
@@ -282,7 +315,7 @@ describe("sweepBotPrs idempotence and modes", () => {
     expect(entries[0]).toMatchObject({ verdict: "trusted", actions: [] });
   });
 
-  test("re-approves when the latest approver review was dismissed", async () => {
+  test("holds a dismissed approval instead of re-approving it, and withdraws auto-merge", async () => {
     const { io, writes } = fakeIo([pr({ autoMergeEnabled: true, assignees: [APPROVER_LOGIN] })], {
       reviews: [
         { id: 5, user: APPROVER_LOGIN, state: "APPROVED" },
@@ -290,9 +323,146 @@ describe("sweepBotPrs idempotence and modes", () => {
       ],
     });
 
-    await run(io);
+    const entries = await run(io);
 
-    expect(writes).toEqual(["approve:1"]);
+    expect(writes).toEqual(["disableAutoMerge:1"]);
+    expect(entries[0]).toMatchObject({
+      verdict: "held (approval dismissed)",
+      actions: ["disable auto-merge"],
+    });
+  });
+
+  test("holds a PR that became a draft after listing and revokes its approval", async () => {
+    const { io, writes } = fakeIo([pr({ assignees: [APPROVER_LOGIN] })], {
+      refresh: { draft: true },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dismiss(5):1"]);
+    expect(entries[0]?.verdict).toBe("held (draft)");
+  });
+
+  test("holds a label added after listing and revokes approval, auto-merge and queue entry", async () => {
+    const { io, writes } = fakeIo([pr({ assignees: [APPROVER_LOGIN] })], {
+      refresh: { labels: ["Do Not Merge"], autoMergeEnabled: true, inMergeQueue: true },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dequeue:1", "disableAutoMerge:1", "dismiss(5):1"]);
+    expect(entries[0]).toEqual({
+      number: 1,
+      headRef: "sync/api-package",
+      verdict: "held (labelled `do not merge`)",
+      actions: ["dequeue", "disable auto-merge", "dismiss approval"],
+    });
+  });
+
+  test("dequeues a tainted PR that is in the merge queue", async () => {
+    const { io, writes } = fakeIo([pr()], {
+      activity: () => [
+        { type: "push", actor: "jgoux", after: SHA },
+        { type: "branch_creation", actor: RELEASER, after: "b".repeat(40) },
+      ],
+      refresh: { inMergeQueue: true },
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dequeue:1"]);
+    expect(entries[0]?.verdict).toBe("tainted (push by jgoux)");
+  });
+
+  test("keeps revoking and keeps completed actions when dismissing the approval fails", async () => {
+    const { io, writes } = fakeIo([pr()], {
+      activity: () => [
+        { type: "push", actor: "jgoux", after: SHA },
+        { type: "branch_creation", actor: RELEASER, after: "b".repeat(40) },
+      ],
+      refresh: { inMergeQueue: true, autoMergeEnabled: true },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+      failCall: "dismiss(5)",
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dequeue:1", "disableAutoMerge:1"]);
+    expect(entries[0]).toMatchObject({
+      verdict: "error",
+      actions: ["dequeue", "disable auto-merge"],
+      guardViolation: false,
+    });
+    expect(entries[0]?.error).toContain("dismiss approval: dismiss(5) failed");
+  });
+
+  test("still dequeues and disables auto-merge on a tainted PR when listing reviews fails", async () => {
+    const { io, writes } = fakeIo([pr()], {
+      activity: () => [
+        { type: "push", actor: "jgoux", after: SHA },
+        { type: "branch_creation", actor: RELEASER, after: "b".repeat(40) },
+      ],
+      refresh: { inMergeQueue: true, autoMergeEnabled: true },
+      failReviews: true,
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dequeue:1", "disableAutoMerge:1"]);
+    expect(entries[0]).toMatchObject({
+      verdict: "error",
+      actions: ["dequeue", "disable auto-merge"],
+      guardViolation: false,
+    });
+    expect(entries[0]?.error).toContain("list reviews: reviews unavailable");
+  });
+
+  test("makes no writes on a trusted PR when listing reviews fails", async () => {
+    const { io, writes } = fakeIo([pr()], { failReviews: true });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual([]);
+    expect(entries[0]).toMatchObject({
+      verdict: "error",
+      actions: [],
+      error: "reviews unavailable",
+    });
+  });
+
+  test("makes no writes when the refreshed head differs from the listed head", async () => {
+    const { io, writes } = fakeIo([pr({ autoMergeEnabled: true })], {
+      refresh: { headSha: "d".repeat(40) },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual([]);
+    expect(entries[0]).toMatchObject({ verdict: "pending (head moved)", actions: [] });
+  });
+
+  test("makes no writes when the PR closed after listing", async () => {
+    const { io, writes } = fakeIo([pr()], { refresh: { open: false } });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual([]);
+    expect(entries[0]?.verdict).toBe("pending (head moved)");
+  });
+
+  test("does not queue a trusted PR that is already in the merge queue", async () => {
+    const { io, writes } = fakeIo([pr({ assignees: [APPROVER_LOGIN] })], {
+      refresh: { inMergeQueue: true },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual([]);
+    expect(entries[0]).toMatchObject({ verdict: "trusted", actions: [] });
   });
 
   test("dry run reports intended actions without writing", async () => {
@@ -301,11 +471,7 @@ describe("sweepBotPrs idempotence and modes", () => {
     const entries = await run(io, true);
 
     expect(writes).toEqual([]);
-    expect(entries[0]?.actions).toEqual([
-      "would assign approver",
-      "would approve",
-      "would enable auto-merge",
-    ]);
+    expect(entries[0]?.actions).toEqual(["would assign approver", "would approve", "would queue"]);
   });
 
   test("an io error on one pull request does not stop the others", async () => {
@@ -329,7 +495,7 @@ describe("createBotPrIo call-site guard", () => {
     globalThis.fetch = realFetch;
   });
 
-  test("approve and enableAutoMerge throw before any HTTP call for a deploy-shaped pull request", async () => {
+  test("approve and queue throw before any HTTP call for a deploy-shaped pull request", async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (input: string | URL | Request) => {
       calls.push(String(input));
@@ -338,8 +504,34 @@ describe("createBotPrIo call-site guard", () => {
     const io = createBotPrIo({ repository: REPO, appToken: "app", approverToken: "approver" });
 
     await expect(io.approve(deployPr)).rejects.toBeInstanceOf(ApprovalGuardViolation);
-    await expect(io.enableAutoMerge(deployPr)).rejects.toBeInstanceOf(ApprovalGuardViolation);
+    await expect(io.queue(deployPr)).rejects.toBeInstanceOf(ApprovalGuardViolation);
     expect(calls).toEqual([]);
+  });
+
+  test("queue falls back to enqueuePullRequest when enabling auto-merge returns errors", async () => {
+    const mutations: string[] = [];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const { query } = JSON.parse(String(init?.body)) as { query: string };
+      if (query.includes("enablePullRequestAutoMerge")) {
+        mutations.push("enablePullRequestAutoMerge");
+        return new Response(JSON.stringify({ errors: [{ message: "auto-merge unavailable" }] }));
+      }
+      mutations.push("enqueuePullRequest");
+      return new Response(JSON.stringify({ data: {} }));
+    }) as unknown as typeof fetch;
+    const io = createBotPrIo({ repository: REPO, appToken: "app", approverToken: "approver" });
+
+    await io.queue(pr());
+
+    expect(mutations).toEqual(["enablePullRequestAutoMerge", "enqueuePullRequest"]);
+  });
+
+  test("queue throws naming both failures when auto-merge and enqueue both fail", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ errors: [{ message: "nope" }] }))) as unknown as typeof fetch;
+    const io = createBotPrIo({ repository: REPO, appToken: "app", approverToken: "approver" });
+
+    await expect(io.queue(pr())).rejects.toThrow(/auto-merge failed.*enqueue failed/);
   });
 
   test("approve for an eligible pull request posts the review pinned to the head", async () => {
