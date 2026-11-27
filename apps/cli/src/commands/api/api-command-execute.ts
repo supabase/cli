@@ -1,6 +1,16 @@
 import type { ApiClient, OperationId, OperationInput } from "@supabase/api/effect";
 import { operationPermissions } from "@supabase/api/permissions";
-import { DateTime, Duration, Effect, Option, Predicate, Ref, Schedule, Schema } from "effect";
+import {
+  Clock,
+  DateTime,
+  Duration,
+  Effect,
+  Option,
+  Predicate,
+  Ref,
+  Schedule,
+  Schema,
+} from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as Headers from "effect/http/Headers";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -43,35 +53,45 @@ export const acceptanceOf = (
 const acceptedMessage = (accepted: Acceptance, failure: string): string =>
   `The API accepted the request (${accepted.action}), but ${failure}`;
 
-const inspectSuggestion = ({ statusCommand }: Acceptance): string =>
+const inspectSuggestion = ({ statusCommand }: Pick<Acceptance, "statusCommand">): string =>
   statusCommand === undefined
     ? "Check the current state before running the command again."
     : `Check the current state with \`${statusCommand}\` before running the command again.`;
 
+/** The suggestion after a mutation whose outcome is unknown: it may have taken effect. */
+const uncertainSuggestion = (own: Acceptance | undefined): string =>
+  `The request may have reached the API. ${inspectSuggestion(own ?? {})}`;
+
 const causeMessage = (cause: unknown): string | undefined =>
   cause instanceof Error && cause.message !== "" ? cause.message : undefined;
 
+const networkCause = ({ reason }: HttpClientError.HttpClientError): string => {
+  const detail =
+    reason.description ??
+    (reason._tag === "TransportError" ? causeMessage(reason.cause) : undefined);
+  return sanitizeErrorBody(detail ?? reason._tag);
+};
+
 /**
  * A request that failed in transit: `stage` is `body` when the status line arrived and reading the
- * body failed. `accepted` is set when a mutation's 2xx came first.
+ * body failed. `accepted` is set when a mutation's 2xx came first; `own` is the acceptance the
+ * request's own 2xx would stand for.
  */
 const networkError = (
   error: HttpClientError.HttpClientError,
   {
     mutation,
     accepted,
+    own,
     stage,
   }: {
     readonly mutation: boolean;
     readonly accepted: Acceptance | undefined;
+    readonly own: Acceptance | undefined;
     readonly stage: "transport" | "body";
   },
 ) => {
-  const { reason } = error;
-  const detail =
-    reason.description ??
-    (reason._tag === "TransportError" ? causeMessage(reason.cause) : undefined);
-  const cause = sanitizeErrorBody(detail ?? reason._tag);
+  const cause = networkCause(error);
   if (accepted !== undefined) {
     return new ApiCommandNetworkError({
       message: acceptedMessage(
@@ -87,7 +107,7 @@ const networkError = (
         ? `The Management API response could not be read (${cause}).`
         : `The Management API could not be reached (${cause}).`,
     suggestion: mutation
-      ? "The request may have reached the API. Check the current state before running the command again."
+      ? uncertainSuggestion(own)
       : "Check your network connection and run the command again.",
   });
 };
@@ -227,8 +247,11 @@ const statusError = Effect.fnUntraced(function* (
         : (statusHint(operationId, response.status) ??
           (after === undefined
             ? response.status >= 500 && own !== undefined
-              ? `The request may have reached the API. ${inspectSuggestion(own)}`
-              : undefined
+              ? uncertainSuggestion(own)
+              : (response.status === 404 || response.status === 409) &&
+                  own?.statusCommand !== undefined
+                ? `Check the current state with \`${own.statusCommand}\`.`
+                : undefined
             : inspectSuggestion(after))),
     ...(entitlement === undefined ? {} : { entitlement }),
   });
@@ -243,6 +266,40 @@ export interface ApiCommandResponse {
 
 /** The operation a request runs; `readOnly` is known for generated commands, not for hidden poll reads. */
 type ApiRequestEntry = ApiPollRead & Partial<Pick<ApiCommandEntry, "readOnly">>;
+
+/** How one request ended: a 2xx with its body read, any other status, or a failure in transit. */
+type RequestOutcome =
+  | { readonly _tag: "Success"; readonly response: ApiCommandResponse }
+  | { readonly _tag: "Rejected"; readonly response: HttpClientResponse.HttpClientResponse }
+  | {
+      readonly _tag: "Unreached";
+      readonly error: HttpClientError.HttpClientError;
+      readonly stage: "transport" | "body";
+    };
+
+const requestOutcome = (
+  api: ApiClient,
+  entry: ApiRequestEntry,
+  decoded: OperationInput<OperationId>,
+) =>
+  api.executeRaw<OperationId>(definitionOf(entry), decoded).pipe(
+    Effect.flatMap((response) =>
+      response.status < 200 || response.status >= 300
+        ? Effect.succeed<RequestOutcome>({ _tag: "Rejected", response })
+        : readBytes(response).pipe(
+            Effect.map((bytes): RequestOutcome => ({
+              _tag: "Success",
+              response: { status: response.status, bytes, headers: response.headers },
+            })),
+            Effect.catchTag("HttpClientError", (error) =>
+              Effect.succeed<RequestOutcome>({ _tag: "Unreached", error, stage: "body" }),
+            ),
+          ),
+    ),
+    Effect.catchTag("HttpClientError", (error) =>
+      Effect.succeed<RequestOutcome>({ _tag: "Unreached", error, stage: "transport" }),
+    ),
+  );
 
 /**
  * Sends the decoded input of `entry` through `api` and returns the 2xx response; any other status
@@ -263,25 +320,20 @@ export const sendApiRequest = Effect.fnUntraced(function* (
     readonly acceptance?: Acceptance | undefined;
   } = {},
 ) {
-  const mutation = entry.readOnly === false;
-  const accepted = after ?? acceptance;
-  const response = yield* api
-    .executeRaw<OperationId>(definitionOf(entry), decoded)
-    .pipe(
-      Effect.catchTag("HttpClientError", (error) =>
-        Effect.fail(networkError(error, { mutation, accepted: after, stage: "transport" })),
-      ),
-    );
-  if (response.status < 200 || response.status >= 300) {
-    return yield* statusError(entry.operationId, response, after, acceptance);
+  const outcome = yield* requestOutcome(api, entry, decoded);
+  switch (outcome._tag) {
+    case "Success":
+      return outcome.response;
+    case "Rejected":
+      return yield* statusError(entry.operationId, outcome.response, after, acceptance);
+    case "Unreached":
+      return yield* networkError(outcome.error, {
+        mutation: entry.readOnly === false,
+        accepted: outcome.stage === "transport" ? after : (after ?? acceptance),
+        own: acceptance,
+        stage: outcome.stage,
+      });
   }
-  const bytes = yield* readBytes(response).pipe(
-    Effect.catchTag("HttpClientError", (error) =>
-      Effect.fail(networkError(error, { mutation, accepted, stage: "body" })),
-    ),
-  );
-  const result: ApiCommandResponse = { status: response.status, bytes, headers: response.headers };
-  return result;
 });
 
 const parseResponse = (response: ApiCommandResponse): unknown =>
@@ -348,17 +400,32 @@ interface WaitInput {
   readonly timeoutMillis: number;
   /** The mutation whose change response the wait follows; absent for a read that polls itself. */
   readonly accepted?: Acceptance | undefined;
-  /** Called after each successful poll with the status it read. */
-  readonly onPoll?: (status: string | undefined) => Effect.Effect<void>;
+  /**
+   * Called after a poll that read a status, when the status changed or a whole minute of waiting
+   * passed since the last call.
+   */
+  readonly onPoll?: (progress: WaitProgress) => Effect.Effect<void>;
 }
 
-export interface PollOutcome {
-  readonly done: boolean;
-  readonly response: ApiCommandResponse;
+/** What a wait has observed: the status it last read and how long it has been waiting. */
+interface WaitProgress {
+  readonly status: string;
+  readonly elapsedMillis: number;
 }
+
+/** One scheduled poll: a read of the operation, or a transient failure the next poll retries. */
+export type PollOutcome =
+  | { readonly _tag: "Read"; readonly done: boolean; readonly response: ApiCommandResponse }
+  | {
+      readonly _tag: "Transient";
+      readonly detail: string;
+      readonly retryAfterMillis: number | undefined;
+    };
+
+const MILLIS_PER_MINUTE = 60_000;
 
 /** The delay a `Retry-After` header asks for, as delta-seconds or an HTTP date. */
-const retryAfterMillis = (headers: Headers.Headers, now: number): number | undefined => {
+export const retryAfterMillis = (headers: Headers.Headers, now: number): number | undefined => {
   const value = Option.getOrUndefined(Headers.get(headers, "retry-after"))?.trim();
   if (value === undefined || value === "") return undefined;
   if (/^\d+$/u.test(value)) return Number(value) * 1000;
@@ -366,18 +433,21 @@ const retryAfterMillis = (headers: Headers.Headers, now: number): number | undef
   return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 };
 
-/** Backoff from 1s doubling to a 10s cap; a longer `Retry-After` on the last read wins. */
+/** Backoff from 1s doubling to a 10s cap; a longer `Retry-After` on a throttled poll wins. */
 export const pollSchedule = Schedule.exponential(POLL_BASE_DELAY).pipe(
   Schedule.setInputType<PollOutcome>(),
-  Schedule.modifyDelay(({ input, duration, now }) =>
+  Schedule.modifyDelay(({ input, duration }) =>
     Effect.succeed(
       Math.max(
         Math.min(Duration.toMillis(duration), POLL_MAX_DELAY_MILLIS),
-        retryAfterMillis(input.response.headers, now) ?? 0,
+        input._tag === "Transient" ? (input.retryAfterMillis ?? 0) : 0,
       ),
     ),
   ),
 );
+
+/** A poll failure the next poll can outlive: throttling, a server error or a failure in transit. */
+const isTransientStatus = (status: number): boolean => status === 429 || status >= 500;
 
 const failureReason = (reason: unknown): string | undefined => {
   if (reason === undefined || reason === null || reason === "") return undefined;
@@ -405,10 +475,13 @@ const noStatus = (wait: ApiCommandWait, after: Acceptance | undefined): string =
 const timeoutMessage = (
   wait: ApiCommandWait,
   status: string | null,
+  transient: string | undefined,
   after: Acceptance | undefined,
 ): string => {
   const report = `${wait.read} to report ${wait.succeeded.join(" or ")}`;
-  const last = `Last observed status: ${status === null ? "unavailable" : sanitizeErrorBody(status)}.`;
+  const failure =
+    status === null && transient !== undefined ? ` The last read failed (${transient}).` : "";
+  const last = `Last observed status: ${status === null ? "unavailable" : sanitizeErrorBody(status)}.${failure}`;
   return after === undefined
     ? `Timed out waiting for ${report}. ${last}`
     : acceptedMessage(after, `the wait for ${report} timed out. ${last}`);
@@ -444,7 +517,7 @@ const classify = (
     );
   }
   const done = wait.succeeded.includes(status);
-  return Effect.succeed<PollOutcome>({ done, response });
+  return Effect.succeed<PollOutcome>({ _tag: "Read", done, response });
 };
 
 /** The command that re-reads the operation's state, built from the values the wait polls with. */
@@ -510,8 +583,9 @@ export const linkedReadInput = Effect.fnUntraced(function* (input: {
 
 /**
  * Polls the read operation until it reports a terminal status and returns the final response. A
- * failed status, a timeout, or any non-2xx read (a 409 included) ends the wait with an error; the
- * failure reason only supplies its message.
+ * failed status, a timeout, or a non-2xx read other than 429 and 5xx (a 409 included) ends the
+ * wait with an error; the failure reason only supplies its message. A 429, a 5xx and a failure in
+ * transit leave the next poll to retry until the timeout.
  */
 export const waitForOperation = Effect.fn("api-command.wait")(function* (input: WaitInput) {
   const { wait, readEntry, readInput } = input;
@@ -543,52 +617,91 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
   const after: Acceptance | undefined =
     input.accepted === undefined ? undefined : { ...input.accepted, statusCommand: command };
   const attempts = yield* Ref.make(0);
+  const transientFailures = yield* Ref.make(0);
+  const lastTransient = yield* Ref.make<string | undefined>(undefined);
   const lastStatus = yield* Ref.make<string | null>(null);
-
-  const poll = Ref.update(attempts, (count) => count + 1).pipe(
-    Effect.andThen(sendApiRequest(input.api, readEntry, decoded, { after })),
-    Effect.flatMap((response) => {
-      const read = readPoll(wait, response);
-      return Ref.getAndSet(lastStatus, read.status ?? null).pipe(
-        Effect.flatMap((previous) =>
-          classify(wait, read, suggestion, after).pipe(
-            Effect.tap(() =>
-              previous === read.status ? Effect.void : (input.onPoll?.(read.status) ?? Effect.void),
-            ),
-          ),
-        ),
-      );
-    }),
-    Effect.withTracerEnabled(false),
+  const reported = yield* Ref.make<{ readonly status: string; readonly minutes: number } | null>(
+    null,
   );
+  const startedAt = yield* Clock.currentTimeMillis;
+
+  const transient = (detail: string, retryAfter: number | undefined) =>
+    Ref.update(transientFailures, (count) => count + 1).pipe(
+      Effect.andThen(Ref.set(lastTransient, detail)),
+      Effect.as<PollOutcome>({ _tag: "Transient", detail, retryAfterMillis: retryAfter }),
+    );
+
+  const report = Effect.fnUntraced(function* (status: string) {
+    const elapsedMillis = (yield* Clock.currentTimeMillis) - startedAt;
+    const minutes = Math.floor(elapsedMillis / MILLIS_PER_MINUTE);
+    const previous = yield* Ref.getAndSet(reported, { status, minutes });
+    if (previous?.status !== status || previous.minutes !== minutes) {
+      yield* input.onPoll?.({ status, elapsedMillis }) ?? Effect.void;
+    }
+  });
+
+  const poll = Effect.gen(function* () {
+    yield* Ref.update(attempts, (count) => count + 1);
+    const outcome = yield* requestOutcome(input.api, readEntry, decoded);
+    switch (outcome._tag) {
+      case "Unreached":
+        return yield* transient(networkCause(outcome.error), undefined);
+      case "Rejected": {
+        const { response } = outcome;
+        if (!isTransientStatus(response.status)) {
+          return yield* statusError(readEntry.operationId, response, after, undefined);
+        }
+        const retryAfter =
+          response.status === 429
+            ? retryAfterMillis(response.headers, yield* Clock.currentTimeMillis)
+            : undefined;
+        return yield* transient(`HTTP ${response.status}`, retryAfter);
+      }
+      case "Success": {
+        const read = readPoll(wait, outcome.response);
+        yield* Ref.set(lastStatus, read.status ?? null);
+        const classified = yield* classify(wait, read, suggestion, after);
+        if (read.status !== undefined) yield* report(read.status);
+        return classified;
+      }
+    }
+  }).pipe(Effect.withTracerEnabled(false));
+
+  const annotateWait = (outcome: string) =>
+    Effect.all([Ref.get(attempts), Ref.get(transientFailures)]).pipe(
+      Effect.flatMap(([count, retried]) =>
+        Effect.annotateCurrentSpan({
+          "wait.attempts": count,
+          "wait.transient_failures": retried,
+          "wait.outcome": outcome,
+        }),
+      ),
+    );
 
   const outcome = yield* poll.pipe(
-    Effect.repeat({ schedule: pollSchedule, until: (result) => result.done }),
+    Effect.repeat({
+      schedule: pollSchedule,
+      until: (result) => result._tag === "Read" && result.done,
+    }),
     Effect.timeoutOrElse({
       duration: input.timeoutMillis,
       orElse: () =>
-        Ref.get(lastStatus).pipe(
-          Effect.flatMap((status) =>
+        Effect.all([Ref.get(lastStatus), Ref.get(lastTransient)]).pipe(
+          Effect.flatMap(([status, failure]) =>
             Effect.fail(
               new ApiCommandWaitTimeoutError({
-                message: timeoutMessage(wait, status, after),
+                message: timeoutMessage(wait, status, failure, after),
                 suggestion,
               }),
             ),
           ),
         ),
     }),
-    Effect.tapError((error) =>
-      Ref.get(attempts).pipe(
-        Effect.flatMap((count) =>
-          Effect.annotateCurrentSpan({ "wait.attempts": count, "wait.outcome": error._tag }),
-        ),
-      ),
-    ),
+    Effect.tapError((error) => annotateWait(error._tag)),
   );
-  yield* Effect.annotateCurrentSpan({
-    "wait.attempts": yield* Ref.get(attempts),
-    "wait.outcome": "succeeded",
-  });
+  if (outcome._tag === "Transient") {
+    return yield* Effect.die("the poll schedule ended on a transient failure");
+  }
+  yield* annotateWait("succeeded");
   return outcome.response;
 });

@@ -56,6 +56,7 @@ import { apiCommands, apiPollTargets } from "./generated.ts";
 
 const DEFAULT_WAIT_TIMEOUT = "10m";
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
+const MILLIS_PER_MINUTE = 60_000;
 
 /** A command's `--wait`: the wait declared on its entry and the entry of the operation it polls. */
 interface ResolvedWait {
@@ -117,7 +118,7 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
     ? {}
     : {
         wait: Flag.Boolean("wait").pipe(
-          Flag.withDescription("Wait until the operation reaches a final status."),
+          Flag.withDescription("Wait until the operation reaches a final status, then print it."),
           Flag.withDefault(false),
         ),
         timeout: Flag.optional(
@@ -173,6 +174,12 @@ const withTask = <A, E, R>(
       ),
     );
   });
+
+/** Whole minutes once a minute has passed, seconds before; the task only refreshes on a minute boundary. */
+const formatElapsed = (millis: number): string =>
+  millis < MILLIS_PER_MINUTE
+    ? `${Math.floor(millis / 1000)}s`
+    : `${Math.floor(millis / MILLIS_PER_MINUTE)}m`;
 
 /** The parsed flags of a generated command. */
 interface ApiCommandFlags {
@@ -246,8 +253,7 @@ const handle = Effect.fn("api-command.run")(function* (
       );
 
       if (waiting) {
-        // A read that polls itself already returns the shape it prints; any other wait prints
-        // the response the change was accepted with, once the polled operation has succeeded.
+        // A read that polls itself needs no change request; any other wait sends the change first.
         const selfPolling = resolved.readEntry.operationId === entry.operationId;
         const accepted = selfPolling
           ? undefined
@@ -274,12 +280,12 @@ const handle = Effect.fn("api-command.run")(function* (
             ref,
             timeoutMillis,
             accepted: acceptance,
-            onPoll: (status) =>
-              update(status === undefined ? polling : `${polling} (status: ${singleLine(status)})`),
+            onPoll: ({ status, elapsedMillis }) =>
+              update(`${polling} (status: ${singleLine(status)}, ${formatElapsed(elapsedMillis)})`),
           }),
         );
         yield* Effect.annotateCurrentSpan("run.outcome", "waited");
-        return yield* writeApiResponse(accepted ?? settled, format, acceptance);
+        return yield* writeApiResponse(settled, format, acceptance);
       }
       const response = yield* withTask(summaryText(entry), () =>
         sendApiRequest(api, entry, decoded, { acceptance }),

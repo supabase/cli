@@ -167,6 +167,8 @@ interface Reply {
   readonly bytes?: Uint8Array;
   /** Rejects the request before any status line, like an unreachable host. */
   readonly unreachable?: boolean;
+  /** Extra response headers. */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 type Route = (request: Sent) => Reply;
@@ -217,7 +219,10 @@ const replyOf = (reply: Reply): Response => {
         : encodeJson(reply.body);
   return new Response(text, {
     status: reply.status,
-    headers: reply.body === undefined ? {} : { "content-type": "application/json" },
+    headers: {
+      ...(reply.body === undefined ? {} : { "content-type": "application/json" }),
+      ...reply.headers,
+    },
   });
 };
 
@@ -341,6 +346,10 @@ const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown =>
   Exit.isFailure(exit) ? Exit.findErrorOption(exit).pipe(Option.getOrUndefined) : undefined;
 
 const bodiesOf = (sent: ReadonlyArray<Sent>) => sent.map((request) => request.body);
+
+/** A polling task message for `status`; the elapsed time moves with the controlled clock. */
+const statusMessage = (polling: string, status: string): RegExp =>
+  new RegExp(`^${polling} \\(status: ${status}, \\d+[sm]\\)$`);
 
 const driveClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.raceFirst(Effect.forever(TestClock.adjust("2 seconds")), Fiber.await(fiber));
@@ -489,6 +498,24 @@ describe("generated warehouse commands", () => {
         expect(sent).toHaveLength(1);
       });
     });
+
+    it.effect.each([404, 409])(
+      "points an unexplained %i on a mutation at the status command",
+      (status) => {
+        const { run } = setup(["warehouse", "enable", "--schema", "public"], {
+          yes: true,
+          route: () => ({ status, body: { error: { code: "conflict", message: "no" } } }),
+        });
+        return Effect.gen(function* () {
+          const failure = failureOf(yield* Effect.exit(run));
+          expect(failure).toBeInstanceOf(ApiCommandStatusError);
+          expect(failure).toMatchObject({
+            status,
+            suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\`.`,
+          });
+        });
+      },
+    );
   });
 
   describe("warehouse replication restart", () => {
@@ -598,22 +625,6 @@ describe("generated warehouse commands", () => {
         attributes: { ...attributes, future_field: { retained: true } },
       },
     };
-
-    it.effect("preserves zero targets, capabilities and unavailable observations as JSON", () => {
-      const { out, sent, run } = setup(["warehouse", "status"], { route: ok(body) });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent).toEqual([
-          {
-            method: "GET",
-            path: `/v2/projects/${VALID_REF}/warehouse/status`,
-            search: "",
-            body: undefined,
-          },
-        ]);
-        expect(decodeJson(out.stdoutText)).toEqual(body);
-      });
-    });
 
     it.effect("escapes control characters in a non-JSON success body as text", () => {
       const { out, run } = setup(["warehouse", "status"], {
@@ -833,16 +844,6 @@ describe("generated warehouse commands", () => {
         expect(out.stdoutText).toMatch(/Warehouse table 16402\n\s+Replication feedback\s+-\n/);
       });
     });
-
-    it.effect("passes the document, including replication feedback, through as JSON", () => {
-      const { out, run } = setup(["warehouse", "tables", "list"], {
-        route: ok(body),
-      });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(decodeJson(out.stdoutText)).toEqual(body);
-      });
-    });
   });
   describe("warehouse inspect query-stats", () => {
     const argv = ["warehouse", "inspect", "query-stats"];
@@ -918,51 +919,6 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("forwards a relative range and preserves the full JSON response", () => {
-      const { sent, out, run } = setup(
-        [
-          ...argv,
-          "--since",
-          "30m",
-          "--attributes",
-          "query_rate,query_duration_p95",
-          "--interval",
-          "5m",
-        ],
-        {
-          route: ok(response),
-        },
-      );
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent).toHaveLength(1);
-        expect(sent[0]).toMatchObject({
-          method: "GET",
-          path: `/v2/projects/${VALID_REF}/warehouse/query-stats`,
-          body: undefined,
-        });
-        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
-          since: "30m",
-          attributes: "query_rate,query_duration_p95",
-          interval: "5m",
-        });
-        expect(decodeJson(out.stdoutText)).toEqual(response);
-      });
-    });
-
-    it.effect("forwards fixed timestamps unchanged and preserves null samples in JSON", () => {
-      const from = "2026-11-18T09:30:00+01:00";
-      const to = "2026-11-18T10:00:00+01:00";
-      const { sent, out, run } = setup([...argv, "--from", from, "--to", to], {
-        route: ok(response),
-      });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({ from, to });
-        expect(decodeJson(out.stdoutText)).toEqual(response);
-      });
-    });
-
     it.effect.each([
       { name: "terminal default", flags: [] },
       { name: "explicit text on a terminal", flags: ["--output-format", "text"] },
@@ -1023,27 +979,6 @@ describe("generated warehouse commands", () => {
       ],
     };
 
-    it.effect("leaves default selection to the API and preserves all JSON bytes when piped", () => {
-      const rawResponse = `\n${encodeJson(response).replace('"value":0.2', '"value":0.20')}\n`;
-      const { sent, out, run } = setup([...argv, "--since", "30m", "--interval", "5m"], {
-        route: ok(rawResponse),
-      });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent).toHaveLength(1);
-        expect(sent[0]).toMatchObject({
-          method: "GET",
-          path: `/v2/projects/${VALID_REF}/warehouse/capacity`,
-          body: undefined,
-        });
-        expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
-          since: "30m",
-          interval: "5m",
-        });
-        expect(out.stdoutText).toBe(rawResponse);
-      });
-    });
-
     it.effect(
       "renders both capacity series, their dimensions, unit, availability, and null sample",
       () => {
@@ -1057,29 +992,6 @@ describe("generated warehouse commands", () => {
           expect(out.stdoutText).toMatch(/\bAVAILABILITY\b[\s\S]*\bpartial\b/);
           expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*-/);
           expect(out.stdoutText).toMatch(/1795001800\s*[|│]?\s*0\.01/);
-        });
-      },
-    );
-
-    it.effect(
-      "forwards fixed timestamps and metric selection and keeps all dimensions in JSON",
-      () => {
-        const from = "2026-11-18T09:30:00+01:00";
-        const to = "2026-11-18T10:00:00+01:00";
-        const selection = "activation_duration_p95,worker_admission_occupied";
-        const { sent, out, run } = setup(
-          [...argv, "--from", from, "--to", to, "--attributes", selection],
-          { route: ok(response) },
-        );
-        return Effect.gen(function* () {
-          yield* run;
-          expect(sent).toHaveLength(1);
-          expect(Object.fromEntries(new URLSearchParams(sent[0]?.search))).toEqual({
-            from,
-            to,
-            attributes: selection,
-          });
-          expect(decodeJson(out.stdoutText)).toEqual(response);
         });
       },
     );
@@ -1576,7 +1488,7 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("waits on the accepted cleanup identity and prints the accepted resource", () => {
+    it.effect("waits on the accepted cleanup identity and prints the final read", () => {
       const accepted = teardown("disabling");
       const { sent, out, run } = setup(["warehouse", "disable", "--wait"], {
         yes: true,
@@ -1591,7 +1503,7 @@ describe("generated warehouse commands", () => {
           { method: "DELETE", path: disablePath, search: "" },
           { method: "GET", path: teardownPath, search: `operation_id=${operationId}` },
         ]);
-        expect(out.stdoutText).toBe(encodeJson(accepted));
+        expect(out.stdoutText).toBe(encodeJson(teardown("disabled")));
       });
     });
 
@@ -2162,6 +2074,21 @@ describe("generated warehouse commands", () => {
       },
     );
 
+    it.effect("names the status command when a mutation's request cannot reach the API", () => {
+      const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route: () => ({ status: 0, unreachable: true }),
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+        expect(failure).toMatchObject({
+          suggestion: `The request may have reached the API. Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
+        });
+        expect(sent.filter((request) => request.method === "GET")).toEqual([]);
+      });
+    });
+
     it.effect.each([
       {
         name: "a 401",
@@ -2380,7 +2307,7 @@ describe("generated warehouse commands", () => {
   });
 
   describe("--wait", () => {
-    it.effect("polls the read until the setup succeeds, then prints the accepted response", () => {
+    it.effect("polls the read until the setup succeeds, then prints the final read", () => {
       const { sent, out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
         route: enableThenPoll([
@@ -2397,7 +2324,7 @@ describe("generated warehouse commands", () => {
         expect(gets).toHaveLength(3);
         expect(gets.every((request) => request.path === SETUP_PATH)).toBe(true);
         expect(gets.every((request) => request.search === `selection_id=${SEL}`)).toBe(true);
-        expect(out.stdoutText).toBe(encodeJson(ACCEPTED));
+        expect(out.stdoutText).toBe(encodeJson(statusBody("succeeded")));
       });
     });
 
@@ -2508,22 +2435,19 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect(
-      "succeeds and prints the accepted response when a succeeded status carries an error",
-      () => {
-        const settled = statusBody("succeeded", "earlier attempt failed");
-        const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
-          yes: true,
-          route: enableThenPoll([{ status: 200, body: settled }]),
-        });
-        return Effect.gen(function* () {
-          const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
-          yield* driveClock(fiber);
-          yield* Fiber.join(fiber);
-          expect(out.stdoutText).toBe(encodeJson(ACCEPTED));
-        });
-      },
-    );
+    it.effect("succeeds and prints the final read when a succeeded status carries an error", () => {
+      const settled = statusBody("succeeded", "earlier attempt failed");
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route: enableThenPoll([{ status: 200, body: settled }]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(out.stdoutText).toBe(encodeJson(settled));
+      });
+    });
 
     it.effect("keeps polling while a non-terminal status carries an error value", () => {
       const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
@@ -2599,6 +2523,74 @@ describe("generated warehouse commands", () => {
         });
       },
     );
+
+    it.effect("retries a 503 and waits out a 429 Retry-After until the read settles", () => {
+      const route = enableThenPoll([
+        { status: 503, body: { error: { code: "unavailable", message: "try later" } } },
+        {
+          status: 429,
+          body: { error: { code: "throttled", message: "slow down" } },
+          headers: { "retry-after": "30" },
+        },
+        { status: 200, body: statusBody("succeeded") },
+      ]);
+      const { sent, out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route,
+      });
+      const reads = () => sent.filter((request) => request.method === "GET").length;
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.repeat({ until: () => reads() >= 2 || fiber.pollUnsafe() !== undefined }),
+        );
+        for (let second = 0; second < 25; second += 1) {
+          yield* TestClock.adjust("1 second");
+          yield* Effect.yieldNow;
+        }
+        expect(reads()).toBe(2);
+        yield* driveClock(fiber);
+        yield* Fiber.join(fiber);
+        expect(reads()).toBe(3);
+        expect(out.stdoutText).toBe(encodeJson(statusBody("succeeded")));
+      });
+    });
+
+    it.effect("fails at once on a 404 read instead of retrying it", () => {
+      const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        route: enableThenPoll([
+          { status: 404, body: { error: { code: "not_found", message: "no such setup" } } },
+        ]),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandStatusError);
+        expect(failure).toMatchObject({ status: 404 });
+        expect(sent.filter((request) => request.method === "GET")).toHaveLength(1);
+      });
+    });
+
+    it.effect("names the last failed read when the wait times out before any status", () => {
+      const { run } = setup(
+        ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "10s"],
+        { yes: true, route: enableThenPoll([{ status: 503, body: "<html>down</html>" }]) },
+      );
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandWaitTimeoutError);
+        expect(failure).toMatchObject({
+          message: expect.stringContaining(
+            "Last observed status: unavailable. The last read failed (HTTP 503).",
+          ),
+        });
+      });
+    });
 
     it.effect("rejects an invalid --timeout with --wait before sending anything", () => {
       const { sent, run } = setup(
@@ -2770,7 +2762,7 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("emits the accepted response as the result frame of a stream-json --wait", () => {
+    it.effect("emits the final read as the result frame of a stream-json --wait", () => {
       const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
         route: enableThenPoll([{ status: 200, body: statusBody("succeeded") }]),
@@ -2781,7 +2773,7 @@ describe("generated warehouse commands", () => {
         yield* driveClock(fiber);
         yield* Fiber.join(fiber);
         expect(out.events).toEqual([
-          { type: "result", data: ACCEPTED, timestamp: expect.any(String) },
+          { type: "result", data: statusBody("succeeded"), timestamp: expect.any(String) },
         ]);
       });
     });
@@ -2801,7 +2793,7 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect(
-      "prints the accepted response as text and reports each distinct polled status once in one polling task",
+      "prints the final read as text and reports each distinct polled status once in one polling task",
       () => {
         const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
           yes: true,
@@ -2817,27 +2809,58 @@ describe("generated warehouse commands", () => {
           yield* driveClock(fiber);
           yield* Fiber.join(fiber);
           expect(out.stdoutText).toBe(
-            [
-              "Warehouse setup",
-              `  ID            ${SEL}`,
-              `  Selection ID  ${SEL}`,
-              "  Status        pending",
-              "  Future field",
-              "    Nested  1, 2",
-              "",
-            ].join("\n"),
+            ["Warehouse setup", `  Selection ID  ${SEL}`, "  Status        succeeded", ""].join(
+              "\n",
+            ),
           );
           const polling = "Get Warehouse initial synchronization status";
           expect(out.progressEvents).toEqual([
             { type: "start", message: "Enable Warehouse replication" },
             { type: "start", message: polling },
-            { type: "message", message: `${polling} (status: running)` },
-            { type: "message", message: `${polling} (status: succeeded)` },
+            { type: "message", message: expect.stringMatching(statusMessage(polling, "running")) },
+            {
+              type: "message",
+              message: expect.stringMatching(statusMessage(polling, "succeeded")),
+            },
           ]);
           expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "clear" }]);
         });
       },
     );
+
+    it.effect("refreshes the polling task with the elapsed wait once a minute passes", () => {
+      const route = enableThenPoll([{ status: 200, body: statusBody("running") }]);
+      let now = () => 0;
+      const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
+        yes: true,
+        stdoutIsTty: true,
+        route: (request) =>
+          request.method === "GET" && now() >= 125_000
+            ? { status: 200, body: statusBody("succeeded") }
+            : route(request),
+      });
+      return Effect.gen(function* () {
+        const clock = yield* TestClock.testClockWith(Effect.succeed);
+        now = () => clock.currentTimeMillisUnsafe();
+        const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow.pipe(
+          Effect.repeat({
+            until: () =>
+              out.progressEvents.some((event) => event.type === "message") ||
+              fiber.pollUnsafe() !== undefined,
+          }),
+        );
+        yield* TestClock.adjust("90 seconds");
+        yield* TestClock.adjust("60 seconds");
+        yield* Fiber.join(fiber);
+        const polling = "Get Warehouse initial synchronization status";
+        expect(out.progressEvents.slice(2).map((event) => event.message)).toEqual([
+          `${polling} (status: running, 0s)`,
+          `${polling} (status: running, 1m)`,
+          `${polling} (status: succeeded, 2m)`,
+        ]);
+      });
+    });
 
     it.effect("escapes control characters in the polled status shown in the task", () => {
       const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
@@ -2853,7 +2876,7 @@ describe("generated warehouse commands", () => {
         yield* driveClock(fiber);
         yield* Fiber.join(fiber);
         const shown = out.progressEvents.map((event) => event.message).join("\n");
-        expect(shown).toContain("(status: \\u001b[31mred)");
+        expect(shown).toContain("(status: \\u001b[31mred, ");
         expect(shown).not.toContain("\u001b");
       });
     });

@@ -3,11 +3,18 @@ import { Effect, Fiber } from "effect";
 import * as Headers from "effect/http/Headers";
 import * as TestClock from "effect/testing/TestClock";
 
-import { pollSchedule, type PollOutcome } from "./api-command-execute.ts";
+import { pollSchedule, retryAfterMillis, type PollOutcome } from "./api-command-execute.ts";
 
-const outcome = (headers: Record<string, string> = {}): PollOutcome => ({
+const outcome = (): PollOutcome => ({
+  _tag: "Read",
   done: false,
-  response: { status: 200, bytes: new Uint8Array(), headers: Headers.fromInput(headers) },
+  response: { status: 200, bytes: new Uint8Array(), headers: Headers.empty },
+});
+
+const throttled = (retryAfter: number | undefined): PollOutcome => ({
+  _tag: "Transient",
+  detail: "HTTP 429",
+  retryAfterMillis: retryAfter,
 });
 
 /** Seconds, on the controlled clock, at which each of `reads` polls runs. */
@@ -36,25 +43,37 @@ describe("poll schedule", () => {
     }),
   );
 
-  it.effect("waits for a longer Retry-After given in seconds", () =>
+  it.effect("waits for a longer Retry-After after a throttled poll", () =>
     Effect.gen(function* () {
-      const times = yield* pollTimes([outcome({ "retry-after": "5" }), outcome()]);
+      const times = yield* pollTimes([throttled(5000), outcome()]);
       expect(times).toEqual([0, 5]);
-    }),
-  );
-
-  it.effect("waits for a Retry-After given as an HTTP date", () =>
-    Effect.gen(function* () {
-      const date = "Thu, 01 Jan 1970 00:00:04 GMT";
-      const times = yield* pollTimes([outcome({ "retry-after": date }), outcome()]);
-      expect(times).toEqual([0, 4]);
     }),
   );
 
   it.effect("never waits less than the backoff for a shorter Retry-After", () =>
     Effect.gen(function* () {
-      const times = yield* pollTimes([outcome({ "retry-after": "0" }), outcome()]);
+      const times = yield* pollTimes([throttled(0), outcome()]);
       expect(times).toEqual([0, 1]);
     }),
   );
+});
+
+describe("Retry-After", () => {
+  it.each([
+    { name: "delta-seconds", value: "5", now: 0, millis: 5000 },
+    { name: "an HTTP date", value: "Thu, 01 Jan 1970 00:00:04 GMT", now: 0, millis: 4000 },
+    {
+      name: "an HTTP date in the past",
+      value: "Thu, 01 Jan 1970 00:00:04 GMT",
+      now: 9000,
+      millis: 0,
+    },
+    { name: "an unreadable value", value: "soon", now: 0, millis: undefined },
+  ])("reads $name", ({ value, now, millis }) => {
+    expect(retryAfterMillis(Headers.fromInput({ "retry-after": value }), now)).toBe(millis);
+  });
+
+  it("is absent without the header", () => {
+    expect(retryAfterMillis(Headers.empty, 0)).toBeUndefined();
+  });
 });
