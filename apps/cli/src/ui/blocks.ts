@@ -75,7 +75,8 @@ const SelectModel = Schema.Struct({
   submitted: Schema.Boolean,
 });
 
-const SelectMessage = UiSchema.TaggedEnum({
+/** The keys `Select` handles, one message each. */
+export const SelectMessage = UiSchema.TaggedEnum({
   PressedUp: {},
   PressedDown: {},
   PressedHome: {},
@@ -83,7 +84,8 @@ const SelectMessage = UiSchema.TaggedEnum({
   PressedEnter: {},
 });
 
-const SelectEvents = UiSchema.TaggedEnum({ Submitted: { index: Schema.Finite } });
+/** `Submitted` carries the index of the option chosen with Enter. */
+export const SelectEvents = UiSchema.TaggedEnum({ Submitted: { index: Schema.Finite } });
 
 const oneLine = (value: string) => value.replace(/\s*[\r\n]+\s*/g, " ");
 

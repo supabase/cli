@@ -55,10 +55,22 @@ It needs a real terminal. Set `NO_COLOR=1`, `FORCE_COLOR=1` (16 colors) or `FORC
 
 ## Testing
 
-Blocks are tested through integration tests that render on a headless xterm with `TerminalTest`
-from `@supabase/ui-terminal/testing`, then assert on the screen rows, the scrollback and the
-cursor. See `src/ui/blocks.integration.test.ts` and `src/ui/prompt.integration.test.ts`.
+Blocks are mostly tested through integration tests that render on a headless xterm with
+`TerminalTest` from `@supabase/ui-terminal/testing`, then assert on the screen rows, the
+scrollback and the cursor. Layout, wrapping, truncation, glyphs and what a prompt leaves in the
+scrollback all need real frames. See `src/ui/blocks.integration.test.ts` and
+`src/ui/prompt.integration.test.ts`.
+
+A block whose `update` has real logic, like `Select`'s key handling, also gets a unit test with
+Effect UI's `Story` from `@effect/ui/testing`. A Story sends
+messages and checks the model, the emitted events and the subscriptions, with no host.
+`Story.explore` checks a rule over every order of messages and prints the shortest failing path.
+See `src/ui/blocks.unit.test.ts`.
+
+Effect UI's `Scene` adds little here: keys reach a block through subscriptions, not view
+handlers, so a Scene can't press them, and it can't check layout.
 
 ```sh
+pnpm test:unit src/ui
 pnpm test:integration src/ui
 ```
