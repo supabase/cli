@@ -12,6 +12,7 @@ src/
   output/
   runtime/
   telemetry/
+  ui/
 ```
 
 ## Why This Structure
@@ -19,6 +20,7 @@ src/
 - `commands/` is the user-facing entry point. Each command owns its own parsing, handler, and tests.
 - `auth/`, `config/`, `output/`, `runtime/`, and `telemetry/` are reusable concern slices shared by multiple commands or flags.
 - `docs/` owns shared command documentation content and renderers used by both the runtime CLI and the docs generation script.
+- `ui/` owns the terminal design system: theme, glyphs, blocks and prompts. See [Terminal UI](terminal-ui.md).
 - Shared concern slices still split contracts from implementations:
   - `*.service.ts` defines Effect services and public interfaces
   - `*.layer.ts` defines live implementations and wiring
@@ -31,6 +33,7 @@ This split keeps the service contract readable on its own and prevents large imp
 - `commands/` may import from concern slices.
 - `auth/`, `config/`, `output/`, `runtime/`, and `telemetry/` must not import from `commands/` or `cli/`.
 - `docs/` must not import from `cli/` or `commands/`.
+- `ui/` must not import from `cli/` or `commands/`.
 - Commands must not import another command's internals.
 
 Use direct file imports. Do not add barrel `index.ts` files.

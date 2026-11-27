@@ -2,6 +2,9 @@
 
 The CLI uses a single unified `Output` service (`src/services/Output.ts`) that abstracts all user-facing communication — logging, prompts, and structured results — behind intent-based methods. A `--output-format` flag on the root command selects which layer implementation is used.
 
+The CLI's terminal design system, which no command uses yet, is described in
+[Terminal UI](../apps/cli/docs/terminal-ui.md).
+
 ## Output Formats
 
 | Format        | Flag                          | Use case                                                                               |

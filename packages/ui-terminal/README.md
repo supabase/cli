@@ -2,7 +2,8 @@
 
 A brand-neutral terminal host for [Effect UI](https://github.com/Effect-TS/ui). It renders a
 component inline below the cursor, lays it out with Yoga, and runs unchanged on Node and Bun. It is
-laid out like `@effect/ui-opentui`, so modules and names carry over.
+laid out like `@effect/ui-opentui`, so modules and names carry over. It ships primitives only; the
+CLI's design system builds on it, see [Terminal UI](../../apps/cli/docs/terminal-ui.md).
 
 `@effect/ui` is pinned to a pre-release snapshot in `package.json`; replace it with the npm release
 once one is published.

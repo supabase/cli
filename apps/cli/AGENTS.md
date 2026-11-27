@@ -28,7 +28,8 @@ Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts
 phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under
 `src/config/`, `src/auth/`, `src/telemetry/`, `src/output/`, and `src/command-internal/` before
-adding an equivalent helper.
+adding an equivalent helper. The terminal design system lives in `src/ui/`; see
+[Terminal UI](docs/terminal-ui.md).
 
 ### Hoist Before You Duplicate
 
