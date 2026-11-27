@@ -9,7 +9,6 @@ import {
 import { DbSetupError } from "./db-setup.ts";
 import { ImagePrepullError } from "./image-prepull.ts";
 import { LocalDbRunningError } from "./local-db-running.ts";
-import { ResetReplicationSlotsError } from "./recreate-local-database.ts";
 
 const classify = (error: unknown) => classifyCliErrorActionability(error);
 
@@ -48,21 +47,6 @@ describe("db bootstrap error actionability discriminants", () => {
     expect(
       classify(new DbSetupError({ message: "ignored", reason: "image_inspect" })),
     ).toMatchObject({ error_category: "invalid_config" });
-  });
-
-  it("distinguishes an active replication slot from a failed slot query", () => {
-    expect(
-      classify(new ResetReplicationSlotsError({ message: "ignored", retryable: true })),
-    ).toMatchObject({
-      error_category: "invalid_config",
-      error_fingerprint: "tag:ResetReplicationSlotsError:replication_slots_active",
-    });
-    expect(
-      classify(new ResetReplicationSlotsError({ message: "ignored", retryable: false })),
-    ).toMatchObject({
-      error_category: "db_connection",
-      error_fingerprint: "tag:ResetReplicationSlotsError:replication_slots_query",
-    });
   });
 
   it("distinguishes an unavailable daemon from another local DB inspect failure", () => {

@@ -7,7 +7,7 @@ import { Config, ConfigProvider, Effect, Option } from "effect";
 
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
 
-/** Dockerfile alias to slim service; kong, `pg14`, and the job images have no slim build. */
+/** Dockerfile alias to slim service; kong and the job images have no slim build. */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
   pg15: "postgres",

@@ -454,7 +454,6 @@ RemoteJwksError
 RemovedSurfaceError
 ResetLocalDbFailedError
 ResetLocalDbNotRunningError
-ResetReplicationSlotsError
 RestartServicesError
 SecretsEnvFileOpenError
 SecretsEnvFileParseError

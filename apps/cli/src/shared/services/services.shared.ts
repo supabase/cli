@@ -139,9 +139,9 @@ export function localServiceImagesFromDockerfile(
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
 /**
- * Resolves PG14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
- * generated (`pg15`) or hand-pinned (`pg14`, no slim build) from the stack catalog. Always the
- * raw docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
+ * Resolves PG15 against the Dockerfile's `pg15` stage — the single version table, generated from
+ * the stack catalog. Always the raw
+ * docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
  * …)` path every other slim-capable service uses, since a slim-capable service's Dockerfile tag
  * always matches a catalog upstream version by construction.
  */
@@ -149,8 +149,6 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   switch (majorVersion) {
     case 15:
       return dockerfileServiceImageRaw("pg15");
-    case 14:
-      return dockerfileServiceImageRaw("pg14");
     default:
       return undefined;
   }

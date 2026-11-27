@@ -106,12 +106,7 @@ export const resolveDbBootstrapConfig = <E>(
     );
     // Read once and reused by the fresh-DB one-shot setup jobs regardless of whether this run's
     // volume turns out to be fresh. A missing pin is skipped; an unusable tag fails.
-    const serviceVersionOverrides = yield* readServiceVersionOverrides(
-      fs,
-      path,
-      workdir,
-      majorVersion,
-    );
+    const serviceVersionOverrides = yield* readServiceVersionOverrides(fs, path, workdir);
 
     const dbHealthTimeoutSeconds = yield* Effect.try({
       try: () => resolveHealthTimeoutSeconds(config.db.health_timeout),

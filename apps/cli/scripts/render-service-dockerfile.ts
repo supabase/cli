@@ -1,8 +1,8 @@
 // Rewrites the slim-capable `FROM ... AS <alias>` lines of
 // apps/cli/src/shared/services/Dockerfile in place, from the stack catalog
 // (packages/stack/src/Artifacts.ts): each such line's tag comes from that service's catalog pin
-// `upstreamImage`. Every other line — comments, kong, the Postgres 14 pin (no slim build), and
-// the one-shot job images — is hand- or Dependabot-managed and left byte-for-byte untouched.
+// `upstreamImage`. Every other line — comments, kong, and the one-shot job
+// images — is hand- or Dependabot-managed and left byte-for-byte untouched.
 //
 //   bun apps/cli/scripts/render-service-dockerfile.ts          # writes the file
 //   bun apps/cli/scripts/render-service-dockerfile.ts --check  # fails on drift, writes nothing
@@ -102,7 +102,7 @@ const FROM_LINE = /^(FROM\s+)(.+):([^:\s]+)(\s+AS\s+)([^\s#]+)(.*)$/i;
  * Rewrites only the slim-capable `FROM ... AS <alias>` lines of `currentDockerfile`, in place:
  * the repository is read from the existing line (and asserted to still match the catalog pin's
  * `upstreamImage` repository, except for `REPOSITORY_OVERRIDES`); only the tag is replaced, from
- * that pin's `upstreamImage`. Every other line — comments, kong, `pg14`, the job images — passes
+ * that pin's `upstreamImage`. Every other line — comments, kong, the job images — passes
  * through untouched. A slim-capable alias missing from the file is an error; the generator never
  * inserts a line.
  */

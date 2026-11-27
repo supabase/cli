@@ -168,12 +168,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       const serviceVersions =
         tomlValues === null
           ? {}
-          : yield* readServiceVersionOverrides(
-              fs,
-              path,
-              cliSettings.workdir,
-              tomlValues.majorVersion,
-            );
+          : yield* readServiceVersionOverrides(fs, path, cliSettings.workdir);
       const postgresImage =
         tomlValues === null
           ? undefined

@@ -1257,23 +1257,6 @@ describe("db diff", () => {
     },
   );
 
-  it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
-    const s = setup(tmp.current, {
-      files: {
-        "supabase/config.toml": "[db]\nmajor_version = 14\n",
-      },
-      diffSql: "create table pg14 ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags());
-      expect(stdout(s.out)).toBe("create table pg14 ();\n\n");
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      expect(s.dockerCalls).toEqual([]);
-      expect(s.shadowExecCalls.length).toBeGreaterThan(0);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect(
     "removes the shadow even when its own platform-baseline setup fails midway (ok-sentinel cleanup)",
     () => {
@@ -1317,8 +1300,7 @@ describe("db diff", () => {
     "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just cfg",
     () => {
       // The remote's own container spec must reflect the `[remotes.<ref>]` override too, not
-      // just the config read for pg-delta/schema_paths; `major_version` is used as a probe
-      // since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
+      // just the config read for pg-delta/schema_paths; the image tag's major is the probe.
       const s = setup(tmp.current, {
         files: {
           "supabase/config.toml": [
@@ -1329,7 +1311,7 @@ describe("db diff", () => {
             'project_id = "abcdefghijklmnopqrst"',
             "",
             "[remotes.staging.db]",
-            "major_version = 14",
+            "major_version = 15",
             "",
           ].join("\n"),
         },
@@ -1340,8 +1322,7 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(flags({ remote: REMOTE_LINKED }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
-        expect(createArgs).toContain("--tmpfs");
-        expect(s.dockerCalls).toEqual([]);
+        expect(createArgs.some((arg) => /postgres:15\./.test(arg))).toBe(true);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1916,7 +1897,7 @@ describe("db diff", () => {
             `project_id = "flagflagflagflagflag"`,
             "",
             "[remotes.staging.db]",
-            "major_version = 14",
+            "major_version = 15",
             "",
           ].join("\n"),
         },
@@ -1927,7 +1908,7 @@ describe("db diff", () => {
         yield* dbDiff(
           flags({ from: Option.some("flagflagflagflagflag"), to: Option.some("migrations") }),
         );
-        expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
+        expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(15);
         expect(s.explicitDiffCalls[0]?.desired).toEqual({
           kind: "migrations",
           projectRef: "flagflagflagflagflag",
@@ -2531,7 +2512,7 @@ describe("db diff", () => {
           'project_id = "abcdefghijklmnopqrst"',
           "",
           "[remotes.staging.db]",
-          "major_version = 14",
+          "major_version = 15",
           "",
         ].join("\n"),
       },
@@ -2547,7 +2528,7 @@ describe("db diff", () => {
       });
       // Linked resolves first here (opposite of the sibling test below), so the
       // remote-merged config reaches the catalog.
-      expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
+      expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(15);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2564,7 +2545,7 @@ describe("db diff", () => {
           'project_id = "abcdefghijklmnopqrst"',
           "",
           "[remotes.staging.db]",
-          "major_version = 14",
+          "major_version = 15",
           "",
           // Set only under the remote block, so it would flip to true if the
           // linked-merged config leaked in.

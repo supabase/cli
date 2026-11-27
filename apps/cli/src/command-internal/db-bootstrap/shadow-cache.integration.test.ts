@@ -254,34 +254,6 @@ describe("acquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("stays uncached on PG14, whose setup mutates role defaults mid-session", () => {
-    const docker = mockDockerDaemonCliSpawner();
-    const cluster = fakeCluster();
-    const out = mockOutput();
-    return withShadowCacheHome(
-      "1",
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        // PG<=14's globals SQL runs `ALTER ROLE … SET …` on the setup session; a snapshot
-        // boundary would force migrations onto a fresh session that never observes those
-        // defaults — so the cache must stand down entirely.
-        const base = shadowInput(fs, path);
-        const input = {
-          ...base,
-          db: { ...base.db, major_version: 14 },
-          setup: { ...base.setup, majorVersion: 14 },
-        };
-        const handle = yield* acquireShadowDatabase(docker.spawner, input);
-        expect(handle.baselinePresent).toBe(false);
-        expect(handle.snapshotRequired).toBe(false);
-        expect(docker.calls("create")[0] ?? []).toContain("--rm");
-        yield* handle.snapshotBaseline;
-        expect(yield* soleTarName(fs, path)).toEqual([]);
-      }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
-  });
-
   it.live("a warm hit also sweeps abandoned partials left by a killed concurrent writer", () => {
     const docker = mockDockerDaemonCliSpawner();
     const cluster = fakeCluster();

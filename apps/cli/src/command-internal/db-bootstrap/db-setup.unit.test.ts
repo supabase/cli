@@ -39,12 +39,8 @@ const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
  * Fingerprints unique to each transcribed SQL constant, with no trailing `;` (`splitAndTrim`
  * strips it before `session.exec` sees it).
  *
- * `GLOBALS`/`REVOKE_PRIVILEGES` are checked as substrings, since each is embedded in
- * a larger executed block. `SCHEMA_14` is checked with `.endsWith` instead: a substring check
- * would also match 14.sql's unrelated `graphql_public` schema statement.
+ * `REVOKE_PRIVILEGES` is checked as a substring, since it is embedded in a larger executed block.
  */
-const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
-const SCHEMA_14_FINGERPRINT_SUFFIX = "CREATE SCHEMA IF NOT EXISTS graphql";
 const REVOKE_PRIVILEGES_FINGERPRINT =
   "revoke execute on functions from anon, authenticated, service_role";
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -235,24 +231,8 @@ describe("startSetupLocalDatabase", () => {
     vi.unstubAllEnvs();
   });
 
-  describe("PG <= 14 vs PG >= 15 schema branch", () => {
-    it.effect("PG14: execs globals + the PG14 initial schema, runs no one-shot docker jobs", () => {
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const workdir = yield* makeWorkdir();
-        const { session, calls } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
-        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(true);
-        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(true);
-        expect(docker.runs.length).toBe(0);
-        yield* fs.remove(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
-    });
-
-    it.effect("PG15+: runs one-shot docker jobs, execs no schema SQL at all", () => {
+  describe("schema initialisation", () => {
+    it.effect("runs one-shot docker jobs and execs no schema SQL", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const workdir = yield* makeWorkdir();
@@ -261,8 +241,7 @@ describe("startSetupLocalDatabase", () => {
         const docker = mockDockerRun();
         yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-        expect(execSql.some((sql) => sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
-        expect(execSql.some((sql) => sql.endsWith(SCHEMA_14_FINGERPRINT_SUFFIX))).toBe(false);
+        expect(execSql.some((sql) => sql.includes("CREATE ROLE anon"))).toBe(false);
         // Default config: realtime, storage, and auth are all enabled.
         expect(docker.runs.length).toBe(3);
         yield* fs.remove(workdir, { recursive: true, force: true });
@@ -270,7 +249,7 @@ describe("startSetupLocalDatabase", () => {
     });
   });
 
-  describe("PG15+ one-shot job gating", () => {
+  describe("one-shot job gating", () => {
     it.effect("gates each job independently on its own service's enabled flag", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -540,7 +519,7 @@ describe("startSetupLocalDatabase", () => {
         const { session, calls } = fakeSession();
         const out = mockOutput();
         const docker = mockDockerRun();
-        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
         yield* fs.remove(workdir, { recursive: true, force: true });
@@ -555,7 +534,7 @@ describe("startSetupLocalDatabase", () => {
         const { session, calls } = fakeSession();
         const out = mockOutput();
         const docker = mockDockerRun();
-        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
         yield* fs.remove(workdir, { recursive: true, force: true });
@@ -571,7 +550,7 @@ describe("startSetupLocalDatabase", () => {
           const { session, calls } = fakeSession();
           const out = mockOutput();
           const docker = mockDockerRun();
-          yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+          yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
           const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
           expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
           yield* fs.remove(workdir, { recursive: true, force: true });
@@ -594,7 +573,7 @@ describe("startSetupLocalDatabase", () => {
         const { session, calls } = fakeSession();
         const out = mockOutput();
         const docker = mockDockerRun();
-        yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+        yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
         const vaultCallIndex = calls.findIndex(
           (c) => c.kind === "query" && c.sql.includes("vault.create_secret"),
         );
@@ -618,7 +597,7 @@ describe("startSetupLocalDatabase", () => {
           const { session, calls } = fakeSession();
           const out = mockOutput();
           const docker = mockDockerRun();
-          yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
+          yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
           expect(out.rawChunks.map((c) => c.text)).toContain("Seeding globals from roles.sql...\n");
           const rolesCallIndex = calls.findIndex(
             (c) => c.kind === "exec" && c.sql.includes("custom_role"),
@@ -634,7 +613,6 @@ describe("startSetupLocalDatabase", () => {
 describe("resolveDbSetupPrelude", () => {
   const run = (
     setup: {
-      readonly majorVersion: number;
       readonly realtimeEnabledForSetup: boolean;
       readonly jwks: Effect.Effect<string, Error>;
     },
@@ -644,12 +622,9 @@ describe("resolveDbSetupPrelude", () => {
       Effect.provide(out.layer),
     );
 
-  it.effect('prints "Initialising schema..." to stderr exactly once, for either PG branch', () => {
+  it.effect('prints "Initialising schema..." to stderr exactly once', () => {
     const out = mockOutput();
-    return run(
-      { majorVersion: 17, realtimeEnabledForSetup: false, jwks: Effect.succeed("") },
-      out,
-    ).pipe(
+    return run({ realtimeEnabledForSetup: false, jwks: Effect.succeed("") }, out).pipe(
       Effect.map(() => {
         const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
         expect(banner.length).toBe(1);
@@ -663,7 +638,6 @@ describe("resolveDbSetupPrelude", () => {
     const jwksFailure = new Error("jwks discovery failed");
     return run(
       {
-        majorVersion: 15,
         realtimeEnabledForSetup: true,
         jwks: Effect.fail(jwksFailure),
       },
@@ -675,21 +649,6 @@ describe("resolveDbSetupPrelude", () => {
         const banner = out.rawChunks.filter((c) => c.text === "Initialising schema...\n");
         expect(banner.length).toBe(1);
         expect(banner[0]?.stream).toBe("stderr");
-      }),
-    );
-  });
-
-  it.effect("does not resolve JWKS on PG <= 14 even with realtime enabled", () => {
-    const out = mockOutput();
-    let jwksCalled = false;
-    const jwks = Effect.sync(() => {
-      jwksCalled = true;
-      return "unused";
-    });
-    return run({ majorVersion: 14, realtimeEnabledForSetup: true, jwks }, out).pipe(
-      Effect.map((resolved) => {
-        expect(jwksCalled).toBe(false);
-        expect(resolved.jwks).toBe("");
       }),
     );
   });

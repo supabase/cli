@@ -108,7 +108,7 @@ export interface ShadowCacheKeyInputs {
   readonly dbPassword: string;
   /**
    * Storage migration pin from `supabase/.temp/storage-migration`. Hashed only when
-   * storage is enabled and `majorVersion >= 15`.
+   * storage is enabled.
    */
   readonly storageTargetMigration: string;
   readonly dbSettings: CliConfig["db"]["settings"];
@@ -138,8 +138,8 @@ export interface ShadowCacheKeyInputs {
   /**
    * Realtime's resolved JWKS, baked into the cluster by its one-shot tenant-seed job. Kept as its
    * own field because an `auth.third_party` config change alone changes this value. Hashed only
-   * when `services.realtime` is enabled and `majorVersion >= 15` — the same gate the real setup
-   * uses to decide whether the job ever reads it; `""` otherwise.
+   * when `services.realtime` is enabled — the same gate the real setup uses to decide whether
+   * the job ever reads it; `""` otherwise.
    */
   readonly jwks: string;
 }
@@ -147,7 +147,6 @@ export interface ShadowCacheKeyInputs {
 /**
  * Digest of CLI-embedded literals baked into the baseline (initdb heredocs, privilege
  * SQL, vault upsert SQL, Realtime seed constants). Lazy: these are compile-time constants.
- * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
 const shadowBaselineEmbeddedDigest = (): string =>
@@ -223,15 +222,15 @@ export function shadowCacheKey(inputs: ShadowCacheKeyInputs): string {
         : `service=${name} enabled=false`,
     );
   }
-  // Realtime's resolved JWKS; see the field's doc comment for the enabled+majorVersion gate.
+  // Realtime's resolved JWKS; see the field's doc comment for the enabled gate.
   lines.push(
-    inputs.services.realtime.enabled && inputs.majorVersion >= 15
+    inputs.services.realtime.enabled
       ? `realtime_jwks=${quoted(inputs.jwks)}`
       : "realtime_jwks=excluded",
   );
   // Storage's migration pin, gated the same way as the JWKS line above.
   lines.push(
-    inputs.services.storage.enabled && inputs.majorVersion >= 15
+    inputs.services.storage.enabled
       ? `storage_target_migration=${quoted(inputs.storageTargetMigration)}`
       : "storage_target_migration=excluded",
   );
@@ -262,10 +261,6 @@ const resolveShadowCacheKeyInputs = <E>(
     const orioledbVersion = input.db.orioledb_version;
     if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
 
-    // PG<=14 applies `ALTER ROLE … SET` on the setup session; a snapshot reconnect would
-    // observe those defaults and change migration resolution.
-    if (input.setup.majorVersion <= 14) return Option.none();
-
     const rolesPath = input.path.join(input.workdir, "supabase", "roles.sql");
     const rolesSql = yield* input.fs
       .readFileString(rolesPath)
@@ -285,11 +280,9 @@ const resolveShadowCacheKeyInputs = <E>(
         Effect.catchTag("ConfigError", () => Effect.succeed(Option.none<string>())),
       );
     });
-    // Same compound gate a real cold provision uses to decide whether the realtime job's JWKS
-    // effect ever runs.
-    const realtimeConsumesJwks =
-      input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
-    const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
+    // Same gate a real cold provision uses to decide whether the realtime job's JWKS effect ever
+    // runs.
+    const jwks = input.setup.config.realtime.enabled ? yield* input.setup.jwks : "";
     const slim = yield* slimImagesEnabled;
     const realtimeImage = yield* resolveJobImage(
       resolvePinnedImage("realtime", "realtime", overrides, slim),
@@ -664,7 +657,7 @@ export interface ShadowCacheOpts {
 
 /** What {@link peekShadowBaseline} learned about a would-be acquire, without provisioning. */
 export type ShadowBaselinePeek =
-  /** Bypassed, env-disabled, or key-ineligible (PG<=14, OrioleDB, unreadable roles.sql). */
+  /** Bypassed, env-disabled, or key-ineligible (OrioleDB, unreadable roles.sql). */
   | { readonly state: "uncachable" }
   | {
       readonly state: "cold" | "warm";

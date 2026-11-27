@@ -314,12 +314,8 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
  * position, the `Detail` line when present, the SQLSTATE-42704 or 25P01 hint, then
  * `At statement: <index>` and the caret-marked statement text. The structured `detail`/`position`
  * fields are only set by the driver for real server error responses.
- *
- * Exported so any caller that runs a raw batch-equivalent statement set outside a migration file
- * (e.g. `resetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE` statements) gets the same rich
- * error context instead of the bare driver error.
  */
-export const formatExecBatchError = (e: DbExecError, index: number, stat: string): Error => {
+const formatExecBatchError = (e: DbExecError, index: number, stat: string): Error => {
   const marked = markError(stat, e.position ?? 0);
   const msg: Array<string> = [];
   if (e.detail !== undefined && e.detail.length > 0) {

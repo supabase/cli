@@ -11,7 +11,7 @@ const readPins = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* readServiceVersionOverrides(fs, path, workdir, 17);
+    return yield* readServiceVersionOverrides(fs, path, workdir);
   });
 
 const makeWorkdir = Effect.flatMap(FileSystem.FileSystem, (fs) =>

@@ -36,7 +36,7 @@ const POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.ke
 /**
  * The post-migration hook path: `supabase/postgres`'s bundled `migrate.sh` execs
  * `psql -v ON_ERROR_STOP=1 -U supabase_admin -f /etc/postgresql.schema.sql` as its last step
- * when the file exists; {@link postgresEntrypointScriptPg15} heredocs it into place.
+ * when the file exists; {@link postgresEntrypointScript} heredocs it into place.
  */
 const POSTGRES_SCHEMA_SQL_PATH = "/etc/postgresql.schema.sql";
 
@@ -194,7 +194,7 @@ function postgresExtraEnv(
 }
 
 /**
- * PG >= 15 entrypoint: writes `/etc/postgresql.schema.sql` (schema.sql + webhook.sql +
+ * Default entrypoint: writes `/etc/postgresql.schema.sql` (schema.sql + webhook.sql +
  * _supabase.sql, in that order), appends `postgresConfig` to `postgresql.conf`, then execs
  * `docker-entrypoint.sh`. The pgsodium root key travels via
  * {@link StartContainerSpec.secretFiles} (mode `0644`, since Postgres drops root and reads it
@@ -206,7 +206,7 @@ function postgresExtraEnv(
  * template literal, so a trailing space after `/etc/postgresql` (when `args` is empty) stays a
  * visible character.
  */
-function postgresEntrypointScriptPg15(postgresConfig: string, args = ""): string {
+function postgresEntrypointScript(postgresConfig: string, args = ""): string {
   return (
     "\n" +
     `cat <<'EOF' > ${POSTGRES_SCHEMA_SQL_PATH} && \\\n` +
@@ -222,30 +222,10 @@ function postgresEntrypointScriptPg15(postgresConfig: string, args = ""): string
 }
 
 /**
- * PG <= 14 entrypoint: a shorter script — no `schema.sql`/`webhook.sql` (PG >= 15 only) and no
- * pgsodium root key file — writes `/docker-entrypoint-initdb.d/supabase_schema.sql`
- * (_supabase.sql only), appends `postgresConfig` to `postgresql.conf`, then execs
- * `docker-entrypoint.sh`. See {@link postgresEntrypointScriptPg15} for the `args` parameter
- * and string-concatenation rationale.
- */
-function postgresEntrypointScriptPg14(postgresConfig: string, args = ""): string {
-  return (
-    "\n" +
-    "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
-    "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
-    `${START_DB_SUPABASE_SQL}\n` +
-    "EOF\n" +
-    `${postgresConfig}\n` +
-    "EOF"
-  );
-}
-
-/**
  * `--from-backup` entrypoint, applied regardless of `db.major_version`. Three heredocs, not
  * four: the pgsodium root key still travels via {@link StartContainerSpec.secretFiles} (see
  * {@link buildPostgresStartContainerSpec}), same as the other entrypoint variants. The schema
- * heredoc omits the webhook schema present in {@link postgresEntrypointScriptPg15}. Postgres
+ * heredoc omits the webhook schema present in {@link postgresEntrypointScript}. Postgres
  * config gets one extra appended line, `cron.launch_active_jobs = off`.
  */
 function postgresEntrypointScriptRestore(postgresConfig: string): string {
@@ -277,7 +257,6 @@ export function buildPostgresStartContainerSpec(
   const containerName = localDbContainerId(input.projectId);
   const rootKeyValue = input.rootKey ?? POSTGRES_DEFAULT_ROOT_KEY;
   const postgresConfig = postgresSettingsToPostgresConfig(input.db.settings);
-  const isPg14OrEarlier = input.db.major_version <= 14;
   const isRestore = input.fromBackup !== undefined;
 
   const env: Record<string, string> = {
@@ -293,9 +272,7 @@ export function buildPostgresStartContainerSpec(
 
   const script = isRestore
     ? postgresEntrypointScriptRestore(postgresConfig)
-    : isPg14OrEarlier
-      ? postgresEntrypointScriptPg14(postgresConfig)
-      : postgresEntrypointScriptPg15(postgresConfig);
+    : postgresEntrypointScript(postgresConfig);
 
   return {
     image: input.image,
@@ -303,20 +280,12 @@ export function buildPostgresStartContainerSpec(
     env,
     entrypoint: "sh",
     cmd: ["-c", script],
-    // The pgsodium root key secretFile is present whenever the entrypoint in use embeds it:
-    // both the PG >= 15 and restore scripts do; only the PG <= 14 script never references it.
-    ...(isPg14OrEarlier && !isRestore
-      ? {}
-      : {
-          secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
-        }),
+    secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
     binds: [
       `${containerName}:${POSTGRES_DATA_DIR}`,
       // The backup file bind is appended only on the `fromBackup` branch.
       ...(input.fromBackup === undefined ? [] : [`${input.fromBackup}:/etc/backup.sql:ro`]),
     ],
-    // Tmpfs is keyed on `isPg14OrEarlier` alone, independent of `isRestore`.
-    ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.db.port), containerPort: "5432" }],
     healthcheck: {
       test: POSTGRES_HEALTHCHECK_TEST,
@@ -371,7 +340,6 @@ export function buildShadowPostgresContainerSpec(
 ): StartContainerSpec {
   const rootKeyValue = input.rootKey ?? POSTGRES_DEFAULT_ROOT_KEY;
   const postgresConfig = postgresSettingsToPostgresConfig(input.db.settings);
-  const isPg14OrEarlier = input.db.major_version <= 14;
 
   const env: Record<string, string> = {
     POSTGRES_PASSWORD: input.password,
@@ -381,9 +349,7 @@ export function buildShadowPostgresContainerSpec(
     ...postgresExtraEnv(input.db.orioledb_version, input.experimental, input.configImage),
   };
 
-  const script = isPg14OrEarlier
-    ? postgresEntrypointScriptPg14(postgresConfig, SHADOW_ENTRYPOINT_ARGS)
-    : postgresEntrypointScriptPg15(postgresConfig, SHADOW_ENTRYPOINT_ARGS);
+  const script = postgresEntrypointScript(postgresConfig, SHADOW_ENTRYPOINT_ARGS);
 
   return {
     image: input.image,
@@ -391,14 +357,9 @@ export function buildShadowPostgresContainerSpec(
     env,
     entrypoint: "sh",
     cmd: ["-c", script],
-    ...(isPg14OrEarlier
-      ? {}
-      : {
-          secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
-        }),
+    secretFiles: [{ containerPath: POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue }],
     binds: [],
     autoRemove: true,
-    ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.shadowPort), containerPort: "5432" }],
     healthcheck: {
       test: POSTGRES_HEALTHCHECK_TEST,

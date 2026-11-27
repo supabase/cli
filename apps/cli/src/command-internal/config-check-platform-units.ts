@@ -148,7 +148,7 @@ export const dbPort = syncUnit({
   check: (view) => (view.get(["db", "port"]) === 0 ? [missing(["db", "port"])] : []),
 });
 
-const SUPPORTED_POSTGRES_MAJOR_VERSIONS: ReadonlyArray<number> = [14, 15, 17];
+const SUPPORTED_POSTGRES_MAJOR_VERSIONS: ReadonlyArray<number> = [15, 17];
 
 export const dbMajorVersion = syncUnit({
   id: "db.major_version",
@@ -169,11 +169,11 @@ export const dbMajorVersion = syncUnit({
         ),
       ];
     }
-    if (version === 13) {
+    if (version === 13 || version === 14) {
       return [
         invalid(
           path,
-          "Postgres version 13.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.",
+          `Postgres version ${version}.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.`,
           "unsupported Postgres version",
           "upgrade the project to Postgres 17 and set db.major_version = 17; see https://supabase.com/docs/guides/platform/upgrading",
         ),

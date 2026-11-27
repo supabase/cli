@@ -2,14 +2,13 @@
 # apps/cli/scripts/render-service-dockerfile.ts, for these aliases only: pg, pg15, mailpit,
 # postgrest, pgmeta, studio, imgproxy, edgeruntime, vector, supavisor, gotrue, realtime, storage,
 # logflare. Do not hand-edit those tags; a CI drift check enforces this. Run the generator after
-# a catalog update. Everything else in this file (this comment, kong, pg14, the one-shot job
+# a catalog update. Everything else in this file (this comment, kong, the one-shot job
 # images) is hand- or Dependabot-managed. Keep a line between image lines: git conflicts on edits to
 # adjacent lines, and catalog PRs for neighbouring aliases are often open at the same time.
 FROM supabase/postgres:17.12.0.005 AS pg
 
 FROM supabase/postgres:15.20.0.005 AS pg15
-# Postgres 14 has no slim build; bumped by hand (Dependabot ignores supabase/postgres).
-FROM supabase/postgres:14.1.0.89 AS pg14
+
 # New always-on service alias: extend SERVICE_IMAGE_ALIASES in
 # shared/services/services.shared.ts and DOCKERFILE_ALIAS_BY_SERVICE in
 # commands/start/start.gates.ts.

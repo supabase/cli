@@ -595,10 +595,8 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
 }
 
 /**
- * A fake `DbSession` recording every `exec`/`query` call — needed for PG<=14's schema SQL /
- * `ApplyApiPrivileges` path; PG15+ (this suite's default) never calls `exec`/`query` at all (its
- * schema init is three one-shot `DockerRun` jobs instead), so this mostly just needs to exist
- * and satisfy the type.
+ * A fake `DbSession` recording every `exec`/`query` call. Schema init is three one-shot `DockerRun`
+ * jobs that never call `exec`/`query`, so this mostly just needs to exist and satisfy the type.
  */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
@@ -765,36 +763,6 @@ describe("start integration", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
-  });
-
-  describe("Postgres 14 deprecation", () => {
-    const alreadyRunning = (args: ReadonlyArray<string>) => {
-      if (args[0] === "container" && args[1] === "inspect") return { stdout: [HEALTHY_STATE] };
-      if (args[0] === "ps") return { stdout: [] };
-      return { exitCode: 0 };
-    };
-
-    it.effect("warns that Postgres 14 is end of life and will lose CLI support", () =>
-      Effect.gen(function* () {
-        const { layer, out } = yield* setup({
-          configContents: 'project_id = "demo"\n[db]\nmajor_version = 14\n',
-          route: alreadyRunning,
-        });
-
-        yield* start(flags()).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Postgres 14 reached end of life");
-        expect(out.stderrText).toContain("Upgrade your project to Postgres 17");
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
-    );
-
-    it.effect("stays silent on a supported Postgres major", () =>
-      Effect.gen(function* () {
-        const { layer, out } = yield* setup({ route: alreadyRunning });
-
-        yield* start(flags()).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("Postgres 14");
-      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
-    );
   });
 
   describe("--exclude validation", () => {

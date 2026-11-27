@@ -66,7 +66,7 @@ function baseInput(overrides: Partial<PostgresStartServiceInput> = {}): Postgres
 }
 
 describe("buildPostgresStartContainerSpec", () => {
-  test("PG >= 15: concatenates schema.sql + webhook.sql + _supabase.sql into the schema heredoc, appends the postgres config, and carries the pgsodium root key as a secretFile instead of a heredoc", () => {
+  test("concatenates schema.sql + webhook.sql + _supabase.sql into the schema heredoc, appends the postgres config, and carries the pgsodium root key as a secretFile instead of a heredoc", () => {
     const spec = buildPostgresStartContainerSpec(baseInput({ db: baseDb({ major_version: 17 }) }));
 
     expect(spec.entrypoint).toBe("sh");
@@ -85,33 +85,12 @@ describe("buildPostgresStartContainerSpec", () => {
     );
     expect(script).not.toContain(POSTGRES_DEFAULT_ROOT_KEY);
     expect(script).not.toContain("pgsodium_root.key");
-    expect(spec.tmpfs).toBeUndefined();
     expect(spec.secretFiles).toEqual([
       {
         containerPath: "/etc/postgresql-custom/pgsodium_root.key",
         content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
-  });
-
-  test("PG <= 14: writes only _supabase.sql (no schema.sql/webhook.sql, no pgsodium root key) and sets the initdb tmpfs mount", () => {
-    const spec = buildPostgresStartContainerSpec(baseInput({ db: baseDb({ major_version: 14 }) }));
-
-    const script = spec.cmd?.[1];
-    expect(script).toBe(
-      "\n" +
-        "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
-        "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-        "exec docker-entrypoint.sh postgres -D /etc/postgresql \n" +
-        `${START_DB_SUPABASE_SQL}\n` +
-        "EOF\n" +
-        `${POSTGRES_CONFIG_HEADER}\n` +
-        "EOF",
-    );
-    expect(script).not.toContain("postgresql.schema.sql");
-    expect(script).not.toContain("pgsodium_root.key");
-    expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
-    expect(spec.secretFiles).toBeUndefined();
   });
 
   test("uses a rootKey override instead of the default when provided", () => {
@@ -244,7 +223,7 @@ describe("buildPostgresStartContainerSpec", () => {
     expect(spec.binds).toEqual(["supabase_db_my_project_:/var/lib/postgresql/data"]);
   });
 
-  test("--from-backup: PG >= 15 uses the restore entrypoint (schema.sql + _supabase.sql, no webhook.sql), appends migrate.sh/postgresql.conf heredocs and cron.launch_active_jobs=off, and still carries the root key as a secretFile", () => {
+  test("--from-backup: uses the restore entrypoint (schema.sql + _supabase.sql, no webhook.sql), appends migrate.sh/postgresql.conf heredocs and cron.launch_active_jobs=off, and still carries the root key as a secretFile", () => {
     const spec = buildPostgresStartContainerSpec(
       baseInput({ db: baseDb({ major_version: 17 }), fromBackup: "/abs/host/backup.sql" }),
     );
@@ -277,21 +256,6 @@ describe("buildPostgresStartContainerSpec", () => {
     expect(spec.binds).toEqual([
       "supabase_db_myproj:/var/lib/postgresql/data",
       "/abs/host/backup.sql:/etc/backup.sql:ro",
-    ]);
-  });
-
-  test("--from-backup: PG <= 14 still uses the restore entrypoint (unconditional override) but keeps the PG<=14 initdb tmpfs mount", () => {
-    const spec = buildPostgresStartContainerSpec(
-      baseInput({ db: baseDb({ major_version: 14 }), fromBackup: "/abs/host/backup.sql" }),
-    );
-
-    expect(spec.cmd?.[1]).toContain("/docker-entrypoint-initdb.d/migrate.sh");
-    expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
-    expect(spec.secretFiles).toEqual([
-      {
-        containerPath: "/etc/postgresql-custom/pgsodium_root.key",
-        content: POSTGRES_DEFAULT_ROOT_KEY,
-      },
     ]);
   });
 
@@ -363,7 +327,7 @@ describe("postgresVersionCompare", () => {
     ["17.4.1.005", "17.4.1.030", -1],
     ["15.8.1", "15.8.1", 0],
     ["17", "15.8", 1],
-    ["14", "15.8", -1],
+    ["15", "15.8", -1],
     ["oriole-17", "oriole-17", 0],
     ["17", "oriole-17", 1],
     ["oriole-17", "17", -1],
@@ -403,7 +367,7 @@ function baseShadowInput(
 }
 
 describe("buildShadowPostgresContainerSpec", () => {
-  test("PG >= 15: splices the shadow entrypoint args into the SAME trailing-space join point the real db container uses, and still carries the pgsodium root key as a secretFile", () => {
+  test("splices the shadow entrypoint args into the SAME trailing-space join point the real db container uses, and still carries the pgsodium root key as a secretFile", () => {
     const spec = buildShadowPostgresContainerSpec(
       baseShadowInput({ db: { major_version: 17, settings: {} } }),
     );
@@ -417,19 +381,6 @@ describe("buildShadowPostgresContainerSpec", () => {
         content: POSTGRES_DEFAULT_ROOT_KEY,
       },
     ]);
-    expect(spec.tmpfs).toBeUndefined();
-  });
-
-  test("PG <= 14: splices the same args, no pgsodium secretFile, and sets the initdb tmpfs mount", () => {
-    const spec = buildShadowPostgresContainerSpec(
-      baseShadowInput({ db: { major_version: 14, settings: {} } }),
-    );
-    const script = spec.cmd?.[1];
-    expect(script).toContain(
-      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${SHADOW_ENTRYPOINT_ARGS}\n`,
-    );
-    expect(spec.secretFiles).toBeUndefined();
-    expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
   });
 
   test("has no name (Docker auto-generates one), no network aliases, no volume bind, and no restart policy — unlike the real db container", () => {

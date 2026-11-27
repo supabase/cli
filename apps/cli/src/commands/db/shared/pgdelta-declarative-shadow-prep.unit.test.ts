@@ -72,9 +72,6 @@ describe("prepareDeclarativeShadow", () => {
 
   it.effect("names the failing prep statement", () => {
     const client = fakeShadowClient((sql) => {
-      if (sql === "SHOW server_version") {
-        return Promise.resolve({ rows: [{ server_version: "15.8" }] });
-      }
       if (sql.includes("pgcrypto")) {
         return Promise.reject(new Error("cannot drop extension pgcrypto (SQLSTATE 2BP01)"));
       }
@@ -89,41 +86,18 @@ describe("prepareDeclarativeShadow", () => {
     });
   });
 
-  it.effect("runs the version-selected prep statements against the shadow", () => {
+  it.effect("runs the prep statements against the shadow", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
-      return Promise.resolve({
-        rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
-      });
+      return Promise.resolve({ rows: [] });
     });
     return Effect.gen(function* () {
       const prep = yield* prepareDeclarativeShadow(client, allImageCreates);
       expect(prep.restorePgjwt).toBe(false);
       expect(queries).toEqual([
-        "SHOW server_version",
         "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
-        'DROP EXTENSION IF EXISTS "uuid-ossp"',
-      ]);
-    });
-  });
-
-  it.effect("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
-    const queries: string[] = [];
-    const client = fakeShadowClient((sql) => {
-      queries.push(sql);
-      return Promise.resolve({
-        rows: sql === "SHOW server_version" ? [{ server_version: "14.15" }] : [],
-      });
-    });
-    return Effect.gen(function* () {
-      yield* prepareDeclarativeShadow(client, [
-        { name: "uuid.sql", sql: 'CREATE EXTENSION "uuid-ossp";' },
-      ]);
-      expect(queries).toEqual([
-        "SHOW server_version",
-        "ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT",
         'DROP EXTENSION IF EXISTS "uuid-ossp"',
       ]);
     });
@@ -136,21 +110,14 @@ describe("prepareDeclarativeShadow", () => {
       if (sql.startsWith("SELECT extname")) {
         return Promise.resolve({ rows: [{ extname: "pgjwt" }] });
       }
-      return Promise.resolve({
-        rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
-      });
+      return Promise.resolve({ rows: [] });
     });
-    const withoutPgjwt = fakeShadowClient((sql) =>
-      Promise.resolve({
-        rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
-      }),
-    );
+    const withoutPgjwt = fakeShadowClient(() => Promise.resolve({ rows: [] }));
     const files = [{ name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" }];
     return Effect.gen(function* () {
       expect((yield* prepareDeclarativeShadow(withPgjwt, files)).restorePgjwt).toBe(true);
       expect(queries).toEqual([
         "SELECT extname FROM pg_extension WHERE extname = 'pgjwt'",
-        "SHOW server_version",
         "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
       ]);

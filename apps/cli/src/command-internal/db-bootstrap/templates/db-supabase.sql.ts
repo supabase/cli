@@ -1,7 +1,4 @@
-/**
- * Embedded byte-for-byte into the Postgres container's entrypoint heredoc, for both the PG >= 15
- * and PG <= 14 branches.
- */
+/** Embedded byte-for-byte into the Postgres container's entrypoint heredoc. */
 export const START_DB_SUPABASE_SQL = `CREATE DATABASE _supabase WITH OWNER postgres;
 
 -- Switch to the newly created _supabase database

@@ -1,8 +1,6 @@
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { usesStackState } from "./stack-backend.ts";
 import { Effect, type FileSystem, type Path } from "effect";
-import { Output } from "../shared/output/output.service.ts";
-import { yellow } from "./colors.ts";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
 import {
@@ -58,20 +56,6 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-/** Warns on stderr when the local project runs Postgres 14, which is end of life and soon unsupported. */
-export const warnIfPostgres14Deprecated = Effect.fn("DbImage.warnIfPostgres14Deprecated")(
-  function* (majorVersion: number) {
-    if (majorVersion !== 14) return;
-    const output = yield* Output;
-    yield* output.raw(
-      `${yellow("WARNING:")} Postgres 14 reached end of life on November 12, 2026, and the Supabase CLI will drop support for it soon. ` +
-        "Upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: " +
-        "https://supabase.com/docs/guides/platform/upgrading\n",
-      "stderr",
-    );
-  },
-);
-
 /** OrioleDB replaces the Postgres image only on 15/17 projects with a version set. */
 export const selectsOrioleDb = (
   orioledbVersion: string | undefined,
@@ -112,7 +96,7 @@ export const resolveDbImage = Effect.fn("DbImage.resolve")(function* (
   }
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
-  if (majorVersion > 14 && !(yield* usesStackState)) {
+  if (!(yield* usesStackState)) {
     const pinned = yield* fs
       .readFileString(legacyProjectStatePaths(path, workdir).postgresVersion)
       .pipe(
@@ -126,10 +110,6 @@ export const resolveDbImage = Effect.fn("DbImage.resolve")(function* (
         appliedPin = pinned;
       }
     }
-  }
-  // PG14 has no slim build.
-  if (majorVersion === 14) {
-    return { image: currentRaw, configImage: currentRaw };
   }
   const configImage =
     appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
