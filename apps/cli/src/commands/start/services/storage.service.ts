@@ -16,7 +16,7 @@ import {
 import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
-/** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
+/** Both the container's `STORAGE_FILE_BACKEND_PATH` and its named-volume mount target. */
 const STORAGE_DOCKER_PATH = "/mnt";
 
 export interface StorageVectorEnvInput {

@@ -75,7 +75,7 @@ describe("buildStorageEnv", () => {
   });
 
   describe("image-transformation / ImgProxy gate", () => {
-    test("IMAGE_TRANSFORMATION_ENABLED and IMGPROXY_URL reflect the caller-resolved compound flag", () => {
+    test("IMAGE_TRANSFORMATION_ENABLED follows the caller-resolved compound flag", () => {
       const disabled = buildStorageEnv({
         ...baseEnvInput,
         imageTransformationEnabled: false,
