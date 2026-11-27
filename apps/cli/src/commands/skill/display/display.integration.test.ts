@@ -5,7 +5,11 @@ import { Command } from "effect/cli";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../../command-internal/global-flags.ts";
-import { InvalidOutputFormatError } from "../../../command-internal/output-formats.ts";
+import {
+  InvalidOutputFormatError,
+  unsupportedOutputFlagMessage,
+} from "../../../command-internal/output-formats.ts";
+import type { OutputFormat } from "../../../shared/output/types.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { EventCommandExecuted, PropSkillTopic } from "../../../shared/telemetry/event-catalog.ts";
@@ -16,11 +20,21 @@ import {
 } from "./display.errors.ts";
 import { skillDisplay } from "./display.handler.ts";
 import { skillCommand } from "../skill.command.ts";
+import { renderTopic } from "./display.render.ts";
+import { topics } from "../content/topics.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
+
+const [overview] = topics;
 
 const testRoot = () => Command.make("supabase").pipe(Command.withSubcommands([skillCommand]));
 
-function setup(opts: { readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number] } = {}) {
-  const out = mockOutput();
+function setup(
+  opts: {
+    readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+    readonly format?: OutputFormat;
+  } = {},
+) {
+  const out = mockOutput({ format: opts.format });
   const analytics = mockAnalytics();
   const layer = Layer.mergeAll(
     out.layer,
@@ -63,6 +77,35 @@ describe("skill display", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("returns the rendered topic in a markdown field for json", () => {
+    const { out, analytics, layer } = setup({ format: "json" });
+    return Effect.gen(function* () {
+      yield* run(["skill", "display"]);
+      const [chunk] = out.rawChunks;
+      expect(out.rawChunks).toHaveLength(1);
+      const parsed = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Struct({ markdown: Schema.String })),
+      )(chunk?.text ?? "");
+      expect(parsed.markdown).toBe(renderTopic(overview, CLI_VERSION));
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event?.properties[PropSkillTopic]).toBe("overview");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits a result event carrying the markdown for stream-json", () => {
+    const { out, layer } = setup({ format: "stream-json" });
+    return Effect.gen(function* () {
+      yield* run(["skill", "display"]);
+      expect(out.rawChunks).toHaveLength(0);
+      expect(out.events).toEqual([
+        expect.objectContaining({
+          type: "result",
+          data: { markdown: renderTopic(overview, CLI_VERSION) },
+        }),
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails an unknown topic without recording or leaking the input", () => {
     const { out, analytics, layer } = setup();
     return Effect.gen(function* () {
@@ -89,6 +132,7 @@ describe("skill display", () => {
       return Effect.gen(function* () {
         const error = findError(yield* skillDisplay({ topic: Option.none() }).pipe(Effect.exit));
         expect(error).toBeInstanceOf(SkillDisplayOutputFlagUnsupportedError);
+        expect(error).toHaveProperty("message", unsupportedOutputFlagMessage("skill display"));
         expect(out.rawChunks).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     };

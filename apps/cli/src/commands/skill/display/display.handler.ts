@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION } from "../../../shared/cli/version.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { PropSkillTopic } from "../../../shared/telemetry/event-catalog.ts";
@@ -17,7 +18,7 @@ export const skillDisplay = Effect.fn("skill.display")(function* (flags: SkillDi
   const outputFlag = yield* OutputFlag;
   if (Option.isSome(outputFlag)) {
     return yield* new SkillDisplayOutputFlagUnsupportedError({
-      message: "skill display always prints markdown; -o/--output is not supported.",
+      message: unsupportedOutputFlagMessage("skill display"),
     });
   }
   const requested = Option.getOrElse(flags.topic, () => "overview");
@@ -33,6 +34,11 @@ export const skillDisplay = Effect.fn("skill.display")(function* (flags: SkillDi
   }
   yield* Effect.annotateCurrentSpan("skill.topic", topic.value.slug);
   const output = yield* Output;
-  yield* output.raw(renderTopic(topic.value, CLI_VERSION));
+  const markdown = renderTopic(topic.value, CLI_VERSION);
+  if (output.format === "text") {
+    yield* output.raw(markdown);
+  } else {
+    yield* output.result({ markdown });
+  }
   yield* recordCommandTelemetry({ [PropSkillTopic]: topic.value.slug });
 });

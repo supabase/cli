@@ -151,14 +151,19 @@ interface RootCommandFeatures {
   readonly computeEnabled?: boolean;
 }
 
-/** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
+/**
+ * Agents default to json, except stream-json for Stack-backed `functions serve` (which rejects
+ * json) and text for `skill display` (whose primary output is a markdown document).
+ */
 const agentDefaultOutputFormatFor = (
   features: RootCommandFeatures,
   args: ReadonlyArray<string>,
-): OutputFormat =>
-  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
-    ? "stream-json"
-    : "json";
+): OutputFormat => {
+  const path = extractCommandPath(args);
+  if (features.stackBackend === "stack" && isFunctionsServePath(path)) return "stream-json";
+  if (path[0] === "skill" && path[1] === "display") return "text";
+  return "json";
+};
 
 export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(

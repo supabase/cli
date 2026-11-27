@@ -4,13 +4,14 @@ This guidance matches the installed CLI version. Run `supabase skill display <to
 
 - Run `supabase <command> --help` for exact flags. It is authoritative.
 - Replace `<...>` placeholders, such as `<ref>`, with real values before running a command.
-- For commands that return structured results, use `--output-format json` for parsing. It is already the default when an agent is detected. `stream-json` emits NDJSON for long-running commands. `skill display` always prints markdown, whatever the format.
+- For commands that return structured results, use `--output-format json` for parsing. It is already the default when an agent is detected. `stream-json` emits NDJSON for long-running commands. `skill display` prints markdown; with `--output-format json` it is in the `markdown` field.
 
 ## Targeting
 
-- Commands target the local stack unless `--remote` is passed.
-- `--remote` with no value targets the linked project.
-- `--remote=<ref|branch|url>` targets a specific project ref, branch, or Postgres URL.
+- Commands that support both local and hosted targets use the local stack unless `--remote` is passed. Hosted-only commands, such as `secrets set`, always act on a hosted project, with or without `--remote`.
+- `--remote` with no value targets the linked project. `SUPABASE_PROJECT_ID`, when set, wins over the link file.
+- `--remote=<ref|branch|url>` targets a specific project ref, branch, or Postgres URL. Hosted-only commands take a ref or branch, not a URL.
+- After the user approves a change to a specific project, pass `--remote=<ref>` so the command cannot act on a different project.
 - Never use the v2 target flags `--local`, `--linked`, `--project-ref`, or `--db-url`. Use `--remote` instead.
 - Commands that connect to local services, such as `db query` without `--remote`, need the running stack. Check it with `supabase status` and start it with `supabase start`. Never restart it in a loop.
 
@@ -21,8 +22,8 @@ supabase start
 
 ## Linking and credentials for `--remote`
 
-- Bare `--remote` needs a linked project. If a command reports that the project is not linked, ask the user which project to use, then link it. Alternatively, pass `--remote=<ref>`.
-- Hosted commands need an access token. Use `supabase login` interactively, or `SUPABASE_ACCESS_TOKEN` in the environment (CI or agents).
+- Bare `--remote` and hosted-only commands need a linked project or `SUPABASE_PROJECT_ID`. If a command reports that the project is not linked, ask the user which project to use, then link it. Alternatively, pass `--remote=<ref>`.
+- A project ref, a branch, or bare `--remote` goes through the Management API and needs an access token. Use `supabase login` interactively, or `SUPABASE_ACCESS_TOKEN` in the environment (CI or agents). `--remote=<postgres url>` needs only the credentials in the URL.
 - Database commands such as `db push`, `db pull`, `migration list`, and `migration repair` may also need the database password. Pass `--password` or set `SUPABASE_DB_PASSWORD`. Never write the password into files.
 
 ```bash
