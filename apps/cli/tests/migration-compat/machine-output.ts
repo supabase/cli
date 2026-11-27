@@ -1,6 +1,6 @@
 import { DateTime, Option, Schema } from "effect";
 
-export type MachineFormat = "json" | "stream-json";
+export type MachineFormat = "json" | "stream-json" | "yaml" | "toml";
 
 export const MachineOutput = Schema.Struct({
   exitCode: Schema.Int,
@@ -19,6 +19,7 @@ export const Baseline = Schema.Struct({
 const parseJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 export function normalizeStdout(format: MachineFormat, stdout: string) {
+  if (format === "yaml" || format === "toml") return stdout;
   if (!stdout.endsWith("\n")) throw new Error("stdout must end with a newline");
   const body = stdout.slice(0, -1);
   if (format === "json") {

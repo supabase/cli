@@ -4,9 +4,8 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
-import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { withLegacyOutputHandler } from "../../../command-internal/command-executor.ts";
+import { managementApiRuntime } from "../../../command-internal/management-api-runtime.layer.ts";
 import { projectsList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -35,9 +34,9 @@ export const projectsListCommand = Command.make("list", config).pipe(
       ),
     ),
   ),
-  Command.withHandler((flags) =>
-    projectsList(flags).pipe(withCommandTelemetry({ flags, safeFlags: [] }), withJsonErrorHandling),
-  ),
-  Command.provide(managementApiRuntimeLayer(["projects", "list"])),
+  withLegacyOutputHandler({
+    handler: projectsList,
+    runtime: managementApiRuntime(["projects", "list"]),
+  }),
   withTargetPolicy({ group: "account", consent: "none" }),
 );

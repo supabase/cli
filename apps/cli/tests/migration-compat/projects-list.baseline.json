@@ -1,0 +1,30 @@
+{
+  "revision": "8e41d7d11051bfc9fead755c3e1f8cc948b32150",
+  "argv": ["projects", "list", "--agent=no", "--output-format", "<format>"],
+  "cases": {
+    "json/success": {
+      "exitCode": 0,
+      "stdout": "{\"projects\":[{\"id\":\"abcdefghijklmnopqrst\",\"name\":\"alpha\",\"undeclared_field\":\"kept\",\"linked\":false}],\"message\":\"\"}\n",
+      "stderr": "Cannot find project ref. Have you run supabase link?\n",
+      "requests": ["GET /v1/projects"]
+    },
+    "json/invalid-response": {
+      "exitCode": 1,
+      "stdout": "{\"_tag\":\"Error\",\"error\":{\"code\":\"ProjectsListUnexpectedStatusError\",\"message\":\"Unexpected error retrieving projects: response was not an array\"}}\n",
+      "stderr": "",
+      "requests": ["GET /v1/projects"]
+    },
+    "stream-json/success": {
+      "exitCode": 0,
+      "stdout": "{\"type\":\"result\",\"data\":{\"projects\":[{\"id\":\"abcdefghijklmnopqrst\",\"name\":\"alpha\",\"undeclared_field\":\"kept\",\"linked\":false}],\"message\":\"\"},\"timestamp\":\"2026-11-25T21:31:55.444Z\"}\n",
+      "stderr": "Cannot find project ref. Have you run supabase link?\n",
+      "requests": ["GET /v1/projects"]
+    },
+    "stream-json/invalid-response": {
+      "exitCode": 1,
+      "stdout": "{\"type\":\"error\",\"error\":{\"code\":\"ProjectsListUnexpectedStatusError\",\"message\":\"Unexpected error retrieving projects: response was not an array\"},\"timestamp\":\"2026-11-25T21:31:55.711Z\"}\n",
+      "stderr": "",
+      "requests": ["GET /v1/projects"]
+    }
+  }
+}

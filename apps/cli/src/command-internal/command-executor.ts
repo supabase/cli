@@ -15,6 +15,7 @@ import { Command } from "effect/cli";
 
 import { TerminalResponse } from "../shared/cli/terminal-response.service.ts";
 import { failureBesideClosedStdout, ignoreStdoutClosed } from "../shared/output/errors.ts";
+import { withJsonErrorHandling } from "../shared/output/json-error-handling.ts";
 import { normalizeCliError } from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { ProcessControl } from "../shared/runtime/process-control.service.ts";
@@ -41,7 +42,8 @@ export class CommandUX extends Context.Service<CommandUX, CommandUXShape>()("sup
 export class ResolvedProject extends Context.Service<
   ResolvedProject,
   {
-    readonly record: (ref: string) => Effect.Effect<void>;
+    /** Record completed resolution; an absent ref still requests telemetry flush. */
+    readonly record: (ref: string | undefined) => Effect.Effect<void>;
   }
 >()("supabase/ResolvedProject") {}
 
@@ -50,6 +52,15 @@ interface Declaration<Flags, S extends ResultSchema, E, R> {
   readonly output: S;
   readonly handler: (flags: Flags) => Effect.Effect<NoInfer<S["Type"]>, E, R>;
 }
+
+interface LegacyDeclaration<Flags, E, R> {
+  readonly output?: never;
+  readonly handler: (flags: Flags) => Effect.Effect<unknown, E, R>;
+}
+
+type ExecutionDeclaration<Flags, S extends ResultSchema, E, R> =
+  | (Declaration<Flags, S, E, R> & { readonly owner: "executor" })
+  | (LegacyDeclaration<Flags, E, R> & { readonly owner: "handler" });
 
 type ExecutionServices =
   | Output
@@ -62,7 +73,7 @@ type ExecutionServices =
 
 interface CommandExecutorShape {
   readonly run: <Flags extends Record<string, unknown>, S extends ResultSchema, E, R, LA, LE, LR>(
-    declaration: Declaration<Flags, S, E, R>,
+    declaration: ExecutionDeclaration<Flags, S, E, R>,
     flags: Flags,
     required: Layer.Layer<LA, LE, LR>,
   ) => Effect.Effect<
@@ -120,8 +131,41 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     const output = yield* Output;
     const cache = yield* LinkedProjectCache;
     const telemetry = yield* TelemetryState;
+    const resolvedProject = yield* Ref.make(Option.none<string | undefined>());
+    const execute = Effect.suspend(() => declaration.handler(flags)).pipe(
+      Effect.provideService(CommandUX, commandUX(output)),
+      Effect.provideService(ResolvedProject, {
+        record: (ref) => Ref.set(resolvedProject, Option.some(ref)),
+      }),
+      Effect.scoped,
+      Effect.provideContext(services),
+    );
+    const instrument = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
+      operation.pipe(
+        Effect.ensuring(
+          Ref.get(resolvedProject).pipe(
+            Effect.flatMap((project) => {
+              if (Option.isNone(project)) return Effect.void;
+              const ref = project.value;
+              return (
+                ref === undefined ? Effect.void : bestEffort(Effect.suspend(() => cache.cache(ref)))
+              ).pipe(Effect.ensuring(bestEffort(Effect.suspend(() => telemetry.flush))));
+            }),
+          ),
+        ),
+        withCommandTelemetry({ flags }),
+      );
+
+    if (declaration.owner === "handler") {
+      // Legacy writes do not mark a terminal attempt: the runner owns unhandled failures.
+      return yield* instrument(execute).pipe(
+        withJsonErrorHandling,
+        Scope.use(requiredScope),
+        Effect.asVoid,
+      );
+    }
+
     const response = yield* TerminalResponse;
-    const resolvedProjectRef = yield* Ref.make<string | undefined>(undefined);
     const attempted = yield* Ref.make(false);
     const writeTerminal = (write: () => Effect.Effect<void>) =>
       Ref.set(attempted, true).pipe(
@@ -137,34 +181,12 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
 
     const exit = yield* Effect.gen(function* () {
       // Keep handler finalizers inside the services' lifetime, and own release before delivery.
-      const result = yield* Effect.suspend(() => declaration.handler(flags)).pipe(
-        Effect.provideService(CommandUX, commandUX(output)),
-        Effect.provideService(ResolvedProject, {
-          record: (ref) => Ref.set(resolvedProjectRef, ref),
-        }),
-        Effect.scoped,
-        Effect.provideContext(services),
-        Scope.use(requiredScope),
-      );
+      const result = yield* execute.pipe(Scope.use(requiredScope));
       if (isMachine(output)) {
         const encoded = yield* Schema.encodeEffect(declaration.output)(result).pipe(Effect.orDie);
         yield* writeTerminal(() => output.result(encoded));
       }
-    }).pipe(
-      Effect.ensuring(
-        Ref.get(resolvedProjectRef).pipe(
-          Effect.flatMap((ref) =>
-            ref === undefined
-              ? Effect.void
-              : bestEffort(Effect.suspend(() => cache.cache(ref))).pipe(
-                  Effect.ensuring(bestEffort(telemetry.flush)),
-                ),
-          ),
-        ),
-      ),
-      withCommandTelemetry({ flags }),
-      Effect.exit,
-    );
+    }).pipe(instrument, Effect.exit);
     if (Exit.isSuccess(exit)) return;
     // Only typed machine errors need the command's output context. The runner reports other
     // failures after shutdown, so a signal during shutdown can still suppress their diagnostics.
@@ -185,6 +207,11 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
 
 export const commandExecutorLayer = Layer.succeed(CommandExecutor, { run });
 
+interface ExecutionRuntime<LA, LE, LR, CA, CE, CR> {
+  readonly required: Layer.Layer<LA, LE, LR>;
+  readonly completion: Layer.Layer<CA, CE, CR>;
+}
+
 export const withManagedHandler = <
   Flags extends Record<string, unknown>,
   S extends ResultSchema,
@@ -198,16 +225,38 @@ export const withManagedHandler = <
   CR,
 >(
   declaration: Declaration<Flags, S, E, R> & {
-    readonly runtime: {
-      readonly required: Layer.Layer<LA, LE, LR>;
-      readonly completion: Layer.Layer<CA, CE, CR>;
-    };
+    readonly runtime: ExecutionRuntime<LA, LE, LR, CA, CE, CR>;
   },
 ) =>
   flow(
     Command.withHandler((flags: Flags) =>
       CommandExecutor.use((executor) =>
-        executor.run(declaration, flags, declaration.runtime.required),
+        executor.run({ ...declaration, owner: "executor" }, flags, declaration.runtime.required),
+      ),
+    ),
+    Command.provide(declaration.runtime.completion),
+  );
+
+/** Run a handler that owns its output without delivering an executor result. */
+export const withLegacyOutputHandler = <
+  Flags extends Record<string, unknown>,
+  E,
+  R,
+  LA,
+  LE,
+  LR,
+  CA,
+  CE,
+  CR,
+>(
+  declaration: LegacyDeclaration<Flags, E, R> & {
+    readonly runtime: ExecutionRuntime<LA, LE, LR, CA, CE, CR>;
+  },
+) =>
+  flow(
+    Command.withHandler((flags: Flags) =>
+      CommandExecutor.use((executor) =>
+        executor.run({ ...declaration, owner: "handler" }, flags, declaration.runtime.required),
       ),
     ),
     Command.provide(declaration.runtime.completion),
