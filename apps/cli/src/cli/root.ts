@@ -46,6 +46,7 @@ import { pullCommand } from "../commands/pull/pull.command.ts";
 import { secretsCommand } from "../commands/secrets/secrets.command.ts";
 import { seedCommand } from "../commands/seed/seed.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
+import { skillCommand } from "../commands/skill/skill.command.ts";
 import { snippetsCommand } from "../commands/snippets/snippets.command.ts";
 import { sslEnforcementCommand } from "../commands/ssl-enforcement/ssl-enforcement.command.ts";
 import { ssoCommand } from "../commands/sso/sso.command.ts";
@@ -151,14 +152,19 @@ interface RootCommandFeatures {
   readonly computeEnabled?: boolean;
 }
 
-/** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
+/**
+ * Agents default to json, except stream-json for Stack-backed `functions serve` (which rejects
+ * json) and text for `skill display` (whose primary output is a markdown document).
+ */
 const agentDefaultOutputFormatFor = (
   features: RootCommandFeatures,
   args: ReadonlyArray<string>,
-): OutputFormat =>
-  features.stackBackend === "stack" && isFunctionsServePath(extractCommandPath(args))
-    ? "stream-json"
-    : "json";
+): OutputFormat => {
+  const path = extractCommandPath(args);
+  if (features.stackBackend === "stack" && isFunctionsServePath(path)) return "stream-json";
+  if (path[0] === "skill" && path[1] === "display") return "text";
+  return "json";
+};
 
 export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
@@ -195,6 +201,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
       secretsCommand,
       seedCommand,
       servicesCommand,
+      skillCommand,
       snippetsCommand,
       sslEnforcementCommand,
       ssoCommand,

@@ -11,6 +11,7 @@ import {
   PropEdgeRuntimeExitCode,
   PropOrioleDb,
   PropServeEndReason,
+  PropSkillTopic,
   PropStackRuntime,
 } from "../shared/telemetry/event-catalog.ts";
 
@@ -38,6 +39,7 @@ export interface CommandTelemetryAttributeValues {
   readonly [PropStackRuntime]?: StackRuntime;
   readonly [PropServeEndReason]?: ServeEndReason;
   readonly [PropEdgeRuntimeExitCode]?: number;
+  readonly [PropSkillTopic]?: string;
 }
 
 /** Command-scoped attribute sink; `withCommandTelemetry` provides one, otherwise records are dropped. */

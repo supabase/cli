@@ -34,24 +34,24 @@ const E2E_EXCLUSIVE_FILES = [
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
-const dockerfileModule = (filePath: string) =>
+const textModule = (filePath: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(yield* fs.readFile(filePath));
     return `export default ${yield* encodeJsonString(text)};`;
   });
 
-function dockerfileTextPlugin() {
+function textImportPlugin() {
   return {
-    name: "dockerfile-text-loader",
+    name: "text-import-loader",
     load(id: string) {
       const [filePath] = id.split("?", 2);
-      if (filePath?.endsWith("/Dockerfile") !== true) {
+      if (filePath?.endsWith("/Dockerfile") !== true && filePath?.endsWith(".md") !== true) {
         return undefined;
       }
 
       return Effect.runPromise(
-        dockerfileModule(filePath).pipe(
+        textModule(filePath).pipe(
           Effect.catchTag("PlatformError", (error) => Effect.die(error.cause)),
           Effect.provide(BunFileSystem.layer),
         ),
@@ -69,7 +69,7 @@ const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "b
 export default defineConfig({
   resolve: workspacePackageResolve,
   ssr: { resolve: workspacePackageSsrResolve },
-  plugins: [dockerfileTextPlugin()],
+  plugins: [textImportPlugin()],
   test: {
     passWithNoTests: true,
     // Vitest reads `sequence.sequencer` from the root config only; the sequencer

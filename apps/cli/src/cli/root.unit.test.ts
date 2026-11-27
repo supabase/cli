@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rootDescription } from "./root.ts";
+import { cliEntrypointForFeatures, rootDescription } from "./root.ts";
 
 describe("rootDescription", () => {
   it("leaves stable releases unlabeled", () => {
@@ -14,5 +14,16 @@ describe("rootDescription", () => {
     ["0.0.0-automated", "Supabase CLI (development build)."],
   ])("labels %j as %j", (version, expected) => {
     expect(rootDescription(version)).toBe(expected);
+  });
+});
+
+describe("cliEntrypointForFeatures agent default", () => {
+  it.each([
+    [["skill", "display", "overview"], "text"],
+    [["--debug", "skill", "display", "--workdir", "/tmp/app"], "text"],
+    [["skill", "list"], "json"],
+    [["db", "push"], "json"],
+  ] as const)("resolves %j to %s", (args, expected) => {
+    expect(cliEntrypointForFeatures({}, args).agentDefaultOutputFormat).toBe(expected);
   });
 });

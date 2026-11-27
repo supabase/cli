@@ -113,6 +113,17 @@ describe("CLI agent output", () => {
     }),
   );
 
+  it.live("prints skill display as raw markdown for detected coding agents", () =>
+    Effect.gen(function* () {
+      const { exitCode, stdout } = yield* runSupabaseEffect(["skill", "display"], {
+        env: { CODEX_SANDBOX: "1" },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stdout).toMatch(/^# Supabase CLI: agent overview/);
+    }),
+  );
+
   it.live("keeps parse errors in text mode when --output-format=text is explicit", () =>
     Effect.gen(function* () {
       const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
