@@ -479,6 +479,26 @@ describe("deriveApiCommands", () => {
     expect(result.problems.join("\n")).toContain('"--wait"');
   });
 
+  it.each([
+    ["a query parameter", { name: "data", in: "query", schema: { type: "string" } }],
+    ["a path parameter", { name: "data", in: "path", required: true, schema: { type: "string" } }],
+  ])("rejects %s named like the top-level body key", (_label, parameter) => {
+    const result = derive({
+      "create-thing": operation({
+        ...create,
+        parameters: [
+          { name: "ref", in: "path", required: true, schema: { type: "string" } },
+          parameter,
+        ],
+        requestBody: envelope({}),
+      }),
+    });
+
+    expect(result.problems.join("\n")).toContain(
+      'create-thing: parameter "data" collides with the top-level body key "data"',
+    );
+  });
+
   it("rejects a body field named like a registered global flag", () => {
     const result = derive({
       "create-thing": operation({
@@ -1097,6 +1117,11 @@ describe("deriveApiCommands", () => {
         "a status outside the status enum",
         hiddenWith({ ...poll, failed: ["bogus"] }),
         'wait status "bogus" is not in the status enum of get-thing',
+      ],
+      [
+        "a status that both succeeds and fails",
+        hiddenWith({ ...poll, failed: [...poll.succeeded] }),
+        'wait status "done" is listed as both succeeded and failed',
       ],
       [
         "a required read parameter the link does not supply",

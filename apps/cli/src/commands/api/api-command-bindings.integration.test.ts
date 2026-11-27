@@ -311,14 +311,23 @@ describe("generated command bindings", () => {
   for (const entry of apiCommands) {
     const { operationId } = entry;
     const operation = operationOf(operationId);
-    // The API rejects `since` combined with `from`/`to`; the relative form is the one sent here.
-    const inputs = inputsOf(operationId, operation, entry.bindings).filter(
-      (input, _, all) =>
-        input.location !== "query" ||
-        (input.field !== "from" && input.field !== "to") ||
-        !all.some((other) => other.field === "since"),
-    );
-    const required = inputs.filter((input) => input.required);
+    const all = inputsOf(operationId, operation, entry.bindings);
+    const isRange = (input: (typeof all)[number], names: ReadonlyArray<string>) =>
+      input.location === "query" && names.includes(input.field);
+    // The API rejects `since` combined with `from`/`to`, so each form is sent on its own.
+    const variants = all.some((input) => isRange(input, ["since"]))
+      ? [
+          {
+            name: " with a relative range",
+            inputs: all.filter((input) => !isRange(input, ["from", "to"])),
+          },
+          {
+            name: " with an absolute range",
+            inputs: all.filter((input) => !isRange(input, ["since"])),
+          },
+        ]
+      : [{ name: "", inputs: all }];
+    const required = all.filter((input) => input.required);
     const positionals = positionalsOf(operation);
     const expectedPath = positionals.reduce(
       (path, { name, sample }) => path.replace(`{${name}}`, sample),
@@ -326,25 +335,27 @@ describe("generated command bindings", () => {
     );
 
     describe(entry.command.join(" "), () => {
-      it.effect("sends every input at its binding", () =>
-        Effect.gen(function* () {
-          const requests = yield* send(
-            entry.command,
-            [...positionals.map(({ sample }) => sample), ...argvOf(inputs)],
-            operation.responseStatus,
-          );
-          expect(requests).toHaveLength(1);
-          const [request] = requests;
-          expect(request?.method).toBe(operation.method);
-          expect(request?.path).toBe(expectedPath);
-          expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
-            expectedQuery(inputs),
-          );
-          expect(request?.body).toEqual(expectedBody(operation, inputs));
-        }),
-      );
+      for (const { name, inputs } of variants) {
+        it.effect(`sends every input at its binding${name}`, () =>
+          Effect.gen(function* () {
+            const requests = yield* send(
+              entry.command,
+              [...positionals.map(({ sample }) => sample), ...argvOf(inputs)],
+              operation.responseStatus,
+            );
+            expect(requests).toHaveLength(1);
+            const [request] = requests;
+            expect(request?.method).toBe(operation.method);
+            expect(request?.path).toBe(expectedPath);
+            expect(Object.fromEntries(new URLSearchParams(request?.search))).toEqual(
+              expectedQuery(inputs),
+            );
+            expect(request?.body).toEqual(expectedBody(operation, inputs));
+          }),
+        );
+      }
 
-      if (required.length < inputs.length) {
+      if (required.length < all.length) {
         it.effect("sends only the inputs the spec requires when no other flag is given", () =>
           Effect.gen(function* () {
             const requests = yield* send(

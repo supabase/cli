@@ -50,7 +50,7 @@ export const commandPolicies = {
       },
       {
         command: `supabase warehouse tables layout update <table-id> --partition-by '[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]' --dry-run`,
-        description: "Preview eight hash buckets locally without changing the Warehouse.",
+        description: "Preview the request to partition by eight hash buckets without sending it.",
       },
       {
         command: `supabase warehouse tables layout update <table-id> --partition-by '[]' --sort-by '{"kind":"none"}'`,

@@ -793,6 +793,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
     }
 
     let body: ApiCommandEntry["body"];
+    let bodyKeys: ReadonlyArray<string> = [];
     const requestBody = asRecord(resolve(spec, operation.node.requestBody));
     if (requestBody !== undefined) {
       const content = asRecord(requestBody.content) ?? {};
@@ -809,6 +810,7 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
           `unsupported in this runtime: request body (${mediaTypes.join(", ") || "none"}) is not a JSON object`,
         );
       } else {
+        bodyKeys = Object.keys(properties);
         const data = asRecord(resolve(spec, properties.data));
         const dataProperties = asRecord(data?.properties);
         const typeEnum = asArray(asRecord(resolve(spec, dataProperties?.type))?.enum);
@@ -866,6 +868,18 @@ export function deriveApiCommands(input: DeriveInput): DeriveResult {
             writeOnly: secret !== undefined,
           });
         }
+      }
+    }
+
+    const spread = [
+      ...pathNames,
+      ...fields.filter((field) => field.location === "query").map((field) => field.key),
+    ];
+    for (const name of spread) {
+      if (bodyKeys.includes(name)) {
+        fail(
+          `parameter "${name}" collides with the top-level body key "${name}", which the flat request input would overwrite`,
+        );
       }
     }
 
@@ -1133,5 +1147,11 @@ function lintWait(input: {
         fail(`wait status "${value}" is not in the status enum of ${wait.read}`);
       }
     }
+  }
+  const overlap = wait.succeeded.filter((value) => wait.failed.includes(value));
+  if (overlap.length > 0) {
+    fail(
+      `wait status ${overlap.map((value) => `"${value}"`).join(", ")} is listed as both succeeded and failed`,
+    );
   }
 }

@@ -98,7 +98,7 @@ const POLL_MAX_DELAY_MILLIS = 10_000;
 const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const lossyDecoder = new TextDecoder();
-const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const decodeUtf8 = Option.liftThrowable((bytes: Uint8Array) => strictDecoder.decode(bytes));
 const encodeJsonValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -202,6 +202,7 @@ const statusError = Effect.fnUntraced(function* (
   operationId: string,
   response: HttpClientResponse.HttpClientResponse,
   after: Acceptance | undefined,
+  own: Acceptance | undefined,
 ) {
   const text = lossyDecoder.decode(
     yield* readBytes(response).pipe(Effect.orElseSucceed(() => new Uint8Array())),
@@ -224,7 +225,11 @@ const statusError = Effect.fnUntraced(function* (
       : entitlement !== undefined
         ? undefined
         : (statusHint(operationId, response.status) ??
-          (after === undefined ? undefined : inspectSuggestion(after))),
+          (after === undefined
+            ? response.status >= 500 && own !== undefined
+              ? `The request may have reached the API. ${inspectSuggestion(own)}`
+              : undefined
+            : inspectSuggestion(after))),
     ...(entitlement === undefined ? {} : { entitlement }),
   });
 });
@@ -268,7 +273,7 @@ export const sendApiRequest = Effect.fnUntraced(function* (
       ),
     );
   if (response.status < 200 || response.status >= 300) {
-    return yield* statusError(entry.operationId, response, after);
+    return yield* statusError(entry.operationId, response, after, acceptance);
   }
   const bytes = yield* readBytes(response).pipe(
     Effect.catchTag("HttpClientError", (error) =>
@@ -544,9 +549,14 @@ export const waitForOperation = Effect.fn("api-command.wait")(function* (input: 
     Effect.andThen(sendApiRequest(input.api, readEntry, decoded, { after })),
     Effect.flatMap((response) => {
       const read = readPoll(wait, response);
-      return Ref.set(lastStatus, read.status ?? null).pipe(
-        Effect.andThen(classify(wait, read, suggestion, after)),
-        Effect.tap(() => input.onPoll?.(read.status) ?? Effect.void),
+      return Ref.getAndSet(lastStatus, read.status ?? null).pipe(
+        Effect.flatMap((previous) =>
+          classify(wait, read, suggestion, after).pipe(
+            Effect.tap(() =>
+              previous === read.status ? Effect.void : (input.onPoll?.(read.status) ?? Effect.void),
+            ),
+          ),
+        ),
       );
     }),
     Effect.withTracerEnabled(false),

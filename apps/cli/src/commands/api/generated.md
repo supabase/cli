@@ -276,7 +276,7 @@ Partition new files by event day and sort within files; preserve historical file
 supabase warehouse tables layout update <table-id> --partition-by '[{"column":"event_at","transform":{"kind":"day"}}]' --sort-by '{"kind":"columns","columns":[{"name":"tenant_id","direction":"asc"},{"name":"event_at","direction":"desc","nulls":"last"}]}'
 ```
 
-Preview eight hash buckets locally without changing the Warehouse.
+Preview the request to partition by eight hash buckets without sending it.
 
 ```sh
 supabase warehouse tables layout update <table-id> --partition-by '[{"column":"tenant_id","transform":{"kind":"bucket","count":8}}]' --dry-run

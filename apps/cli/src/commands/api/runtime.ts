@@ -120,9 +120,12 @@ const flagConfig = (entry: ApiCommandEntry, waitable: boolean) => ({
           Flag.withDescription("Wait until the operation reaches a final status."),
           Flag.withDefault(false),
         ),
-        timeout: Flag.String("timeout").pipe(
-          Flag.withDescription("How long --wait polls, as a duration such as 90s or 10m."),
-          Flag.withDefault(DEFAULT_WAIT_TIMEOUT),
+        timeout: Flag.optional(
+          Flag.String("timeout").pipe(
+            Flag.withDescription(
+              `How long --wait polls, as a duration such as 90s or 10m (default: ${DEFAULT_WAIT_TIMEOUT}).`,
+            ),
+          ),
         ),
       }),
   api: Object.fromEntries(
@@ -180,7 +183,7 @@ interface ApiCommandFlags {
   readonly file?: Option.Option<string>;
   readonly dryRun: boolean;
   readonly wait?: boolean;
-  readonly timeout?: string;
+  readonly timeout?: Option.Option<string>;
   readonly api: Parameters<typeof assembleInput>[2];
 }
 
@@ -203,11 +206,19 @@ const handle = Effect.fn("api-command.run")(function* (
         message: unsupportedOutputFlagMessage(entry.command.join(" ")),
       });
     }
-    const timeoutMillis =
-      flags.timeout === undefined ? 0 : yield* parseTimeoutMillis(flags.timeout);
+    const waiting = resolved !== undefined && flags.wait === true;
+    const timeout = flags.timeout ?? Option.none();
+    if (!waiting && Option.isSome(timeout)) {
+      return yield* new ApiCommandUsageError({
+        message: "--timeout only applies with --wait.",
+        suggestion: "Add --wait, or drop --timeout.",
+      });
+    }
+    const timeoutMillis = waiting
+      ? yield* parseTimeoutMillis(Option.getOrElse(timeout, () => DEFAULT_WAIT_TIMEOUT))
+      : 0;
     const ref = yield* resolveProjectTarget(flags);
     yield* Effect.gen(function* () {
-      const waiting = resolved !== undefined && flags.wait === true;
       const override = yield* readBodyOverride({
         body: flags.body ?? Option.none(),
         file: flags.file ?? Option.none(),

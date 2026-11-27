@@ -474,6 +474,21 @@ describe("generated warehouse commands", () => {
         expect(sent).toHaveLength(1);
       });
     });
+
+    it.effect("points an unexplained 5xx on a mutation at the status command", () => {
+      const { sent, run } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({ status: 502, bytes: encodeBytes("<html>Bad Gateway</html>") }),
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandStatusError);
+        expect(failure).toMatchObject({
+          suggestion: `The request may have reached the API. Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
+        });
+        expect(sent).toHaveLength(1);
+      });
+    });
   });
 
   describe("warehouse replication restart", () => {
@@ -624,12 +639,18 @@ describe("generated warehouse commands", () => {
       });
     });
 
-    it.effect("fails a success body with invalid UTF-8 as json instead of writing it", () => {
+    it.effect.each([
+      {
+        name: "invalid UTF-8",
+        bytes: Uint8Array.of(...encodeBytes('{"data":"'), 0xff, 0x22, 0x7d),
+      },
+      {
+        name: "a leading BOM",
+        bytes: Uint8Array.of(0xef, 0xbb, 0xbf, ...encodeBytes('{"data":1}')),
+      },
+    ])("fails a success body with $name as json instead of writing it", ({ bytes }) => {
       const { out, run } = setup(["warehouse", "status", "--output-format", "json"], {
-        route: () => ({
-          status: 200,
-          bytes: Uint8Array.of(...encodeBytes('{"data":"'), 0xff, 0x22, 0x7d),
-        }),
+        route: () => ({ status: 200, bytes }),
         outputFormat: "json",
       });
       return Effect.gen(function* () {
@@ -1397,14 +1418,21 @@ describe("generated warehouse commands", () => {
 
     it.effect("rejects a non-boolean reset before making a hosted request", () => {
       const reset = {
-        data: { type: "warehouse_table_layout", attributes: { reset_table: "true" } },
+        data: {
+          type: "warehouse_table_layout",
+          attributes: { sort_by: null, reset_table: "true" },
+        },
       };
       const { sent, run } = setup([...argv, "--body", encodeJson(reset)], {
         yes: true,
         route: accepted,
       });
       return Effect.gen(function* () {
-        expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(ApiCommandUsageError);
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandUsageError);
+        expect(failure).toMatchObject({
+          message: expect.stringContaining("--reset-table: Expected boolean"),
+        });
         expect(sent).toEqual([]);
       });
     });
@@ -1676,22 +1704,6 @@ describe("generated warehouse commands", () => {
   });
 
   describe("warehouse enable request", () => {
-    it.effect("sends only the schema when no other flag is given", () => {
-      const { sent, run } = setup(["warehouse", "enable", "--schema", "public"], {
-        yes: true,
-        route: accepted,
-      });
-      return Effect.gen(function* () {
-        yield* run;
-        expect(sent.map((request) => `${request.method} ${request.path}`)).toEqual([
-          `POST ${ENABLE_PATH}`,
-        ]);
-        expect(bodiesOf(sent)).toEqual([
-          { data: { type: "warehouse_setup", attributes: { schema: "public" } } },
-        ]);
-      });
-    });
-
     it.effect("maps a repeated --table to tables and keeps a false boolean", () => {
       const { sent, run } = setup(
         [
@@ -2588,16 +2600,26 @@ describe("generated warehouse commands", () => {
       },
     );
 
-    it.effect.each([
-      {
-        name: "with --wait",
-        argv: ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "soon"],
-      },
-      { name: "without --wait", argv: ["warehouse", "disable", "--timeout", "soon"] },
-    ])("rejects an invalid --timeout $name before sending anything", ({ argv }) => {
-      const { sent, run } = setup(argv, { yes: true, route: accepted });
+    it.effect("rejects an invalid --timeout with --wait before sending anything", () => {
+      const { sent, run } = setup(
+        ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "soon"],
+        { yes: true, route: accepted },
+      );
       return Effect.gen(function* () {
         expect(failureOf(yield* Effect.exit(run))).toBeInstanceOf(ApiCommandUsageError);
+        expect(sent).toEqual([]);
+      });
+    });
+
+    it.effect("rejects a valid --timeout without --wait before sending anything", () => {
+      const { sent, run } = setup(["warehouse", "disable", "--timeout", "90s"], {
+        yes: true,
+        route: accepted,
+      });
+      return Effect.gen(function* () {
+        const failure = failureOf(yield* Effect.exit(run));
+        expect(failure).toBeInstanceOf(ApiCommandUsageError);
+        expect(failure).toMatchObject({ message: "--timeout only applies with --wait." });
         expect(sent).toEqual([]);
       });
     });
@@ -2779,12 +2801,13 @@ describe("generated warehouse commands", () => {
     });
 
     it.effect(
-      "prints the accepted response as text and tracks the wait in one polling task",
+      "prints the accepted response as text and reports each distinct polled status once in one polling task",
       () => {
         const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
           yes: true,
           stdoutIsTty: true,
           route: enableThenPoll([
+            { status: 200, body: statusBody("running") },
             { status: 200, body: statusBody("running") },
             { status: 200, body: statusBody("succeeded") },
           ]),
@@ -2862,8 +2885,16 @@ describe("generated warehouse commands", () => {
         const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
         yield* TestClock.adjust("2 seconds").pipe(
           Effect.andThen(Effect.yieldNow),
-          Effect.repeat({ until: () => out.progressEvents.some((e) => e.type === "message") }),
+          Effect.repeat({
+            until: () =>
+              out.progressEvents.some((e) => e.type === "message") ||
+              fiber.pollUnsafe() !== undefined,
+          }),
         );
+        const finished = fiber.pollUnsafe();
+        if (finished !== undefined) {
+          return yield* Effect.die(`the run ended before its first poll: ${String(finished)}`);
+        }
         yield* Fiber.interrupt(fiber);
         expect(out.stdoutText).toBe("");
         expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "cancel" }]);
