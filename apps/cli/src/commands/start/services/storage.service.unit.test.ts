@@ -56,7 +56,8 @@ describe("buildStorageEnv", () => {
 
   test("converts file_size_limit from a human-readable string to a byte count", () => {
     const env = buildStorageEnv({ ...baseEnvInput, fileSizeLimit: "5MiB" });
-    expect(env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+    expect(env["UPLOAD_FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+    expect(env).not.toHaveProperty("FILE_SIZE_LIMIT");
   });
 
   test("sets the remaining static env values", () => {
@@ -68,7 +69,6 @@ describe("buildStorageEnv", () => {
       GLOBAL_S3_BUCKET: "stub",
       TUS_URL_PATH: "/storage/v1/upload/resumable",
       S3_PROTOCOL_PREFIX: "/storage/v1",
-      UPLOAD_FILE_SIZE_LIMIT: "52428800000",
       UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
       SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
     });

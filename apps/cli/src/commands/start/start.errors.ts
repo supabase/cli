@@ -45,6 +45,17 @@ export class StartInvalidConfigError extends Data.TaggedError("StartInvalidConfi
   }
 }
 
+/** A configured bucket's `file_size_limit` exceeds the global `storage.file_size_limit`. */
+export class StartBucketFileSizeLimitError extends Data.TaggedError(
+  "StartBucketFileSizeLimitError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
 /** Studio is enabled and `<workdir>/supabase/snippets` could not be created before bring-up. */
 export class StartSnippetsDirectoryError extends Data.TaggedError("StartSnippetsDirectoryError")<{
   readonly message: string;

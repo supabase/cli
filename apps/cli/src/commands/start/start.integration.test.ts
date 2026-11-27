@@ -5531,7 +5531,8 @@ content_path = "./supabase/templates/custom_notice.html"
               (s) =>
                 s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
             );
-            expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            expect(storageCreate?.env["UPLOAD_FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            expect(storageCreate?.env).not.toHaveProperty("FILE_SIZE_LIMIT");
 
             // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
             const migrateJobs = child.spawned.filter(
@@ -5540,6 +5541,33 @@ content_path = "./supabase/templates/custom_notice.html"
             expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
           }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
         ).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
+
+  describe("bucket file_size_limit above storage.file_size_limit", () => {
+    it.effect("fails before any container work and names every offending bucket", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[storage]\nfile_size_limit = "50MiB"\n[storage.buckets.videos]\nfile_size_limit = "100MiB"\n[storage.buckets.photos]\nfile_size_limit = "1GiB"\n[storage.buckets.avatars]\nfile_size_limit = "1MiB"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartBucketFileSizeLimitError");
+          expect(serialized).toContain(
+            "storage.buckets.videos.file_size_limit (100MiB) exceeds storage.file_size_limit (50MiB).",
+          );
+          expect(serialized).toContain(
+            "storage.buckets.photos.file_size_limit (1GiB) exceeds storage.file_size_limit (50MiB).",
+          );
+          expect(serialized).not.toContain("storage.buckets.avatars");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
     );
   });
 
