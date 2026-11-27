@@ -1214,6 +1214,27 @@ describe("deriveApiCommands", () => {
           },
         },
       ],
+      [
+        "a nullable response",
+        {
+          type: "object",
+          nullable: true,
+          required: ["data"],
+          properties: {
+            data: {
+              type: "object",
+              required: ["attributes"],
+              properties: {
+                attributes: {
+                  type: "object",
+                  required: ["status"],
+                  properties: { status: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      ],
     ])("rejects a poll status read from %s", (_label, schema) => {
       const result = deriveHidden({
         "create-thing": changeThing(link({})),

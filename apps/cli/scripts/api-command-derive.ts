@@ -400,6 +400,7 @@ const resolvePointer = (spec: JsonObject, root: unknown, pointer: string): unkno
 const pointerAlwaysPresent = (spec: JsonObject, root: unknown, pointer: string): boolean => {
   if (!pointer.startsWith("/")) return false;
   let current = resolve(spec, root);
+  if (asRecord(current)?.nullable === true) return false;
   for (const segment of pointerSegments(pointer)) {
     const node = asRecord(current);
     const property = asRecord(node?.properties)?.[segment];
