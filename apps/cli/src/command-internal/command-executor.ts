@@ -6,6 +6,7 @@ import {
   flow,
   Layer,
   Option,
+  Path,
   Ref,
   Schema,
   Scope,
@@ -13,6 +14,7 @@ import {
 } from "effect";
 import { Command } from "effect/cli";
 
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { TerminalResponse } from "../shared/cli/terminal-response.service.ts";
 import { failureBesideClosedStdout, ignoreStdoutClosed } from "../shared/output/errors.ts";
 import { withJsonErrorHandling } from "../shared/output/json-error-handling.ts";
@@ -35,6 +37,7 @@ interface CommandUXShape {
     operation: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
   readonly message: (message: string) => Effect.Effect<void>;
+  readonly stdoutLine: (message: string) => Effect.Effect<void>;
 }
 
 export class CommandUX extends Context.Service<CommandUX, CommandUXShape>()("supabase/CommandUX") {}
@@ -47,14 +50,35 @@ export class ResolvedProject extends Context.Service<
   }
 >()("supabase/ResolvedProject") {}
 
+interface ResultReadyContext {
+  readonly ux: Pick<CommandUXShape, "stdoutLine">;
+  readonly relativeToWorkdir: (path: string) => string;
+}
+
+/**
+ * Hooks let commands react to named events while the executor owns their order.
+ * Add a hook when a command needs to act at a distinct point in its lifecycle,
+ * for example after result delivery or when the invocation ends.
+ */
+interface ManagedHooks<A> {
+  /**
+   * Runs once in every output mode after the handler returns and required cleanup succeeds.
+   * Failure or interruption before that point skips the hook.
+   * The executor waits for the hook to succeed before encoding or writing a machine result.
+   */
+  readonly onResultReady?: (result: A, context: ResultReadyContext) => Effect.Effect<void>;
+}
+
 type ResultSchema = Schema.Codec<unknown, unknown>;
 interface Declaration<Flags, S extends ResultSchema, E, R> {
   readonly output: S;
+  readonly hooks?: ManagedHooks<NoInfer<S["Type"]>>;
   readonly handler: (flags: Flags) => Effect.Effect<NoInfer<S["Type"]>, E, R>;
 }
 
 interface LegacyDeclaration<Flags, E, R> {
   readonly output?: never;
+  readonly hooks?: never;
   readonly handler: (flags: Flags) => Effect.Effect<unknown, E, R>;
 }
 
@@ -64,6 +88,8 @@ type ExecutionDeclaration<Flags, S extends ResultSchema, E, R> =
 
 type ExecutionServices =
   | Output
+  | CommandSettings
+  | Path.Path
   | LinkedProjectCache
   | TelemetryState
   | Analytics
@@ -114,6 +140,7 @@ const commandUX = (output: Output["Service"]): CommandUXShape => ({
             ),
         ),
   message: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`, "stderr")),
+  stdoutLine: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`)),
 });
 
 const bestEffort = (effect: Effect.Effect<void>) => effect.pipe(Effect.ignoreCause);
@@ -132,8 +159,9 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     const cache = yield* LinkedProjectCache;
     const telemetry = yield* TelemetryState;
     const resolvedProject = yield* Ref.make(Option.none<string | undefined>());
+    const ux = commandUX(output);
     const execute = Effect.suspend(() => declaration.handler(flags)).pipe(
-      Effect.provideService(CommandUX, commandUX(output)),
+      Effect.provideService(CommandUX, ux),
       Effect.provideService(ResolvedProject, {
         record: (ref) => Ref.set(resolvedProject, Option.some(ref)),
       }),
@@ -182,6 +210,15 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
     const exit = yield* Effect.gen(function* () {
       // Keep handler finalizers inside the services' lifetime, and own release before delivery.
       const result = yield* execute.pipe(Scope.use(requiredScope));
+      const onResultReady = declaration.hooks?.onResultReady;
+      if (onResultReady) {
+        const { workdir } = yield* CommandSettings;
+        const path = yield* Path.Path;
+        yield* onResultReady(result, {
+          ux: { stdoutLine: ux.stdoutLine },
+          relativeToWorkdir: (target) => path.relative(workdir, target),
+        });
+      }
       if (isMachine(output)) {
         const encoded = yield* Schema.encodeEffect(declaration.output)(result).pipe(Effect.orDie);
         yield* writeTerminal(() => output.result(encoded));

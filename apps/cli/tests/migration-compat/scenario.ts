@@ -19,6 +19,8 @@ export interface ScenarioCase {
   readonly format: MachineFormat;
   readonly exitCode: number;
   readonly routes: Readonly<Record<string, Route>>;
+  readonly args?: readonly string[];
+  readonly normalizeStdout?: (stdout: string, workdir: string, path: Path.Path) => string;
 }
 
 export interface Scenario {
@@ -30,7 +32,8 @@ export interface Scenario {
 export const runCase = Effect.fn("MigrationCompat.runCase")(
   function* (binary: string, scenario: Scenario, testCase: ScenarioCase) {
     const fs = yield* FileSystem.FileSystem;
-    const { join } = yield* Path.Path;
+    const path = yield* Path.Path;
+    const { join } = path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "migration-compat-home-" });
     const requests: string[] = [];
@@ -61,9 +64,15 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
       profile,
       `name: migration-compat\napi_url: ${origin}\ndashboard_url: ${origin}\nproject_host: example.invalid\n`,
     );
+    const workdir = scenario.argv.includes("<workdir>") ? join(home, "workspace") : home;
+    if (workdir !== home) yield* fs.makeDirectory(workdir);
     const command = ChildProcess.make(
       binary,
-      scenario.argv.map((arg) => (arg === "<format>" ? testCase.format : arg)),
+      [...scenario.argv, ...(testCase.args ?? [])].map((arg) => {
+        if (arg === "<format>") return testCase.format;
+        if (arg === "<workdir>") return workdir;
+        return arg;
+      }),
       {
         cwd: home,
         stdin: "ignore",
@@ -107,15 +116,18 @@ export const runCase = Effect.fn("MigrationCompat.runCase")(
           `stdout: ${stdout}\nstderr: ${stderr}`,
       });
     }
-    yield* Effect.try({
-      try: () => normalizeStdout(testCase.format, stdout),
+    const comparableStdout = yield* Effect.try({
+      try: () => {
+        normalizeStdout(testCase.format, stdout);
+        return testCase.normalizeStdout?.(stdout, workdir, path) ?? stdout;
+      },
       catch: (cause) =>
         new ScenarioError({
           message: `${scenario.name}/${testCase.name}: invalid stdout: ${stdout}\nstderr: ${stderr}`,
           cause,
         }),
     });
-    return { exitCode, stdout, stderr, requests } satisfies MachineOutput;
+    return { exitCode, stdout: comparableStdout, stderr, requests } satisfies MachineOutput;
   },
   Effect.scoped,
   Effect.timeout("30 seconds"),

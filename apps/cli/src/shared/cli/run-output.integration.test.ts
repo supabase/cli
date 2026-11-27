@@ -17,6 +17,7 @@ import { vi } from "vitest";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
+  mockCommandSettings,
   mockLinkedProjectCacheLayer,
   mockTelemetryStateLayer,
   useTempWorkdir,
@@ -112,6 +113,7 @@ const runCommand = (options: {
         writer,
         commandExecutorLayer,
         mockLinkedProjectCacheLayer,
+        mockCommandSettings({ workdir: home.current }),
         mockTelemetryStateLayer,
         commandRuntimeLayer(["test"]),
       ),

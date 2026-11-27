@@ -47,6 +47,15 @@ it("requires explicit and exclusive result ownership", () => {
   withManagedHandler({ handler, runtime });
   // @ts-expect-error Legacy declarations cannot supply an output schema.
   withLegacyOutputHandler({ handler, runtime, output });
+  // @ts-expect-error Legacy declarations cannot supply hooks.
+  withLegacyOutputHandler({ handler, runtime, hooks: { onResultReady: () => Effect.void } });
+  withManagedHandler({
+    output,
+    handler,
+    runtime,
+    // @ts-expect-error Hook effects cannot ask for operation services.
+    hooks: { onResultReady: () => Effect.asVoid(ResolvedProject) },
+  });
 });
 
 it.effect("keeps legacy bytes and waits for scoped release on interruption", () => {
@@ -178,46 +187,122 @@ it.effect.each(["interrupt", "defect"] as const)("clears a text task once on %s"
   );
 });
 
-it.effect("waits for required finalization before delivering the result", () => {
-  const out = mockOutput({ format: "json" });
-  return Effect.gen(function* () {
-    const releaseStarted = yield* Deferred.make<void>();
-    const allowRelease = yield* Deferred.make<void>();
-    const fiber = yield* run(() =>
-      Effect.gen(function* () {
-        yield* Effect.addFinalizer(() =>
+it.effect.each(["text", "json", "stream-json"] as const)(
+  "awaits required release and the result-ready hook in %s",
+  (format) => {
+    const out = mockOutput({ format });
+    let hookCalls = 0;
+    return Effect.gen(function* () {
+      const releaseStarted = yield* Deferred.make<void>();
+      const allowRelease = yield* Deferred.make<void>();
+      const hookStarted = yield* Deferred.make<void>();
+      const allowHook = yield* Deferred.make<void>();
+      const required = Layer.effectDiscard(
+        Effect.addFinalizer(() =>
           Deferred.succeed(releaseStarted, undefined).pipe(
             Effect.andThen(Deferred.await(allowRelease)),
           ),
+        ),
+      );
+      const fiber = yield* CommandExecutor.use((executor) =>
+        executor.run(
+          {
+            owner: "executor",
+            output,
+            handler: () =>
+              CommandUX.use((ux) => ux.message("Working").pipe(Effect.as({ value: "result" }))),
+            hooks: {
+              onResultReady: ({ value }, { ux }) =>
+                Effect.gen(function* () {
+                  hookCalls++;
+                  yield* Deferred.succeed(hookStarted, undefined);
+                  yield* Deferred.await(allowHook);
+                  yield* ux.stdoutLine(`Ready: ${value}`);
+                }),
+            },
+          },
+          {},
+          required,
+        ),
+      ).pipe(Effect.forkChild);
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(releaseStarted);
+        expect(out.stderrText).toBe(format === "text" ? "Working\n" : "");
+        expect(out.stdoutText).toBe("");
+        expect(out.events).toEqual([]);
+        expect(hookCalls).toBe(0);
+        yield* Deferred.succeed(allowRelease, undefined);
+        yield* Deferred.await(hookStarted);
+        expect(out.stdoutText).toBe("");
+        expect(out.events).toEqual([]);
+        yield* Deferred.succeed(allowHook, undefined);
+        yield* Fiber.join(fiber);
+        expect(hookCalls).toBe(1);
+        expect(out.stdoutText).toBe(
+          format === "text" ? "Ready: result\n" : format === "json" ? '{"value":"result"}\n' : "",
         );
-        return { value: "result" };
-      }),
-    ).pipe(Effect.forkChild);
-    yield* Effect.gen(function* () {
-      yield* Deferred.await(releaseStarted);
-      expect(out.stdoutText).toBe("");
-      yield* Deferred.succeed(allowRelease, undefined);
-      yield* Fiber.join(fiber);
-      expect(out.stdoutText).toBe('{"value":"result"}\n');
-    }).pipe(Effect.ensuring(Deferred.succeed(allowRelease, undefined)));
-  }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
-});
+        expect(out.events).toEqual(
+          format === "stream-json"
+            ? [{ type: "result", data: { value: "result" }, timestamp: expect.any(String) }]
+            : [],
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.all([
+            Deferred.succeed(allowRelease, undefined),
+            Deferred.succeed(allowHook, undefined),
+          ]),
+        ),
+      );
+    }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
+  },
+);
 
-it.effect("propagates a cleanup defect without attempting machine output", () => {
-  const out = mockOutput({ format: "json" });
-  const defect = new Error("release failed");
-  return Effect.gen(function* () {
-    const exit = yield* run(() =>
-      Effect.gen(function* () {
-        yield* Effect.addFinalizer(() => Effect.die(defect));
-        return { value: "result" };
-      }),
-    ).pipe(Effect.exit);
-    expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
-    expect(out.stdoutText).toBe("");
-    expect(out.failures).toEqual([]);
-  }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
-});
+it.effect.each(["handler failure", "release defect", "interruption", "hook failure"] as const)(
+  "does not deliver a success result on %s",
+  (outcome) => {
+    const out = mockOutput({ format: "json" });
+    const error = new Error(outcome);
+    let hookCalls = 0;
+    const required =
+      outcome === "release defect"
+        ? Layer.effectDiscard(Effect.addFinalizer(() => Effect.die(error)))
+        : Layer.empty;
+    return Effect.gen(function* () {
+      const exit = yield* CommandExecutor.use((executor) =>
+        executor.run(
+          {
+            owner: "executor",
+            output,
+            handler: () =>
+              outcome === "handler failure"
+                ? Effect.fail(error)
+                : outcome === "interruption"
+                  ? Effect.interrupt
+                  : Effect.succeed({ value: "result" }),
+            hooks: {
+              onResultReady: () =>
+                Effect.sync(() => {
+                  hookCalls++;
+                  throw error;
+                }),
+            },
+          },
+          {},
+          required,
+        ),
+      ).pipe(Effect.exit);
+      if (outcome === "interruption") {
+        expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      } else {
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(error);
+      }
+      expect(hookCalls).toBe(outcome === "hook failure" ? 1 : 0);
+      expect(out.stdoutText).toBe("");
+      expect(out.failures).toHaveLength(outcome === "handler failure" ? 1 : 0);
+    }).pipe(Effect.provide(runtime.pipe(Layer.provideMerge(collaborators(out)))));
+  },
+);
 
 it.effect.each(["cache", "flush"] as const)(
   "delivers one result before optional %s fails",
