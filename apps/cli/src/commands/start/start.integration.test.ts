@@ -5537,7 +5537,7 @@ content_path = "./supabase/templates/custom_notice.html"
             const migrateJobs = child.spawned.filter(
               (s) => s.args[0] === "run" && s.args[1] === "--rm",
             );
-            expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+            expect(migrateJobs[1]?.env["UPLOAD_FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
           }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
         ).pipe(Effect.provide(BunServices.layer)),
     );

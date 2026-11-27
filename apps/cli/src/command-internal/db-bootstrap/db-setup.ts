@@ -446,15 +446,16 @@ function startStorageMigrateEnv(input: {
     DB_MIGRATIONS_FREEZE_AT: input.targetMigration,
     ANON_KEY: input.anonKey,
     SERVICE_KEY: input.serviceRoleKey,
-    PGRST_JWT_SECRET: input.jwtSecret,
+    AUTH_JWT_SECRET: input.jwtSecret,
     DATABASE_URL: startInternalDbUrl("supabase_storage_admin", input.dbHost, input.dbPassword),
-    FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
+    UPLOAD_FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
     STORAGE_FILE_BACKEND_PATH: "/mnt",
     TENANT_ID: "stub",
     // TODO: https://github.com/supabase/storage-api/issues/55
-    REGION: "stub",
-    GLOBAL_S3_BUCKET: "stub",
+    SERVER_REGION: "stub",
+    STORAGE_S3_REGION: "stub",
+    STORAGE_S3_BUCKET: "stub",
   };
 }
 

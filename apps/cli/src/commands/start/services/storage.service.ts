@@ -16,7 +16,7 @@ import {
 import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
-/** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
+/** Both the container's `STORAGE_FILE_BACKEND_PATH` and its named-volume mount target. */
 const STORAGE_DOCKER_PATH = "/mnt";
 
 export interface StorageVectorEnvInput {
@@ -106,13 +106,11 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
     DATABASE_URL: startInternalDbUrl("supabase_storage_admin", input.dbHost, input.dbPassword),
     FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
-    FILE_STORAGE_BACKEND_PATH: STORAGE_DOCKER_PATH,
+    STORAGE_FILE_BACKEND_PATH: STORAGE_DOCKER_PATH,
     TENANT_ID: "stub",
     // TODO: https://github.com/supabase/storage-api/issues/55
     STORAGE_S3_REGION: input.s3Region,
-    GLOBAL_S3_BUCKET: "stub",
-    ENABLE_IMAGE_TRANSFORMATION: String(input.imageTransformationEnabled),
-    // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION (v1.72+).
+    STORAGE_S3_BUCKET: "stub",
     IMAGE_TRANSFORMATION_ENABLED: String(input.imageTransformationEnabled),
     IMGPROXY_URL: `http://${input.imgproxyHost}:5001`,
     TUS_URL_PATH: "/storage/v1/upload/resumable",
@@ -122,7 +120,7 @@ export function buildStorageEnv(input: StorageEnvInput): Record<string, string> 
     S3_PROTOCOL_PREFIX: "/storage/v1",
     UPLOAD_FILE_SIZE_LIMIT: "52428800000",
     UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
-    SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
+    UPLOAD_SIGNED_URL_EXPIRATION_TIME: "7200",
   };
 
   return input.vectorBucketsEnabled
