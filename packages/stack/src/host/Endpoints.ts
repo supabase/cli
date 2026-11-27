@@ -194,9 +194,16 @@ export const joinRoutes = (
   if (name !== "http") return undefined;
   switch (creation.service) {
     case "studio":
-      return [{ prefix: "/mcp", upstreamPrefix: "/api/mcp", forwardedPrefix: "/mcp" }];
+      return [
+        {
+          prefix: "/mcp",
+          upstreamPrefix: "/api/mcp",
+          forwardedPrefix: "/mcp",
+          localOriginOnly: true,
+        },
+      ];
     case "pgmeta":
-      return [{ prefix: "/pg", upstreamPrefix: "/" }];
+      return [{ prefix: "/pg", upstreamPrefix: "/", localOriginOnly: true }];
     case "analytics":
       return [{ prefix: "/analytics/v1", upstreamPrefix: "/" }];
     case "pooler":
@@ -212,6 +219,28 @@ export const joinRoutes = (
  */
 export const freshWrites = (creation: EndpointIntents, name: string): boolean =>
   creation.service === "studio" && name === "http";
+
+/**
+ * A dedicated HTTP listener's routes when they differ from the default catch-all: unauthenticated
+ * admin APIs refuse cross-site browsers and leave CORS to the service, like a container port map.
+ */
+export const dedicatedRoutes = (
+  creation: EndpointIntents,
+  name: string,
+): NetworkEndpoint["dedicated"] => {
+  if (name !== "http") return undefined;
+  switch (creation.service) {
+    case "pgmeta":
+      return [{ prefix: "/", upstreamCors: true, localOriginOnly: true }];
+    case "studio":
+      return [
+        { prefix: "/api/mcp", upstreamCors: true, localOriginOnly: true },
+        { prefix: "/", upstreamCors: true },
+      ];
+    default:
+      return undefined;
+  }
+};
 
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
 export const backendAddress = (endpoint: ServiceEndpoint): BackendAddress =>

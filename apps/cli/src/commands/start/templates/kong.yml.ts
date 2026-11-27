@@ -1,3 +1,41 @@
+/** Refuses cross-site and DNS-rebound browser requests on unauthenticated admin services. */
+const LOCAL_ORIGIN_GUARD = `      - name: pre-function
+        config:
+          access:
+            - |
+              local function loopback(host)
+                host = host and host:lower():gsub("%.$", "")
+                return host == "localhost" or host == "[::1]" or (host ~= nil and (host:sub(-10) == ".localhost" or host:match("^127%.%d+%.%d+%.%d+$") ~= nil))
+              end
+              local origin = kong.request.get_header("origin")
+              local refused = false
+              if origin then
+                local value = origin:lower()
+                refused = not loopback(value:match("^%a[%w+.-]*://(%[[^%]]+%])") or value:match("^%a[%w+.-]*://([^/:]+)"))
+              end
+              local fetch_site = kong.request.get_header("sec-fetch-site")
+              if not origin and fetch_site == "cross-site" then
+                refused = true
+              end
+              if not refused and (origin or fetch_site) then
+                local host = kong.request.get_host()
+                refused = not (loopback(host) or host:match("^%d+%.%d+%.%d+%.%d+$") or host:find(":", 1, true))
+              end
+              if refused then
+                kong.ctx.shared.local_origin_refused = true
+                return kong.response.exit(403, { message = "Forbidden" })
+              end
+      - name: post-function
+        config:
+          header_filter:
+            - |
+              if kong.ctx.shared.local_origin_refused then
+                for _, name in ipairs({ "Allow-Origin", "Allow-Credentials", "Allow-Methods", "Allow-Headers", "Expose-Headers", "Max-Age" }) do
+                  kong.response.clear_header("Access-Control-" .. name)
+                end
+              end
+`;
+
 /**
  * Canonical `kong.yml` template; do not hand-edit. Also reused directly (not re-transcribed) by
  * `shared/functions/serve-main-offline.e2e.test.ts`'s offline Kong fixture.
@@ -215,7 +253,7 @@ services:
           - /pg/
     plugins:
       - name: cors
-  - name: analytics-v1
+${LOCAL_ORIGIN_GUARD}  - name: analytics-v1
     _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
     url: http://{{ .LogflareId }}:4000/
     routes:
@@ -246,4 +284,4 @@ services:
           - /mcp
     plugins:
       - name: cors
-`;
+${LOCAL_ORIGIN_GUARD}`;

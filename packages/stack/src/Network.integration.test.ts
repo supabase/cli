@@ -18,14 +18,20 @@ import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import * as Tls from "node:tls";
 import { createServer, type RequestListener } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { HttpBody, HttpClient } from "effect/http";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { API_TLS_CHECK_PATH, type HttpAccess, type HttpAccessSink } from "./HttpProxy.ts";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import { emailTemplateFile, freshWrites, joinRoutes, sharedRoutes } from "./host/Endpoints.ts";
+import {
+  emailTemplateFile,
+  freshWrites,
+  joinRoutes,
+  sharedRoutes,
+  dedicatedRoutes,
+} from "./host/Endpoints.ts";
 import { readResolvedFile } from "./namespace/drivers/FileSystem.ts";
 import type { ServiceCreation } from "./services/Catalog.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -743,6 +749,69 @@ it.live("keeps a dedicated listener's client X-Forwarded headers without Kong's 
       );
       for (const name of ["x-forwarded-port", "x-forwarded-path", "x-forwarded-prefix"])
         expect(headers).not.toHaveProperty(name);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("guards Studio's and postgres-meta's dedicated admin routes while others keep CORS", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-dedicated-admin-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backendWith((incoming, response) => response.end(incoming.method));
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const client = yield* HttpClient.HttpClient;
+      const bound = (service: "pgmeta" | "studio" | "mail") =>
+        Effect.gen(function* () {
+          const dedicated = dedicatedRoutes({ service }, "http");
+          const namespace = yield* network.register({
+            id: service,
+            endpoints: {
+              http: {
+                ...endpoint(target, Effect.succeed(true)),
+                ...(dedicated === undefined ? {} : { dedicated }),
+              },
+            },
+          });
+          yield* namespace.bind;
+          return yield* namespace.address("http", "host");
+        });
+      const send = (
+        address: { readonly host: string; readonly port: number },
+        method: "OPTIONS" | "POST",
+        path: string,
+        origin = "https://evil.example",
+      ) =>
+        client.execute(
+          HttpClientRequest.make(method)(`http://${address.host}:${address.port}${path}`).pipe(
+            HttpClientRequest.setHeaders({ origin, "access-control-request-method": "POST" }),
+          ),
+        );
+
+      const pgmeta = yield* bound("pgmeta");
+      const studio = yield* bound("studio");
+      const mailpit = yield* bound("mail");
+      for (const method of ["OPTIONS", "POST"] as const) {
+        for (const [address, path] of [
+          [pgmeta, "/query"],
+          [studio, "/api/mcp"],
+        ] as const) {
+          const refused = yield* send(address, method, path);
+          expect(refused.status).toBe(403);
+          expect(refused.headers["access-control-allow-origin"]).toBeUndefined();
+        }
+        const studioPage = yield* send(studio, method, "/project/default");
+        expect(yield* studioPage.text).toBe(method);
+        expect(studioPage.headers["access-control-allow-origin"]).toBeUndefined();
+      }
+      expect(yield* (yield* send(pgmeta, "POST", "/query", "http://localhost:54323")).text).toBe(
+        "POST",
+      );
+      const preflight = yield* send(mailpit, "OPTIONS", "/api/v1/messages");
+      expect(preflight.status).toBe(200);
+      expect(preflight.headers["access-control-allow-origin"]).toBe("*");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

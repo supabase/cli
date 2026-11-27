@@ -14,7 +14,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
@@ -584,6 +584,48 @@ it.live(
       ),
     ),
   { timeout: 180_000 },
+);
+
+it.effect("refuses cross-site browser requests on postgres-meta's dedicated port", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-pgmeta-guard-" });
+      const stack = initial("owner-pgmeta-guard");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const service = yield* owner.rpc.createService({
+        service: "pgmeta",
+        pin: selection.pgmeta,
+        config: { databaseUrl: "postgresql://postgres:postgres@127.0.0.1:1/postgres" },
+        endpoints: { http: { port: "auto" } },
+      });
+      yield* owner.rpc.configureComposition({
+        members: [{ id: service.id, activation: "lazy", idleMillis: 30_000 }],
+        dependencies: [],
+      });
+      yield* owner.rpc.startComposition();
+      const { endpoints } = yield* owner.rpc.status({ id: service.id });
+      const http = endpoints.find(({ name }) => name === "http");
+      if (http === undefined) return yield* Effect.die("pgmeta has no HTTP endpoint");
+
+      const client = yield* HttpClient.HttpClient;
+      const response = yield* client.execute(
+        HttpClientRequest.post(`http://${http.host}:${http.port}/query`).pipe(
+          HttpClientRequest.setHeaders({ origin: "https://evil.example" }),
+        ),
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NodeHttpClient.layerNodeHttp),
+    ),
+  ),
 );
 
 it.live("isolates owner graphs built in one scope", () =>

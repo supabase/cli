@@ -41,6 +41,8 @@ export interface HttpRoute {
   readonly freshWrites?: boolean;
   /** Leaves CORS, preflights included, to the upstream, like Edge Functions on the platform. */
   readonly upstreamCors?: boolean;
+  /** Refuses browser requests from a non-loopback `Origin`, preflights included, for unauthenticated admin APIs. */
+  readonly localOriginOnly?: boolean;
 }
 
 /** Answers plain GET from this process, with no CORS headers or backend; `undefined` is a 404. */
@@ -326,6 +328,29 @@ const routeFor = (url: string, routes: ReadonlyArray<HttpRoute | HttpFileRoute>)
     (route) =>
       pathname === route.prefix || route.prefix === "/" || pathname.startsWith(`${route.prefix}/`),
   );
+};
+
+const LOOPBACK_HOST = /^(?:(?:[^.]+\.)*localhost|127(?:\.\d{1,3}){3}|\[::1\])$/u;
+
+const loopbackHost = (hostname: string) =>
+  LOOPBACK_HOST.test(hostname.toLowerCase().replace(/\.$/u, ""));
+
+/**
+ * Whether a request may reach a local-origin-only route: no browser signal, as from a server or
+ * CLI client, or a browser on a loopback origin whose `Host` is loopback or an IP literal, so a
+ * DNS-rebound name never passes.
+ */
+const localRequest = (request: IncomingMessage): boolean => {
+  const origin = request.headers.origin;
+  if (origin !== undefined && !(URL.canParse(origin) && loopbackHost(new URL(origin).hostname)))
+    return false;
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (origin === undefined && fetchSite === "cross-site") return false;
+  if (origin === undefined && fetchSite === undefined) return true;
+  const host = request.headers.host ?? "";
+  if (!URL.canParse(`http://${host}`)) return false;
+  const hostname = new URL(`http://${host}`).hostname;
+  return loopbackHost(hostname) || IP_LITERAL.test(hostname);
 };
 
 const corsMethods = "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS,TRACE,CONNECT";
@@ -981,7 +1006,9 @@ export const makeHttpProxy = (options: {
                 else yield* serveFile(request, response, sent, route);
                 return;
               }
-              if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
+              if (route?.localOriginOnly === true && !localRequest(request)) {
+                respond(response, sent, 403, "Forbidden");
+              } else if (request.method === "OPTIONS" && route?.upstreamCors !== true) {
                 setPreflightCors(response, request);
                 respond(response, sent, 200);
               } else if (route === undefined) {
@@ -1066,20 +1093,28 @@ export const makeHttpProxy = (options: {
                   socket.destroy();
                   return 404;
                 })
-              : yield* Effect.scoped(upgrade(request, socket, head, route, handshake)).pipe(
-                  Effect.as(502),
-                  Effect.tapError((cause) =>
-                    cause._tag === "HttpProxyDisconnected"
-                      ? Effect.void
-                      : Effect.logError(`Route ${route.id} upgrade failed`, cause),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.sync(() => {
-                      socket.destroy();
-                      return cause._tag === "HttpProxyDisconnected" ? 499 : 502;
-                    }),
-                  ),
-                );
+              : route.localOriginOnly === true && !localRequest(request)
+                ? yield* Effect.sync(() => {
+                    socket.end(
+                      "HTTP/1.1 403 Forbidden\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+                      () => socket.destroy(),
+                    );
+                    return 403;
+                  })
+                : yield* Effect.scoped(upgrade(request, socket, head, route, handshake)).pipe(
+                    Effect.as(502),
+                    Effect.tapError((cause) =>
+                      cause._tag === "HttpProxyDisconnected"
+                        ? Effect.void
+                        : Effect.logError(`Route ${route.id} upgrade failed`, cause),
+                    ),
+                    Effect.catch((cause) =>
+                      Effect.sync(() => {
+                        socket.destroy();
+                        return cause._tag === "HttpProxyDisconnected" ? 499 : 502;
+                      }),
+                    ),
+                  );
           yield* Deferred.succeed(handshake, outcome);
           if (recorded !== undefined) yield* Fiber.join(recorded);
         }),
