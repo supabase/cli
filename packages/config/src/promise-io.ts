@@ -292,8 +292,8 @@ async function openExclusiveTempFile(filePath: string, mode: number) {
   }
 }
 
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  const existingMode = await stat(filePath).then(
+async function modeOf(path: string): Promise<number | undefined> {
+  return stat(path).then(
     (info) => info.mode & 0o7777,
     (error: unknown) => {
       if (isNotFound(error)) {
@@ -302,15 +302,25 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
       throw error;
     },
   );
+}
+
+/** A new file takes the mode of `predecessor`, the config file it replaces, so a private config stays private across a format switch. */
+async function writeFileAtomic(
+  filePath: string,
+  content: string,
+  predecessor: string | undefined,
+): Promise<void> {
+  const inheritedMode =
+    (await modeOf(filePath)) ?? (predecessor === undefined ? undefined : await modeOf(predecessor));
   const { tmpPath, handle } = await openExclusiveTempFile(
     filePath,
-    existingMode ?? DEFAULT_FILE_MODE,
+    inheritedMode ?? DEFAULT_FILE_MODE,
   );
   try {
     try {
       await handle.writeFile(content);
-      if (existingMode !== undefined) {
-        await handle.chmod(existingMode);
+      if (inheritedMode !== undefined) {
+        await handle.chmod(inheritedMode);
       }
     } finally {
       await handle.close();
@@ -399,7 +409,10 @@ async function saveConfig(options: SaveCliConfigOptions): Promise<LoadedCliConfi
   }
 
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFileAtomic(filePath, content);
+  const predecessor = [jsonPath, jsoncPath, tomlPath].find(
+    (path, index) => path !== filePath && [jsonExists, jsoncExists, tomlExists][index],
+  );
+  await writeFileAtomic(filePath, content, predecessor);
   for (const otherPath of allPaths) {
     if (otherPath !== filePath && (await exists(otherPath))) {
       await rm(otherPath);

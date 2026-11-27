@@ -240,7 +240,7 @@ enabled = true
       new URL("../testdata/legacy-config.toml", import.meta.url),
       "utf8",
     );
-    await expectSameLoad(toml(legacy));
+    await expectSameLoad(toml(legacy), undefined, "success");
   });
 
   const invalid: ReadonlyArray<readonly [string, Files, LoadOptions?]> = [
@@ -832,7 +832,9 @@ describe("saveCliConfig parity", () => {
     expect(Object.keys(plainBefore)).toEqual(["config.toml"]);
   });
 
-  test("keeps the existing file mode", async () => {
+  const posixOnly = process.platform === "win32";
+
+  test.skipIf(posixOnly)("keeps the existing file mode", async () => {
     const [effectRoot, plainRoot] = await bothProjects(
       config("config.toml", 'project_id = "old"\n'),
     );
@@ -852,23 +854,41 @@ describe("saveCliConfig parity", () => {
     expect(modes).toEqual([0o600, 0o600]);
   });
 
-  test("keeps group-writable bits that the process umask would strip", async () => {
+  test.skipIf(posixOnly)(
+    "keeps group-writable bits that the process umask would strip",
+    async () => {
+      const plainRoot = await project(config("config.toml", 'project_id = "old"\n'));
+      const target = join(plainRoot, "supabase", "config.toml");
+      await chmod(target, 0o664);
+      const previousUmask = process.umask(0o022);
+
+      try {
+        await promiseIo.saveCliConfig({
+          cwd: plainRoot,
+          config: { project_id: "new" },
+          format: "toml",
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect((await stat(target)).mode & 0o777).toBe(0o664);
+    },
+  );
+
+  test.skipIf(posixOnly)("carries a private config's mode across a format switch", async () => {
     const plainRoot = await project(config("config.toml", 'project_id = "old"\n'));
-    const target = join(plainRoot, "supabase", "config.toml");
-    await chmod(target, 0o664);
-    const previousUmask = process.umask(0o022);
+    await chmod(join(plainRoot, "supabase", "config.toml"), 0o600);
 
-    try {
-      await promiseIo.saveCliConfig({
-        cwd: plainRoot,
-        config: { project_id: "new" },
-        format: "toml",
-      });
-    } finally {
-      process.umask(previousUmask);
-    }
+    const saved = await promiseIo.saveCliConfig({
+      cwd: plainRoot,
+      config: { project_id: "new" },
+      format: "json",
+    });
 
-    expect((await stat(target)).mode & 0o777).toBe(0o664);
+    expect(saved.path).toBe(join(plainRoot, "supabase", "config.json"));
+    expect((await stat(saved.path)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(plainRoot, "supabase"))).toEqual(["config.json"]);
   });
 
   test("refuses to save when json and jsonc both exist", async () => {

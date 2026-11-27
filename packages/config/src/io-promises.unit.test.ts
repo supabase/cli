@@ -101,6 +101,70 @@ describe("saveCliConfig with values structuredClone cannot copy", () => {
   });
 });
 
+describe("saveCliConfig with non-plain objects", () => {
+  class Ports {
+    port = 54399;
+  }
+
+  test.each([
+    ["a class instance", () => new Ports()],
+    ["a Date", () => new Date(0)],
+    ["a Map", () => new Map([["port", 54399]])],
+  ])("%s at a table path is neither mutated nor a raw TypeError", async (_name, make) => {
+    const root = await project({});
+    const api = make();
+    const keysBefore = Reflect.ownKeys(api);
+    const snapshot = structuredClone(api);
+
+    const outcome = await promiseIo
+      .saveCliConfig({ cwd: root, config: { api }, format: "toml" })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+    expect(outcome === undefined || outcome instanceof promiseIo.CliConfigParseError).toBe(true);
+    expect(Reflect.ownKeys(api)).toEqual(keysBefore);
+    expect(api).toEqual(snapshot);
+  });
+
+  test("a class instance's enumerable keys are validated as a table", async () => {
+    const root = await project({});
+
+    await promiseIo.saveCliConfig({ cwd: root, config: { api: new Ports() }, format: "toml" });
+
+    expect(await readFile(join(root, "supabase", "config.toml"), "utf8")).toContain("54399");
+  });
+});
+
+describe("validation issue paths", () => {
+  test("a dotted bucket name keeps its two invalid fields as separate issues", async () => {
+    const root = await project({});
+
+    const error = await rejection(() =>
+      promiseIo.saveCliConfig({
+        cwd: root,
+        config: { storage: { buckets: { "a.b": { public: "yes", allowed_mime_types: "text" } } } },
+      }),
+    );
+
+    expect(error.issues).toEqual([
+      expect.objectContaining({ path: 'storage.buckets["a.b"].public' }),
+      expect.objectContaining({ path: 'storage.buckets["a.b"].allowed_mime_types' }),
+    ]);
+  });
+
+  test("ordinary keys render as a plain dotted path", async () => {
+    const root = await project({});
+
+    const error = await rejection(() =>
+      promiseIo.saveCliConfig({ cwd: root, config: { api: { port: "x" } } }),
+    );
+
+    expect(error.issues).toEqual([expect.objectContaining({ path: "api.port" })]);
+  });
+});
+
 describe("saveCliConfig and the TOML #:schema directive", () => {
   const OLD = "https://example.test/old.json";
   const NEW = "https://example.test/new.json";

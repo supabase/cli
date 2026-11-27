@@ -294,22 +294,26 @@ specific, narrower validation contract — what it does and does not promise:
 For Node and Bun tools that want `./io`'s behaviour without Effect in their runtime. The entry never imports or resolves `effect` or a platform peer, but the package-level `effect` peer is still declared for the other entrypoints:
 
 ```ts
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadCliConfig, saveCliConfig } from "@supabase/config/io-promises";
 
 const loaded = await loadCliConfig(process.cwd());
 console.log(loaded?.config.project_id);
 
-await saveCliConfig({ cwd: process.cwd(), config: { project_id: "my-project" } });
+const scratch = await mkdtemp(join(tmpdir(), "my-project-"));
+await saveCliConfig({ cwd: scratch, config: { project_id: "my-project" } });
 ```
 
-A loaded config has its `env()` references already resolved, so never round-trip `loaded.config` into `saveCliConfig`: it would write those secrets into the config file in plaintext.
+`saveCliConfig` replaces the existing config file's settings with the supplied `config`, so it must contain everything you want to keep. A loaded config has its `env()` references already resolved, so never round-trip `loaded.config` into `saveCliConfig`: it would write those secrets into the config file in plaintext.
 
 - **Same surface and behaviour as `./io`.** `loadCliConfig`, `loadCliConfigFile`,
   `findCliProjectRoot`, `findCliProjectPaths`, `loadCliProjectEnvironment`, `saveCliConfig`, and
   `inferFunctionsManifest` take the same options and resolve to the same values: defaults are
   filled in, `env(NAME)` references are interpolated and coerced to the key's type, the matching
   `[remotes.*]` block is merged, and a config declaring a newer schema version is refused. Saves
-  strip defaults and keep an existing `$schema`/`#:schema` reference (unless `schemaRef` names a different one) and JSONC comments.
+  strip defaults and keep an existing `$schema`/`#:schema` reference (unless `schemaRef` names a different one, and see the schema-reference differences below) and JSONC comments.
   `src/io-promises.parity.unit.test.ts` runs both entries over the same projects.
 - **No runtime validator dependency.** Validation is an Ajv-compiled module generated from the
   schema and shipped in `dist/`; `ajv` is a dev dependency. The validator ships twice, as a source copy for Bun and a bundled copy in `dist` for Node (about 1.2 MB unpacked together). After changing a config schema, run
@@ -326,7 +330,10 @@ A loaded config has its `env()` references already resolved, so never round-trip
   `file_size_limit` is accepted on save (`./io` rejects it), and `undefined` values in a partial
   config are tolerated. An invalid config passed to `saveCliConfig` rejects with
   `CliConfigParseError` rather than a schema error, and `saveCliConfig` returns `options.config`
-  as given.
+  as given. Saving TOML with an explicit `schemaRef` that differs from the existing `#:schema`
+  directive replaces the directive, where `./io` keeps the original directive in front. A
+  reference stored only in a `#:schema` directive is not carried across when saving TOML as JSON,
+  in either entry.
 
 ## `./io`'s error contract
 

@@ -165,7 +165,9 @@ these rules:
   the regenerated document so comments and key order survive, and falls back to the regenerated text
   if the edited text does not re-parse to exactly that document; new files and format switches
   always write the regenerated text
-- a TOML save keeps the existing file's first-line `#:schema <url>` directive
+- a TOML save keeps the existing file's first-line `#:schema <url>` directive; `./io-promises`
+  replaces it when an explicit `schemaRef` differs. A reference held only in a `#:schema`
+  directive is not carried across when TOML is saved as JSON
 - after writing, it removes every other config file among `config.json`, `config.jsonc` and
   `config.toml`, so a project never ends up with more than one after a save
 

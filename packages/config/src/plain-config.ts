@@ -95,40 +95,56 @@ export function interpolateCliConfigDocument(
 
 type AjvErrors = NonNullable<CompiledValidator["errors"]>;
 
-function dottedPath(instancePath: string): string {
+function pathSegments(instancePath: string): ReadonlyArray<string> {
   return instancePath
     .split("/")
     .slice(1)
-    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
-    .join(".");
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
 }
 
 function joinPath(...segments: ReadonlyArray<string>): string {
   return segments.filter((segment) => segment !== "").join(".");
 }
 
+const isPlainSegment = (segment: string): boolean => segment !== "" && !/[.[\]"]/.test(segment);
+
+function renderPath(segments: ReadonlyArray<string>): string {
+  return segments.reduce(
+    (path, segment) =>
+      isPlainSegment(segment) ? joinPath(path, segment) : `${path}[${JSON.stringify(segment)}]`,
+    "",
+  );
+}
+
 function issuesFrom(prefix: string, errors: AjvErrors): ReadonlyArray<CliConfigValidationIssue> {
-  const messagesByPath = new Map<string, Array<string>>();
+  const issuesByPath = new Map<
+    string,
+    { readonly segments: ReadonlyArray<string>; readonly messages: Array<string> }
+  >();
   for (const error of errors) {
     if (error.keyword === "anyOf" || error.keyword === "oneOf") {
       continue;
     }
-    const parent = joinPath(prefix, dottedPath(error.instancePath));
+    const parent = [...(prefix === "" ? [] : [prefix]), ...pathSegments(error.instancePath)];
     const extra = error.params["additionalProperty"];
     const missing = error.params["missingProperty"];
-    const [path, message] =
+    const [segments, message] =
       error.keyword === "additionalProperties" && typeof extra === "string"
-        ? [joinPath(parent, extra), "is not a known key"]
+        ? [[...parent, extra], "is not a known key"]
         : error.keyword === "required" && typeof missing === "string"
-          ? [joinPath(parent, missing), "is required"]
+          ? [[...parent, missing], "is required"]
           : [parent, error.message ?? "is invalid"];
-    const messages = messagesByPath.get(path) ?? [];
-    if (!messages.includes(message)) {
-      messages.push(message);
+    const key = JSON.stringify(segments);
+    const entry = issuesByPath.get(key) ?? { segments, messages: [] };
+    if (!entry.messages.includes(message)) {
+      entry.messages.push(message);
     }
-    messagesByPath.set(path, messages);
+    issuesByPath.set(key, entry);
   }
-  return [...messagesByPath].map(([path, messages]) => ({ path, message: messages.join(" or ") }));
+  return [...issuesByPath.values()].map(({ segments, messages }) => ({
+    path: renderPath(segments),
+    message: messages.join(" or "),
+  }));
 }
 
 function tableRuleIssues(
@@ -245,15 +261,11 @@ function runValidator(
   prefix: string,
   data: unknown,
 ): ReadonlyArray<CliConfigValidationIssue> {
-  return validator(data) ? [] : issuesFrom(prefix, validator.errors ?? []);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (!isObject(value)) {
-    return false;
+  try {
+    return validator(data) ? [] : issuesFrom(prefix, validator.errors ?? []);
+  } catch {
+    return [{ path: prefix, message: "could not be validated" }];
   }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
 }
 
 function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
@@ -264,12 +276,12 @@ function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
   return copy;
 }
 
-/** Copies plain objects and arrays so validation can mutate them; any other value is shared and left for the validator's type checks to reject. */
+/** Copies arrays and every object into plain objects so validation never mutates, or trips over, the caller's value. */
 function cloneDocumentValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(cloneDocumentValue);
   }
-  return isPlainRecord(value) ? cloneRecord(value) : value;
+  return isObject(value) ? cloneRecord(value) : value;
 }
 
 type CliConfigValidation =
@@ -290,7 +302,7 @@ function validateCliConfigDocument(
   }
   const { remotes: rawRemotes, ...rawRoot } = folded;
   const root = cloneRecord(rawRoot);
-  const rawChecks = childObject(rawRoot, "db", "migrations", "checks");
+  const rawChecks = childObject(root, "db", "migrations", "checks");
   const remotes: unknown = rawRemotes === undefined ? {} : cloneDocumentValue(rawRemotes);
 
   const checkIssues =
