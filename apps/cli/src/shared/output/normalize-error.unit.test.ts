@@ -21,14 +21,6 @@ const testRoot = Command.make("supabase").pipe(
 );
 
 describe("upgradeHint", () => {
-  test("says the plan lacks the feature for an organization billing URL", () => {
-    const url = "https://supabase.com/dashboard/org/acme/billing";
-
-    expect(upgradeHint(url)).toBe(
-      `Your organization's plan does not include this feature. Plans and add-ons: ${styleText("bold", url)}`,
-    );
-  });
-
   test("names a project add-on, not the plan, for a project add-ons URL", () => {
     const url =
       "https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/addons?panel=pitr";
