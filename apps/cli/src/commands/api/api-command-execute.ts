@@ -97,7 +97,9 @@ const POLL_MAX_DELAY_MILLIS = 10_000;
 
 const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
-const textDecoder = new TextDecoder();
+const lossyDecoder = new TextDecoder();
+const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+const decodeUtf8 = Option.liftThrowable((bytes: Uint8Array) => strictDecoder.decode(bytes));
 const encodeJsonValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
@@ -135,7 +137,10 @@ const stringField = (source: unknown, key: string): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
-/** Reads a response body; a body that cannot be read is a transport failure. */
+/** Matches the typed client's request deadline, which also covers reading a 2xx body. */
+const RESPONSE_BODY_TIMEOUT = Duration.seconds(60);
+
+/** Reads a response body; a body that cannot be read in time is a transport failure. */
 const readBytes = (response: HttpClientResponse.HttpClientResponse) =>
   response.arrayBuffer.pipe(
     Effect.map((buffer) => new Uint8Array(buffer)),
@@ -145,6 +150,18 @@ const readBytes = (response: HttpClientResponse.HttpClientResponse) =>
           reason: new HttpClientError.TransportError({ request: response.request, cause }),
         }),
     ),
+    Effect.timeoutOrElse({
+      duration: RESPONSE_BODY_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request: response.request,
+              description: "response body timed out",
+            }),
+          }),
+        ),
+    }),
   );
 
 const permissionHint = (operationId: string): string | undefined => {
@@ -186,7 +203,7 @@ const statusError = Effect.fnUntraced(function* (
   response: HttpClientResponse.HttpClientResponse,
   after: Acceptance | undefined,
 ) {
-  const text = textDecoder.decode(
+  const text = lossyDecoder.decode(
     yield* readBytes(response).pipe(Effect.orElseSucceed(() => new Uint8Array())),
   );
   const body = Option.getOrUndefined(decodeJsonText(text));
@@ -263,7 +280,7 @@ export const sendApiRequest = Effect.fnUntraced(function* (
 });
 
 const parseResponse = (response: ApiCommandResponse): unknown =>
-  Option.getOrUndefined(decodeJsonText(textDecoder.decode(response.bytes)));
+  Option.getOrUndefined(Option.flatMap(decodeUtf8(response.bytes), decodeJsonText));
 
 const invalidJsonResponse = (accepted: Acceptance | undefined) =>
   accepted === undefined
@@ -297,8 +314,9 @@ export const writeApiResponse = Effect.fnUntraced(function* (
         return yield* writeResultFrame(null);
     }
   }
-  const text = textDecoder.decode(response.bytes);
-  const parsed = decodeJsonText(text);
+  const strictText = decodeUtf8(response.bytes);
+  const text = Option.getOrElse(strictText, () => lossyDecoder.decode(response.bytes));
+  const parsed = Option.flatMap(strictText, decodeJsonText);
   if (format === "text") {
     if (Option.isNone(parsed)) {
       const lines = text.endsWith("\n") ? text.slice(0, -1) : text;
@@ -492,28 +510,33 @@ export const linkedReadInput = Effect.fnUntraced(function* (input: {
  */
 export const waitForOperation = Effect.fn("api-command.wait")(function* (input: WaitInput) {
   const { wait, readEntry, readInput } = input;
+  const rejectedCommand = refOnlyStatusCommand(input.statusEntry, input.ref);
+  const decoded = yield* Schema.decodeEffect(definitionOf(readEntry).inputSchema, {
+    onExcessProperty: "error",
+  })(readInput).pipe(
+    Effect.catchTag("SchemaError", (error) => {
+      const { accepted } = input;
+      if (accepted === undefined) return Effect.die(error);
+      const rejected: Acceptance =
+        rejectedCommand === undefined
+          ? { action: accepted.action }
+          : { action: accepted.action, statusCommand: rejectedCommand };
+      return Effect.fail(
+        new ApiCommandUnexpectedResponseError({
+          message: acceptedMessage(
+            rejected,
+            `its response held a value that ${wait.read} does not accept.`,
+          ),
+          suggestion: inspectSuggestion(rejected),
+        }),
+      );
+    }),
+  );
   const statusInput = input.statusEntry.operationId === readEntry.operationId ? readInput : {};
   const command = statusCommand(input.statusEntry, input.ref, statusInput);
   const suggestion = `Check it with \`${command}\`.`;
   const after: Acceptance | undefined =
     input.accepted === undefined ? undefined : { ...input.accepted, statusCommand: command };
-  const decoded = yield* Schema.decodeEffect(definitionOf(readEntry).inputSchema, {
-    onExcessProperty: "error",
-  })(readInput).pipe(
-    Effect.catchTag("SchemaError", (error) =>
-      after === undefined
-        ? Effect.die(error)
-        : Effect.fail(
-            new ApiCommandUnexpectedResponseError({
-              message: acceptedMessage(
-                after,
-                `its response held a value that ${wait.read} does not accept.`,
-              ),
-              suggestion: inspectSuggestion(after),
-            }),
-          ),
-    ),
-  );
   const attempts = yield* Ref.make(0);
   const lastStatus = yield* Ref.make<string | null>(null);
 

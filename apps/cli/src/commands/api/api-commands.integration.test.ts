@@ -62,6 +62,8 @@ import { withApiCommands } from "./runtime.ts";
 import { EventUpgradeSuggested } from "../../shared/telemetry/event-catalog.ts";
 import { resolveApiCommandFeatures } from "./api-command-features.ts";
 
+const encodeBytes = (text: string) => new TextEncoder().encode(text);
+
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -159,6 +161,10 @@ interface Reply {
   readonly body?: unknown;
   /** Fails the body stream mid-read, after the status line was delivered. */
   readonly unreadable?: boolean;
+  /** Delivers the status line, then a body stream that never ends. */
+  readonly stalled?: boolean;
+  /** Sent verbatim in place of `body`, for payloads that are not valid UTF-8. */
+  readonly bytes?: Uint8Array;
   /** Rejects the request before any status line, like an unreachable host. */
   readonly unreachable?: boolean;
 }
@@ -182,6 +188,18 @@ const enableThenPoll = (reads: ReadonlyArray<Reply>): Route => {
 };
 
 const replyOf = (reply: Reply): Response => {
+  if (reply.stalled === true) {
+    return new Response(new ReadableStream<Uint8Array>(), {
+      status: reply.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (reply.bytes !== undefined) {
+    return new Response(reply.bytes, {
+      status: reply.status,
+      headers: { "content-type": "application/json" },
+    });
+  }
   if (reply.unreadable === true) {
     const broken = new ReadableStream<Uint8Array>({
       pull: (controller) => controller.error(new Error("connection reset")),
@@ -596,6 +614,22 @@ describe("generated warehouse commands", () => {
     it.effect("fails a non-JSON success body as json instead of writing it to stdout", () => {
       const { out, run } = setup(["warehouse", "status", "--output-format", "json"], {
         route: ok("\u001b[31mred\nsecond\n"),
+        outputFormat: "json",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(run);
+
+        expect(failureOf(exit)).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+        expect(out.stdoutText).toBe("");
+      });
+    });
+
+    it.effect("fails a success body with invalid UTF-8 as json instead of writing it", () => {
+      const { out, run } = setup(["warehouse", "status", "--output-format", "json"], {
+        route: () => ({
+          status: 200,
+          bytes: Uint8Array.of(...encodeBytes('{"data":"'), 0xff, 0x22, 0x7d),
+        }),
         outputFormat: "json",
       });
       return Effect.gen(function* () {
@@ -1598,6 +1632,27 @@ describe("generated warehouse commands", () => {
       });
     });
 
+    it.effect("suggests the project-only command when the accepted identity is rejected", () => {
+      const { run, sent } = setup(["warehouse", "disable", "--wait"], {
+        yes: true,
+        route: () => ({
+          status: 202,
+          body: { ...teardown("disabling"), data: { ...teardown("disabling").data, id: "bad-id" } },
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* run.pipe(Effect.flip);
+        expect(error).toBeInstanceOf(ApiCommandUnexpectedResponseError);
+        expect(error).toMatchObject({
+          message: expect.stringContaining("The API accepted the request"),
+          suggestion: `Check the current state with \`supabase warehouse teardowns get --remote=${VALID_REF}\` before running the command again.`,
+        });
+        expect(error).not.toMatchObject({ message: expect.stringContaining("bad-id") });
+        expect(error).not.toMatchObject({ suggestion: expect.stringContaining("bad-id") });
+        expect(sent.map(({ method }) => method)).toStrictEqual(["DELETE"]);
+      });
+    });
+
     it.effect("reports the last cleanup state on a bounded timeout", () => {
       const { run, sent } = setup(["warehouse", "disable", "--wait", "--timeout", "10s"], {
         yes: true,
@@ -2001,6 +2056,42 @@ describe("generated warehouse commands", () => {
           suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
         });
         expect(out.stdoutText).toBe("");
+      });
+    });
+
+    it.effect("says the change was accepted when its success body never finishes", () => {
+      const { out, run, sent } = setup(["warehouse", "enable", "--schema", "public"], {
+        yes: true,
+        route: () => ({ status: 202, stalled: true }),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+        expect(failure).toMatchObject({
+          message:
+            "The API accepted the request (Enable Warehouse replication), but the connection to the Management API failed afterwards (response body timed out).",
+          suggestion: `Check the current state with \`supabase warehouse status --remote=${VALID_REF}\` before running the command again.`,
+        });
+        expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
+        expect(out.stdoutText).toBe("");
+      });
+    });
+
+    it.effect("says the response could not be read when a read's body never finishes", () => {
+      const { run } = setup(["warehouse", "status"], {
+        route: () => ({ status: 200, stalled: true }),
+      });
+      return Effect.gen(function* () {
+        const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* driveClock(fiber);
+        const failure = yield* Fiber.join(fiber);
+        expect(failure).toBeInstanceOf(ApiCommandNetworkError);
+        expect(failure).toMatchObject({
+          message: "The Management API response could not be read (response body timed out).",
+          suggestion: "Check your network connection and run the command again.",
+        });
       });
     });
 

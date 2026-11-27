@@ -629,12 +629,15 @@ describe("deriveApiCommands", () => {
     };
     const readSchema = {
       type: "object",
+      required: ["data"],
       properties: {
         data: {
           type: "object",
+          required: ["attributes"],
           properties: {
             attributes: {
               type: "object",
+              required: ["status"],
               properties: {
                 status: { type: "string", enum: ["done", "broken", "pending"] },
                 reason: { type: "string" },
@@ -710,6 +713,7 @@ describe("deriveApiCommands", () => {
     it("resolves escaped status and error pointers against property names", () => {
       const escapedRead = {
         type: "object",
+        required: ["a/b", "c~d"],
         properties: {
           "a/b": { type: "string", enum: ["done", "broken"] },
           "c~d": { type: "string" },
@@ -1152,6 +1156,73 @@ describe("deriveApiCommands", () => {
       const result = derive({ "create-thing": changeThing(links), "get-thing": readThing });
 
       expect(result.problems.join("\n")).toContain(message);
+    });
+
+    it.each([
+      [
+        "a status that is not required",
+        {
+          type: "object",
+          required: ["data"],
+          properties: {
+            data: {
+              type: "object",
+              required: ["attributes"],
+              properties: {
+                attributes: { type: "object", properties: { status: { type: "string" } } },
+              },
+            },
+          },
+        },
+      ],
+      [
+        "a nullable status",
+        {
+          type: "object",
+          required: ["data"],
+          properties: {
+            data: {
+              type: "object",
+              required: ["attributes"],
+              properties: {
+                attributes: {
+                  type: "object",
+                  required: ["status"],
+                  properties: { status: { type: "string", nullable: true } },
+                },
+              },
+            },
+          },
+        },
+      ],
+      [
+        "an enclosing object that is not required",
+        {
+          type: "object",
+          required: ["data"],
+          properties: {
+            data: {
+              type: "object",
+              properties: {
+                attributes: {
+                  type: "object",
+                  required: ["status"],
+                  properties: { status: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      ],
+    ])("rejects a poll status read from %s", (_label, schema) => {
+      const result = deriveHidden({
+        "create-thing": changeThing(link({})),
+        "get-thing": hiddenWith(poll, jsonResponse(schema)),
+      });
+
+      expect(result.problems.join("\n")).toContain(
+        'wait.status pointer "/data/attributes/status" is not required at every level of the get-thing response',
+      );
     });
 
     it("rejects a poll status that is not a string in the read response", () => {

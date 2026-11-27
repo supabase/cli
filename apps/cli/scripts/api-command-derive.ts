@@ -1115,6 +1115,11 @@ function lintWait(input: {
   if (status !== undefined && asRecord(status)?.type !== "string") {
     fail(`wait.status pointer "${wait.status}" is not a string in the ${wait.read} response`);
   }
+  if (status !== undefined && !pointerAlwaysPresent(spec, readResponse, wait.status)) {
+    fail(
+      `wait.status pointer "${wait.status}" is not required at every level of the ${wait.read} response, so a poll could read no status`,
+    );
+  }
   if (wait.error !== undefined && resolvePointer(spec, readResponse, wait.error) === undefined) {
     fail(`wait.error pointer "${wait.error}" does not resolve in the ${wait.read} response`);
   }
