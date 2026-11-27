@@ -77,8 +77,11 @@ const decodeJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown)
 const isRowObject = (element: unknown): element is { readonly [key: string]: unknown } | null =>
   element === null || Predicate.isObject(element);
 
-const toExecError = (cause: { readonly message: string }) =>
-  new DbQueryExecError({ message: cause.message });
+const toExecError = (cause: { readonly message: string; readonly code?: string }) =>
+  new DbQueryExecError({
+    message: cause.message,
+    ...(cause.code === undefined ? {} : { code: cause.code }),
+  });
 
 const READ_ONLY_LOCK_TIMEOUT = "5s";
 

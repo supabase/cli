@@ -42,6 +42,7 @@ export type StreamEvent =
         readonly message: string;
         readonly detail?: string;
         readonly suggestion?: string;
+        readonly docUrl?: string;
       };
       readonly timestamp: string;
     }

@@ -1090,7 +1090,11 @@ const connect = (
                 rowMode: "array",
                 types: queryRawTypes,
               }),
-            catch: (error) => new DbExecError({ message: `failed to execute query: ${error}` }),
+            catch: (error) =>
+              new DbExecError({
+                message: `failed to execute query: ${error}`,
+                code: extractSqlState(error),
+              }),
           }).pipe(
             Effect.ensuring(
               Effect.sync(() =>

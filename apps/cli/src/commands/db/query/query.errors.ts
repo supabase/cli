@@ -77,6 +77,8 @@ export class DbQueryReadOnlyStatementError extends Data.TaggedError(
 /** Query execution failed; message text (`"failed to execute query: " + err`) is an established output contract. */
 export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
   readonly message: string;
+  /** Driver error code of the failed statement (a Postgres SQLSTATE for a server error), when present. */
+  readonly code?: string;
   /**
    * Set when this failure came from the linked path's HTTP transport
    * (`httpClient.execute`/body read against `/v1/projects/{ref}/database/query`)

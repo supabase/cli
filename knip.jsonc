@@ -40,6 +40,8 @@
         "brew",
         // apps/cli/tests/smoke-test-windows.ts
         "cygpath",
+        // apps/cli/package.json refresh:error-links
+        "jq",
         // apps/cli/scripts/build.ts
         "nfpm",
         // apps/cli/scripts/build.ts
