@@ -109,7 +109,10 @@ const collectLeaves = (node: unknown, path: Path = []): Array<readonly [Path, No
     ];
   }
   if (Array.isArray(anyOf) && anyOf.some((member) => isNode(member) && member.type === "object")) {
-    return anyOf.flatMap((member) => collectLeaves(member, path));
+    // The env branch belongs to the scalar sibling it accompanies, not to a leaf of its own.
+    return anyOf
+      .filter((member) => !isEnvBranch(member))
+      .flatMap((member) => collectLeaves(member, path));
   }
   if (isNode(items) && items.type === "object") return collectLeaves(items, [...path, 0]);
   return [[path, node]];

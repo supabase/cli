@@ -67,7 +67,7 @@ describe("supabase __complete", () => {
               cwd: project.dir,
               home: home.dir,
               env: {
-                SUPABASE_EXPERIMENTAL_STACK: undefined,
+                SUPABASE_EXPERIMENTAL_STACK_ENABLED: undefined,
                 SUPABASE_WORKDIR: undefined,
               },
             });
@@ -81,7 +81,7 @@ describe("supabase __complete", () => {
                 cwd: project.dir,
                 home: home.dir,
                 env: {
-                  SUPABASE_EXPERIMENTAL_STACK: undefined,
+                  SUPABASE_EXPERIMENTAL_STACK_ENABLED: undefined,
                   SUPABASE_WORKDIR: undefined,
                 },
               },
@@ -94,7 +94,7 @@ describe("supabase __complete", () => {
               cwd: project.dir,
               home: home.dir,
               env: {
-                SUPABASE_EXPERIMENTAL_STACK: undefined,
+                SUPABASE_EXPERIMENTAL_STACK_ENABLED: undefined,
                 SUPABASE_WORKDIR: undefined,
               },
             });
@@ -108,7 +108,7 @@ describe("supabase __complete", () => {
                 cwd: project.dir,
                 home: home.dir,
                 env: {
-                  SUPABASE_EXPERIMENTAL_STACK: "invalid",
+                  SUPABASE_EXPERIMENTAL_STACK_ENABLED: "invalid",
                   SUPABASE_WORKDIR: undefined,
                 },
               },
@@ -116,14 +116,14 @@ describe("supabase __complete", () => {
             expect(completionFailure.exitCode).toBe(1);
             expect(completionFailure.stdout).toBe("");
             expect(completionFailure.stderr).toContain(
-              'Invalid SUPABASE_EXPERIMENTAL_STACK="invalid" (sets experimental.stack): expected true or false.',
+              'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="invalid" (sets experimental.stack.enabled): expected true or false.',
             );
 
             const invalidEnv = yield* runSupabaseEffect(["start", "--output-format=json"], {
               cwd: project.dir,
               home: home.dir,
               env: {
-                SUPABASE_EXPERIMENTAL_STACK: "invalid",
+                SUPABASE_EXPERIMENTAL_STACK_ENABLED: "invalid",
                 SUPABASE_WORKDIR: undefined,
               },
             });

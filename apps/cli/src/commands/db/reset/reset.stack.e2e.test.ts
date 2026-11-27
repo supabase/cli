@@ -18,8 +18,8 @@ const nativeSupported =
 
 const projectConfig = `project_id = "db-reset-stack-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [api]
 enabled = true
@@ -204,7 +204,7 @@ describe("supabase db reset (stack e2e)", () => {
           const reset = yield* runSupabaseEffect(["db", "reset"], {
             cwd: root,
             home,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
             exitTimeoutMs: COMMAND_TIMEOUT_MS,
           });
           expect(reset.exitCode, `stdout:\n${reset.stdout}\nstderr:\n${reset.stderr}`).toBe(0);

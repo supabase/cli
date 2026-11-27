@@ -349,28 +349,28 @@ describe("bootstrap integration", () => {
   );
 
   it.live(
-    "scratch scaffolding writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1",
+    "scratch scaffolding writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK_ENABLED=1",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" } });
         yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
           Effect.provide(s.layer),
         );
         const content = yield* fs.readFileString(path.join(s.workdir, "supabase", "config.jsonc"));
-        expect(content).toContain('"stack": true');
+        expect(content).toMatch(/"stack": \{[^}]*"enabled": true/);
         expect(content).not.toMatch(/^\s*"port": 54321,?$/m);
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
-    "links through supabase/.link.json instead of .temp when SUPABASE_EXPERIMENTAL_STACK=1",
+    "links through supabase/.link.json instead of .temp when SUPABASE_EXPERIMENTAL_STACK_ENABLED=1",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" } });
         const cacheModes: Array<ProjectStateMode> = [];
         const modeRecordingCache = Layer.succeed(LinkedProjectCache, {
           cache: () => softProjectStateMode.pipe(Effect.map((mode) => void cacheModes.push(mode))),
@@ -412,7 +412,7 @@ describe("bootstrap integration", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+      const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" } });
       yield* fs.makeDirectory(path.join(s.workdir, "supabase"), { recursive: true });
       yield* holdLock(
         path.join(s.workdir, "supabase", ".supabase.lock.lease"),
@@ -437,29 +437,31 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const s = setup(path, {
-        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
-        samples: [NEXTJS_TEMPLATE],
-      });
-      const error = yield* bootstrap(flags({ template: Option.some("nextjs") }), FAST_BACKOFF).pipe(
-        Effect.provide(s.layer),
-        Effect.flip,
-      );
-      expect(error._tag).toBe("ExperimentalFeatureFlagError");
-      expect(s.createBodies).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
+  it.effect(
+    "a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const s = setup(path, {
+          env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "yes" },
+          samples: [NEXTJS_TEMPLATE],
+        });
+        const error = yield* bootstrap(
+          flags({ template: Option.some("nextjs") }),
+          FAST_BACKOFF,
+        ).pipe(Effect.provide(s.layer), Effect.flip);
+        expect(error._tag).toBe("ExperimentalFeatureFlagError");
+        expect(s.createBodies).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect(
-    "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK before writing config",
+    "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED before writing config",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "yes" } });
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "yes" } });
         const exit = yield* Effect.exit(
           bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
             Effect.provide(s.layer),
@@ -469,7 +471,7 @@ describe("bootstrap integration", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ExperimentalFeatureFlagError");
           expect(Cause.pretty(exit.cause)).toContain(
-            'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+            'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.',
           );
         }
         expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.jsonc"))).toBe(false);
@@ -492,12 +494,12 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
+  it.live("ignores SUPABASE_EXPERIMENTAL_STACK_ENABLED on a downloaded template", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, {
         samples: [NEXTJS_TEMPLATE],
-        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
       });
       yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),

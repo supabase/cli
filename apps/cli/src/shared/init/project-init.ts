@@ -51,7 +51,7 @@ export interface ProjectInitOptions {
   readonly yes: boolean;
   readonly withVscodeSettings: boolean;
   readonly withIntellijSettings: boolean;
-  /** Persist `experimental.stack` and omit default stack listener ports. */
+  /** Persist `experimental.stack.enabled` and omit default stack listener ports. */
   readonly experimentalStack?: boolean;
 }
 

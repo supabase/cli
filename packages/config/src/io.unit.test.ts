@@ -124,7 +124,7 @@ describe("config io", () => {
             db: {
               major_version: 16,
             },
-            experimental: { stack: true },
+            experimental: { stack: { enabled: true } },
           }),
         );
 
@@ -132,7 +132,7 @@ describe("config io", () => {
         expect(loaded.format).toBe("json");
         expect(loaded.config.project_id).toBe("abc123");
         expect(loaded.config.db.major_version).toBe(16);
-        expect(loaded.config.experimental.stack).toBe(true);
+        expect(loaded.config.experimental.stack?.enabled).toBe(true);
         expect(loaded.config.api.enabled).toBe(true);
       }),
     ));
@@ -482,8 +482,8 @@ describe("config io", () => {
 [db]
 major_version = 16
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 `,
         );
 
@@ -683,8 +683,8 @@ stack = true
 [db]
 major_version = 16
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 `,
         );
 
@@ -790,7 +790,8 @@ stack = true
         expect(loaded?.format).toBe("toml");
         expect(loaded?.config.project_id).toBe("toml-ref");
         expect(loaded?.config.db.major_version).toBe(16);
-        expect(loaded?.config.experimental.stack).toBe(true);
+        // The legacy boolean form decodes to the table form.
+        expect(loaded?.config.experimental.stack).toEqual({ enabled: true });
       }),
     ));
 

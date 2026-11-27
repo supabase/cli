@@ -1,9 +1,21 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { cliConfigFormatForPath, parseCliConfigDocument } from "@supabase/config/internal";
-import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
+import {
+  Config,
+  Console,
+  Context,
+  Data,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  Result,
+  Schema,
+} from "effect";
 import { pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
+import { yellow } from "../../command-internal/colors.ts";
 import { rootFlagTokens } from "../cli/run.ts";
 import {
   actionability,
@@ -24,6 +36,36 @@ const featureSchemas = {
   stack: CliConfigSchema.fields.experimental.to.fields.stack,
   compute: CliConfigSchema.fields.experimental.to.fields.compute,
 } as const;
+
+const featureKeys = {
+  stack: CliConfigKeys.experimental.stack.enabled,
+  compute: CliConfigKeys.experimental.compute.enabled,
+} as const;
+
+type ExperimentalFeature = keyof typeof featureKeys;
+
+/** Deprecation warnings already printed in this process, so each prints once. */
+export const WarnedExperimentalDeprecations = Context.Reference<Set<string>>(
+  "supabase/cli/WarnedExperimentalDeprecations",
+  { defaultValue: () => new Set() },
+);
+
+/** Prints a deprecation warning on stderr; stdout may carry the command's payload. */
+const warnDeprecated = Effect.fnUntraced(function* (message: string) {
+  const warned = yield* WarnedExperimentalDeprecations;
+  if (warned.has(message)) return;
+  warned.add(message);
+  yield* Console.error(yellow(`Warning: ${message}`));
+});
+
+// Legacy forms: `SUPABASE_EXPERIMENTAL_<FEATURE>` is a second env name of the feature's key (see
+// CLI_CONFIG_ENV_NAME_PATHS) and `experimental.<feature> = <bool>` is a second document shape. Both
+// can go once the table form has been the only documented one for a release.
+const legacyEnvWarning = (envName: string, canonical: string): string =>
+  `\`${envName}\` is deprecated; use \`${canonical}\`.`;
+
+const legacyConfigWarning = (feature: ExperimentalFeature, value: boolean): string =>
+  `\`experimental.${feature} = ${value}\` is deprecated; use \`enabled = ${value}\` under \`[experimental.${feature}]\`.`;
 
 const firstExplicitLongFlagValue = (
   args: ReadonlyArray<string>,
@@ -70,31 +112,42 @@ export const readExperimentalFeatureConfig = (input: {
       ),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return decoded.experimental?.[input.feature];
+    const legacy = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({
+        experimental: Schema.optionalKey(
+          Schema.Struct({ [input.feature]: Schema.optionalKey(Schema.Boolean) }),
+        ),
+      }),
+    )(document).pipe(Effect.orElseSucceed(() => undefined));
+    const legacyValue = legacy?.experimental?.[input.feature];
+    if (legacyValue !== undefined) {
+      yield* warnDeprecated(legacyConfigWarning(input.feature, legacyValue));
+    }
+    return decoded.experimental?.[input.feature]?.enabled;
   }).pipe(Effect.orElseSucceed(() => undefined));
-
-const featureKeys = {
-  stack: CliConfigKeys.experimental.stack,
-  compute: CliConfigKeys.experimental.compute,
-} as const;
 
 /**
  * Resolves one experimental boolean: a shell boolean override, else the project
  * config. Remotes and project `.env*` files do not apply.
  */
 export const resolveExperimentalFeature = <E, R>(input: {
-  readonly feature: keyof typeof featureKeys;
+  readonly feature: ExperimentalFeature;
   readonly configValue: Effect.Effect<boolean | undefined, E, R>;
 }): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R | Path.Path> =>
   Effect.gen(function* () {
     const key = featureKeys[input.feature];
-    const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
+    const [canonicalEnvName = key.path] = key.env;
     const path = yield* Path.Path;
-    const shell = yield* readEnv(envName);
-    const configValue = shell === undefined || shell === "" ? yield* input.configValue : undefined;
+    const shell = new Map<string, string>();
+    for (const name of key.env) {
+      const value = yield* readEnv(name);
+      if (value !== undefined) shell.set(name, value);
+    }
+    const shellSet = key.env.some((name) => (shell.get(name) ?? "") !== "");
+    const configValue = shellSet ? undefined : yield* input.configValue;
     const picked = pickCliConfigKey(key, {
       flags: () => undefined,
-      shell: (name) => (name === envName ? shell : undefined),
+      shell: (name) => shell.get(name),
       projectEnv: () => undefined,
       config: (segments) =>
         segments.join(".") === key.path && configValue !== undefined
@@ -105,9 +158,13 @@ export const resolveExperimentalFeature = <E, R>(input: {
     });
     if (Result.isFailure(picked)) {
       return yield* new ExperimentalFeatureFlagError({
-        envName,
+        envName: picked.failure.envName ?? canonicalEnvName,
         message: picked.failure.message,
       });
+    }
+    const { origin } = picked.success;
+    if (origin.tier === "shell" && origin.envName !== canonicalEnvName) {
+      yield* warnDeprecated(legacyEnvWarning(origin.envName, canonicalEnvName));
     }
     return Option.getOrElse(picked.success.value, () => false);
   });

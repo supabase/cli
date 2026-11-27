@@ -236,7 +236,7 @@ export const rejectStackSelectorOnLegacy = Effect.gen(function* () {
       message: `${flag} requires the experimental stack backend.`,
       reason: "flags",
       suggestion:
-        "Set SUPABASE_EXPERIMENTAL_STACK=1 or set experimental.stack to true in the project config.",
+        "Set SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 or set experimental.stack.enabled to true in the project config.",
     });
 });
 

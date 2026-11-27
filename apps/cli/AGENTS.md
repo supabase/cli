@@ -183,8 +183,8 @@ Resolve opt-in booleans with `shared/config/experimental-feature.ts`: a shell bo
 values are typed failures on applicable command paths. Disabled families are absent from the
 command tree, help, and completion; enabled help is marked experimental and stays out of stable
 generated command documentation. Environment opt-ins do not write project configuration, except
-`supabase init` (and blank `bootstrap`) with `SUPABASE_EXPERIMENTAL_STACK=1`, which persists
-`experimental.stack = true` and omits Docker-era default ports.
+`supabase init` (and blank `bootstrap`) with `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1`, which persists
+`[experimental.stack] enabled = true` and omits Docker-era default ports.
 Keep config-discovery failure policy explicit and cover TOML, JSON, precedence, and disabled
 behavior.
 

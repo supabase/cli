@@ -107,7 +107,7 @@ rather than assumed.
 
 Local-runtime commands also carry properties that split error rates by runtime:
 
-- `stack_backend` (`legacy` or `stack`) on commands routed by `experimental.stack`; see
+- `stack_backend` (`legacy` or `stack`) on commands routed by `experimental.stack.enabled`; see
   [backend selection](stack-commands.md)
 - `stack_runtime` (`docker`, `podman`, or `native`): the runtime of the stack a stack-backend
   command looked up, which for `--remote=<url>` may be the project stack even when the URL targets

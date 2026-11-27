@@ -16,8 +16,8 @@ const nativeSupported =
 
 const config = `project_id = "db-diff-stack-cache-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [db]
 major_version = 17
@@ -65,7 +65,7 @@ const command = (args: ReadonlyArray<string>, cwd: string, home: string) =>
   runSupabaseEffect([...args], {
     cwd,
     home,
-    env: { SUPABASE_EXPERIMENTAL_STACK: "1", SUPABASE_SHADOW_CACHE: undefined },
+    env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1", SUPABASE_SHADOW_CACHE: undefined },
     exitTimeoutMs: COMMAND_TIMEOUT_MS,
   });
 

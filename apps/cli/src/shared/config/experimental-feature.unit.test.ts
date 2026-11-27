@@ -9,7 +9,7 @@ import {
 
 const resolveStack = (value: string) =>
   withConfigEnv(
-    { SUPABASE_EXPERIMENTAL_STACK: value },
+    { SUPABASE_EXPERIMENTAL_STACK_ENABLED: value },
     resolveExperimentalFeature({ feature: "stack", configValue: Effect.undefined }),
   ).pipe(Effect.provide(Path.layer));
 
@@ -25,7 +25,7 @@ describe("resolveExperimentalFeature boolean spellings", () => {
       const error = yield* resolveStack(value).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
-      expect(error.envName).toBe("SUPABASE_EXPERIMENTAL_STACK");
+      expect(error.envName).toBe("SUPABASE_EXPERIMENTAL_STACK_ENABLED");
     }),
   );
 });

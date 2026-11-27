@@ -161,7 +161,7 @@ const Workload = Schema.Struct({
   teardown: Schema.optionalKey(Schema.Array(CliArgs)),
   /** `run` repeats setup and teardown for every launch; `block` shares them across a block of launches. */
   setupScope: Schema.optionalKey(Schema.Literals(["run", "block"])),
-  /** Launches with `SUPABASE_EXPERIMENTAL_STACK=1`. */
+  /** Launches with `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1`. */
   stack: Schema.optionalKey(Schema.Boolean),
   /** Container runtime the workload exercises; stack workloads pass it to `stack start` themselves. */
   runtime: Schema.optionalKey(Schema.Literals(["docker", "native"])),

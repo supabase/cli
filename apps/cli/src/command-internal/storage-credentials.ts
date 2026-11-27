@@ -40,7 +40,7 @@ export const storageCredentials = block("storage-credentials", [
  *
  * Linked (`projectRef !== ""`): URL is `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` or the project's api-keys endpoint.
- * Stack backend (`experimental.stack`): endpoint and service-role JWT come from the managed
+ * Stack backend (`experimental.stack.enabled`): endpoint and service-role JWT come from the managed
  * stack (see {@link stackStorageEndpoint}); never a legacy fallback.
  * Legacy local: URL from `api.external_url` or `<scheme>://<host>:<api.port>`, and key from
  * `auth.service_role_key`/`auth.jwt_secret`, both after `SUPABASE_API_*`/`SUPABASE_AUTH_*`

@@ -80,7 +80,7 @@ export interface BenchOptions {
 const DEFAULT_RUNS = 10;
 const DEFAULT_WARMUP = 2;
 /** The one variable a `stack: true` workload sets on its launches; it opens stack mode. */
-const STACK_FLAG = "SUPABASE_EXPERIMENTAL_STACK";
+const STACK_FLAG = "SUPABASE_EXPERIMENTAL_STACK_ENABLED";
 
 const DEFAULT_COMMANDS: ReadonlyArray<ReadonlyArray<string>> = [["--version"], ["--help"]];
 

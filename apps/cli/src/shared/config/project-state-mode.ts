@@ -10,8 +10,8 @@ import {
 export type ProjectStateMode = "stack" | "legacy";
 
 /**
- * Reads the mode before any command runtime exists: `SUPABASE_EXPERIMENTAL_STACK=1|0` wins, and
- * an unset or empty value falls back to `[experimental] stack` in the project's config. It
+ * Reads the mode before any command runtime exists: `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1|0` wins, and
+ * an unset or empty value falls back to `[experimental.stack] enabled` in the project's config. It
  * decodes that single key, so an unreadable or invalid config counts as unset. Any other
  * environment value fails.
  */
@@ -38,7 +38,7 @@ export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* 
 
 /**
  * The project state mode chosen once at startup. It is an `Exit` so that an invalid
- * `SUPABASE_EXPERIMENTAL_STACK` fails only the readers that need the mode.
+ * `SUPABASE_EXPERIMENTAL_STACK_ENABLED` fails only the readers that need the mode.
  */
 export class ProjectStateModeContext extends Context.Service<
   ProjectStateModeContext,

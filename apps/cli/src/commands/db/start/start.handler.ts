@@ -16,7 +16,7 @@ import type { DbStartFlags } from "./start.command.ts";
  * message and telemetry flush. Unlike `supabase start`, it has no status table, no
  * `cli_stack_started` event, and no `--exclude`/`--ignore-health-check` flags.
  *
- * When `[experimental].stack` is on, this command starts a postgres-only project stack
+ * When `[experimental.stack] enabled` is on, this command starts a postgres-only project stack
  * instead of Compose. `--from-backup` is refused on the stack path.
  */
 export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
@@ -36,7 +36,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
         return yield* new DbStartFromBackupUnsupportedError({
           message: "db start --from-backup is not supported when the stack backend is enabled.",
           suggestion:
-            "Omit --from-backup, or disable [experimental].stack to restore a Compose backup.",
+            "Omit --from-backup, or disable [experimental.stack] enabled to restore a Compose backup.",
         });
       }
       const result = yield* stackEnsurePostgresOnlyStarted({ createSelected: true });

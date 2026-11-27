@@ -264,7 +264,7 @@ export const stackRejectNativeDockerDiffEngine = (
   Effect.gen(function* () {
     if ((yield* currentStackBackend).kind === "stack")
       return yield* new StackNativeEngineError({
-        message: `The stack backend only supports the pg-delta engine. Do not pass ${flag}; set SUPABASE_EXPERIMENTAL_STACK=0.`,
+        message: `The stack backend only supports the pg-delta engine. Do not pass ${flag}; set SUPABASE_EXPERIMENTAL_STACK_ENABLED=0.`,
       });
   });
 

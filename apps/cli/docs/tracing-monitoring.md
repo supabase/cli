@@ -303,7 +303,7 @@ described above:
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | `setup`, `teardown`                  | Lists of CLI arguments run untimed with the build under test. `teardown` always runs, even after a failure or timeout. |
 | `setupScope`                         | `run` (default) repeats setup and teardown for every launch; `block` starts one stack per block of two launches.       |
-| `stack`                              | Sets `SUPABASE_EXPERIMENTAL_STACK=1` on every launch of the workload, the only variable a workload can set.            |
+| `stack`                              | Sets `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1` on every launch of the workload, the only variable a workload can set.    |
 | `runtime`                            | `docker` or `native`. A stack workload must pass the same `--runtime` to every `stack start`.                          |
 | `fixture`                            | A directory under `apps/cli/bench/fixtures/` copied into the project's `supabase/` directory after `init`.             |
 | `fixtureAfterSetup`                  | Like `fixture`, but copied after `setup`, so the launch finds changes that setup has not applied. Not for `block`.     |

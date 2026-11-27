@@ -23,7 +23,7 @@ import {
 
 export type StackBackend = "legacy" | "stack";
 
-/** Commands that consult experimental.stack for local database, shadow, and storage routing. */
+/** Commands that consult experimental.stack.enabled for local database, shadow, and storage routing. */
 const STACK_BACKEND_COMMANDS = new Set([
   "start",
   "stop",
@@ -48,7 +48,7 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly cause?: unknown;
 }> {
   get suggestion(): string {
-    return "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.";
+    return "Set SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 to enable stack commands, or 0 to use legacy start/stop/status.";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -82,8 +82,8 @@ export const usesStackState: Effect.Effect<boolean> = Effect.gen(function* () {
 });
 
 /**
- * Resolves the project state mode and, for the commands `experimental.stack` routes, the backend.
- * Routed commands fail on an invalid `SUPABASE_EXPERIMENTAL_STACK`; for the others the failure
+ * Resolves the project state mode and, for the commands `experimental.stack.enabled` routes, the backend.
+ * Routed commands fail on an invalid `SUPABASE_EXPERIMENTAL_STACK_ENABLED`; for the others the failure
  * stays in `projectState` for the readers that need it. Both are `undefined` for `--version`.
  */
 export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelection")(

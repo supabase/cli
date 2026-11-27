@@ -65,7 +65,7 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
   yield* fs.makeDirectory(path.join(functionsRoot, "hello"), { recursive: true });
   yield* fs.writeFileString(
     path.join(root, "supabase", "config.toml"),
-    'project_id = "functions-serve-e2e"\n[experimental]\nstack = true\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = true\n',
+    'project_id = "functions-serve-e2e"\n[experimental.stack]\nenabled = true\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = true\n',
   );
   yield* fs.writeFileString(
     path.join(functionsRoot, "hello", "index.ts"),
@@ -175,7 +175,7 @@ const serve = Effect.fn("FunctionsServeE2e.serve")(function* (
   const child = yield* spawnSupabase(["functions", "serve", ...flags], {
     cwd: root,
     home,
-    env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+    env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
     exitTimeoutMs: 120_000,
   }).pipe(
     Effect.mapError((cause) => new FunctionsServeE2eError({ message: "CLI spawn failed", cause })),

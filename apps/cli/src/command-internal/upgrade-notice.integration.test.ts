@@ -76,7 +76,7 @@ describe("upgrade notice user-level cache", () => {
           SUPABASE_NO_UPDATE_NOTIFIER: "0",
           ...(options.stack === "config"
             ? {}
-            : { SUPABASE_EXPERIMENTAL_STACK: options.stack === true ? "1" : "0" }),
+            : { SUPABASE_EXPERIMENTAL_STACK_ENABLED: options.stack === true ? "1" : "0" }),
         },
         upgradeNoticeHook(
           [...(options.args ?? []), "projects", "list"],
@@ -160,7 +160,7 @@ describe("upgrade notice user-level cache", () => {
         yield* ctx.fs.makeDirectory(ctx.path.join(project, "supabase"), { recursive: true });
         yield* ctx.fs.writeFileString(
           ctx.path.join(project, "supabase", "config.toml"),
-          'project_id = "demo"\n\n[experimental]\nstack = true\n',
+          'project_id = "demo"\n\n[experimental.stack]\nenabled = true\n',
         );
         const runtime = yield* RuntimeInfo;
 
@@ -187,7 +187,7 @@ describe("upgrade notice user-level cache", () => {
           yield* ctx.fs.makeDirectory(ctx.path.join(project, "supabase"), { recursive: true });
           yield* ctx.fs.writeFileString(
             ctx.path.join(project, "supabase", "config.toml"),
-            'project_id = "demo"\n\n[experimental]\nstack = true\n',
+            'project_id = "demo"\n\n[experimental.stack]\nenabled = true\n',
           );
           const runtime = yield* RuntimeInfo;
 

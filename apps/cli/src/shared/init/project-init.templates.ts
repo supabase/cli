@@ -568,8 +568,10 @@ const initOrioledbVersion = (): string =>
     .toSorted(postgresVersionCompare)
     .at(-1) ?? "";
 
-const EXPERIMENTAL_STACK_INIT_FLAG = `    // Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
-    "stack": true,
+const EXPERIMENTAL_STACK_INIT_FLAG = `    "stack": {
+      // Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
+      "enabled": true,
+    },
 `;
 
 // Default ports omitted so the stack is not pinned to Docker-era values. Each block is a

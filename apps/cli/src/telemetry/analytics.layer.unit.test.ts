@@ -64,14 +64,20 @@ describe("collectEnvSignals", () => {
     ["TRUE", "true"],
     ["0", "false"],
     ["yes", "invalid"],
-  ])("records SUPABASE_EXPERIMENTAL_STACK=%j as %j", (value, expected) => {
-    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: value })).toEqual({
-      SUPABASE_EXPERIMENTAL_STACK: expected,
+  ])("records SUPABASE_EXPERIMENTAL_STACK_ENABLED=%j as %j", (value, expected) => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK_ENABLED: value })).toEqual({
+      SUPABASE_EXPERIMENTAL_STACK_ENABLED: expected,
     });
   });
 
-  it("skips an empty SUPABASE_EXPERIMENTAL_STACK", () => {
-    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: "" })).toBeUndefined();
+  it("records the deprecated SUPABASE_EXPERIMENTAL_STACK name", () => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK: "1" })).toEqual({
+      SUPABASE_EXPERIMENTAL_STACK: "true",
+    });
+  });
+
+  it("skips an empty SUPABASE_EXPERIMENTAL_STACK_ENABLED", () => {
+    expect(readEnvSignals({ SUPABASE_EXPERIMENTAL_STACK_ENABLED: "" })).toBeUndefined();
   });
 
   it("caps value-key strings at MaxEnvSignalValueLength chars", () => {

@@ -270,14 +270,14 @@ describe("project init templates", () => {
 
   it("enables pg-delta by default in the generated config", () => {
     const parsed = parseJsonc(renderCliConfigTemplate("demo-project", false)) as {
-      experimental: { pgdelta: { enabled: boolean }; stack?: boolean };
+      experimental: { pgdelta: { enabled: boolean }; stack?: { enabled: boolean } };
     };
 
     expect(parsed.experimental.pgdelta.enabled).toBe(true);
     expect(parsed.experimental.stack).toBeUndefined();
   });
 
-  it("opts the experimental stack template into stack=true without default listener ports", () => {
+  it("opts the experimental stack template into stack enabled without default listener ports", () => {
     const rendered = renderCliConfigTemplate("demo-project", false, true);
     const parsed = parseJsonc(rendered) as {
       api: Record<string, unknown>;
@@ -290,9 +290,9 @@ describe("project init templates", () => {
     };
 
     expect(rendered).toMatch(
-      /"experimental": \{\n    \/\/ Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\n    "stack": true,\n/,
+      /"experimental": \{\n    "stack": \{\n      \/\/ Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\n      "enabled": true,\n    \},\n/,
     );
-    expect(parsed.experimental.stack).toBe(true);
+    expect(parsed.experimental.stack).toEqual({ enabled: true });
     expect(parsed.experimental.pgdelta.enabled).toBe(true);
     expect(rendered).toContain('// "smtp_port": 54325');
     expect(parsed.api).not.toHaveProperty("port");

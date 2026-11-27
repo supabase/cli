@@ -152,7 +152,7 @@ describe("init", () => {
         db: { major_version: 17 },
         api: { port: 54321 },
       });
-      expect(content).not.toContain('"stack": true');
+      expect(content).not.toContain('"stack": {');
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       expect(yield* fs.exists(path.join(tempDir, "supabase", "config.toml"))).toBe(false);
@@ -650,16 +650,16 @@ describe("init", () => {
     });
   });
 
-  it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+  it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK_ENABLED=1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
-      const { layer, out } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+      const { layer, out } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" } });
 
       yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
-      expect(content).toContain('"stack": true');
+      expect(content).toMatch(/"stack": \{[^}]*"enabled": true/);
       expect(content).not.toMatch(/^\s*"shadow_port": 54320,?$/m);
       expect(content).not.toMatch(/^\s*"port": 54321,?$/m);
       expect(content).not.toMatch(/^\s*"inspector_port": 8083,?$/m);
@@ -672,15 +672,15 @@ describe("init", () => {
       env: {},
       interactive: true,
       expected:
-        "run `SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force`.\nThat replaces supabase/config.jsonc, so only run it before you edit the file.",
+        "run `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 supabase init --force`.\nThat replaces supabase/config.jsonc, so only run it before you edit the file.",
     },
     {
-      env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+      env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
       interactive: true,
       expected: "Experimental local stack enabled in supabase/config.jsonc",
     },
     { env: {}, interactive: false, expected: undefined },
-    { env: { SUPABASE_EXPERIMENTAL_STACK: "0" }, interactive: true, expected: undefined },
+    { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "0" }, interactive: true, expected: undefined },
     {
       env: {},
       interactive: false,
@@ -725,13 +725,13 @@ describe("init", () => {
       name: "keeps --use-orioledb",
       flags: { useOrioledb: true },
       platform: undefined,
-      expected: "`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force --use-orioledb`",
+      expected: "`SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 supabase init --force --use-orioledb`",
     },
     {
       name: "uses PowerShell syntax on Windows",
       flags: {},
       platform: "win32" as const,
-      expected: "`$env:SUPABASE_EXPERIMENTAL_STACK=1; supabase init --force`",
+      expected: "`$env:SUPABASE_EXPERIMENTAL_STACK_ENABLED=1; supabase init --force`",
     },
   ])("stack note rerun command $name", ({ flags, platform, expected }) => {
     const tempDir = tempRoot.current;
@@ -758,30 +758,30 @@ describe("init", () => {
       yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain(
-        `\`SUPABASE_EXPERIMENTAL_STACK=1 supabase init --force --workdir '${path.join(tempDir, "my project")}'\``,
+        `\`SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 supabase init --force --workdir '${path.join(tempDir, "my project")}'\``,
       );
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+  it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK_ENABLED=0", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
-      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "0" } });
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "0" } });
 
       yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.jsonc");
-      expect(content).not.toContain('"stack": true');
+      expect(content).not.toContain('"stack": {');
       expect(content).toContain('"port": 54321');
     });
   });
 
-  it.effect("fails closed when SUPABASE_EXPERIMENTAL_STACK is not a boolean", () => {
+  it.effect("fails closed when SUPABASE_EXPERIMENTAL_STACK_ENABLED is not a boolean", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
-      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "yes" } });
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "yes" } });
 
       const exit = yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(
         Effect.provide(layer),
@@ -792,11 +792,11 @@ describe("init", () => {
       expect(Predicate.isTagged(error, "ExperimentalFeatureFlagError")).toBe(true);
       expect(error).toMatchObject({
         message:
-          'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+          'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.',
       });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
-        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.\n',
+        'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.\n',
         "Try rerunning the command with --debug to troubleshoot the error.\n",
       ]);
     });
