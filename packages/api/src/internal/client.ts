@@ -332,11 +332,17 @@ function applySupabaseRetryPolicy(
         DEFAULT_REQUEST_TIMEOUT_MS;
       const maxRetries = overrides?.retry?.maxRetries ?? options?.maxRetries ?? DEFAULT_MAX_RETRIES;
       const retriesTransportErrors = isIdempotentMethod(request.method);
+      /* A typed call decodes a 2xx body later, so the attempt reads it inside its timeout. */
+      const received = overrides?.readBody
+        ? Effect.tap(requestEffect, (response) =>
+            response.status >= 200 && response.status < 300 ? response.arrayBuffer : Effect.void,
+          )
+        : requestEffect;
       const attempt: Effect.Effect<
         HttpClientResponse.HttpClientResponse,
         HttpClientError.HttpClientError | Cause.TimeoutError,
         never
-      > = Number.isFinite(timeoutMs) ? Effect.timeout(requestEffect, timeoutMs) : requestEffect;
+      > = Number.isFinite(timeoutMs) ? Effect.timeout(received, timeoutMs) : received;
 
       return attempt.pipe(
         Effect.catchIf(Cause.isTimeoutError, (error) =>
@@ -374,10 +380,9 @@ function applySupabaseRetryPolicy(
  * handed to `transformClient` stays fully configured and overridden requests
  * still pass through it, the retry policy, and the timeout.
  */
-const RequestOverrides = Context.Reference<SupabaseApiRequestOptions | undefined>(
-  "@supabase/api/RequestOverrides",
-  { defaultValue: () => undefined },
-);
+const RequestOverrides = Context.Reference<
+  (SupabaseApiRequestOptions & { readonly readBody?: boolean }) | undefined
+>("@supabase/api/RequestOverrides", { defaultValue: () => undefined });
 
 function applyRequestDefaults(
   request: HttpClientRequest.HttpClientRequest,
@@ -658,9 +663,12 @@ function executeRequest(
 ): Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError> {
   return Effect.gen(function* () {
     const request = yield* buildRequest(definition, input);
-    const response = yield* client
-      .execute(request)
-      .pipe(Effect.provideService(RequestOverrides, options));
+    const response = yield* client.execute(request).pipe(
+      Effect.provideService(RequestOverrides, {
+        ...options,
+        readBody: definition.response.kind !== "void",
+      }),
+    );
     return yield* HttpClientResponse.filterStatusOk(response);
   }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } }));
 }

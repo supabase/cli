@@ -1,3 +1,4 @@
+import { parseBoolLiteral } from "../shared/config/config-bool.ts";
 import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import type { ProjectStateMode } from "../shared/config/project-state-mode.ts";
@@ -10,6 +11,7 @@ import {
 } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
+  EnvSignalBooleanKeys,
   EnvSignalPresenceKeys,
   EnvSignalValueKeys,
   GroupOrganization,
@@ -30,6 +32,7 @@ import {
   PropSchemaVersion,
   PropSessionId,
 } from "../shared/telemetry/event-catalog.ts";
+import { telemetrySendsThisRun } from "../shared/telemetry/identity.ts";
 import { scopedPosthogClient } from "../shared/telemetry/posthog-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../shared/telemetry/posthog-config.ts";
@@ -118,6 +121,13 @@ export const collectEnvSignals = Effect.gen(function* () {
         : trimmed;
   }
 
+  for (const key of EnvSignalBooleanKeys) {
+    const raw = yield* Config.option(Config.String(key));
+    if (Option.isNone(raw) || raw.value === "") continue;
+    const parsed = parseBoolLiteral(raw.value);
+    signals[key] = parsed === undefined ? "invalid" : String(parsed);
+  }
+
   return Object.keys(signals).length === 0
     ? Option.none<Record<string, true | string>>()
     : Option.some(signals);
@@ -190,7 +200,7 @@ export const analyticsLayerFor = (mode: ProjectStateMode) =>
       const runtimeInfo = yield* RuntimeInfo;
       const posthogConfig = yield* resolvePosthogConfig(configProvider);
 
-      if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
+      if (!telemetrySendsThisRun(runtime) || Option.isNone(posthogConfig.key)) {
         return Analytics.of({
           capture: () => Effect.void,
           identify: () => Effect.void,

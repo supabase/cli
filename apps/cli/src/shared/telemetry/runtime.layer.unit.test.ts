@@ -104,7 +104,7 @@ describe("telemetryRuntimeLayer", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("treats a malformed telemetry.json as a fresh first run instead of crashing", () =>
+  it.effect("treats an empty telemetry.json as a fresh first run instead of crashing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const homeDir = tempRoot.current;
@@ -120,20 +120,38 @@ describe("telemetryRuntimeLayer", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("silently ignores structurally invalid telemetry.json instead of crashing", () =>
+  it.effect("reads a structurally invalid telemetry.json as an opt-out and leaves it as is", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const homeDir = tempRoot.current;
       const configPath = yield* telemetryConfigPath(homeDir);
-      yield* fs.writeFileString(configPath, yield* encodeJson({ consent: "granted" }));
+      const invalid = yield* encodeJson({ consent: "granted" });
+      yield* fs.writeFileString(configPath, invalid);
 
       yield* Effect.gen(function* () {
         const runtime = yield* TelemetryRuntime;
-        expect(runtime.consent).toBe("granted");
-        expect(runtime.isFirstRun).toBe(true);
-        expect(yield* fs.exists(configPath)).toBe(true);
-      }).pipe(Effect.provide(buildLayer({ homeDir })));
+        expect(runtime.consent).toBe("denied");
+        expect(runtime.isFirstRun).toBe(false);
+        expect(yield* fs.readFileString(configPath)).toBe(invalid);
+      }).pipe(Effect.provide(buildLayer({ homeDir, stdoutIsTty: true })));
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "reads a telemetry.json that cannot be read as an opt-out and does not replace it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homeDir = tempRoot.current;
+        const configPath = yield* telemetryConfigPath(homeDir);
+        yield* fs.makeDirectory(configPath);
+
+        yield* Effect.gen(function* () {
+          const runtime = yield* TelemetryRuntime;
+          expect(runtime.consent).toBe("denied");
+          expect((yield* fs.stat(configPath)).type).toBe("Directory");
+        }).pipe(Effect.provide(buildLayer({ homeDir })));
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("honors a legacy disabled telemetry state", () =>

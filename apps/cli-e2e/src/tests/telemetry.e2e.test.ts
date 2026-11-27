@@ -2,6 +2,10 @@ import { Effect, FileSystem, Path } from "effect";
 import { describe, expect } from "vitest";
 import { runE2e, testBehaviour } from "./test-context.ts";
 
+// The harness opts every run out by env var, and the caller's shell can too. `status` reports
+// either ahead of the file's state.
+const withoutEnvOptOut = { env: { SUPABASE_TELEMETRY_DISABLED: "", DO_NOT_TRACK: "" } };
+
 describe("telemetry", () => {
   describe("telemetry:enable", () => {
     testBehaviour("enables telemetry", ({ run, signal }) =>
@@ -51,7 +55,7 @@ describe("telemetry", () => {
     testBehaviour("shows current telemetry state", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          const result = yield* run(["telemetry", "status"]);
+          const result = yield* run(["telemetry", "status"], withoutEnvOptOut);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toMatch(/Telemetry is (enabled|disabled)\./);
         }),
@@ -62,8 +66,8 @@ describe("telemetry", () => {
     testBehaviour("round-trip: enable then status shows enabled", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          yield* run(["telemetry", "enable"]);
-          const result = yield* run(["telemetry", "status"]);
+          yield* run(["telemetry", "enable"], withoutEnvOptOut);
+          const result = yield* run(["telemetry", "status"], withoutEnvOptOut);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Telemetry is enabled.");
         }),
@@ -74,8 +78,8 @@ describe("telemetry", () => {
     testBehaviour("round-trip: disable then status shows disabled", ({ run, signal }) =>
       runE2e(
         Effect.gen(function* () {
-          yield* run(["telemetry", "disable"]);
-          const result = yield* run(["telemetry", "status"]);
+          yield* run(["telemetry", "disable"], withoutEnvOptOut);
+          const result = yield* run(["telemetry", "status"], withoutEnvOptOut);
           expect(result.exitCode).toBe(0);
           expect(result.stdout).toContain("Telemetry is disabled.");
         }),
@@ -90,13 +94,9 @@ describe("telemetry", () => {
           const path = yield* Path.Path;
           const telemetryPath = path.join(workspace.path, "telemetry.json");
           yield* fs.writeFileString(telemetryPath, "{{not valid json}}");
-          const result = yield* run(["telemetry", "status"]);
+          const result = yield* run(["telemetry", "status"], withoutEnvOptOut);
           expect(result.exitCode).toBe(0);
-          expect(result.stdout).toContain("Telemetry is enabled.");
-          const telemetry = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
-            yield* fs.readFile(telemetryPath),
-          );
-          expect(() => JSON.parse(telemetry)).not.toThrow();
+          expect(result.stdout).toContain("Telemetry is disabled.");
         }),
         signal,
       ),

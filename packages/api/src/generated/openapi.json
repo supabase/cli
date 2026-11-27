@@ -11159,6 +11159,16 @@
           "201": {
             "description": ""
           },
+          "400": {
+            "description": "The project does not have the PITR add-on, or the request cannot be fulfilled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized"
           },
@@ -12008,7 +12018,7 @@
     },
     "/v2/projects/{ref}/warehouse/replication/restart": {
       "post": {
-        "description": "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-restart-warehouse-replication",
         "parameters": [
           {
@@ -12600,7 +12610,7 @@
     },
     "/v2/projects/{ref}/warehouse/capacity": {
       "get": {
-        "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "description": "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time\nrange, using the project’s stored Warehouse placement. Use `since` or both `from` and `to`;\nthe default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges,\n`rate_window_seconds`, source-sample freshness, availability, coverage, and full series with\ndimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission\nincludes active plus pending grants. The configured admission limit does not imply an open\ngate or spare capacity. Missing, stale, and insufficient observations remain unavailable or\n`null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time.\nRates and latency quantiles describe the effective rate window at each point, not the entire\nrequested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not\ndiscard the other results. No raw queries or backend selectors are accepted.\n\nThis endpoint is currently in its **Alpha** stage.",
         "operationId": "v2-get-warehouse-capacity",
         "parameters": [
           {
@@ -12652,7 +12662,7 @@
             "name": "attributes",
             "required": false,
             "in": "query",
-            "description": "Up to eight distinct measurements. Defaults to query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_p95, activation_duration_p95. Supply a comma-separated list. Allowed measurements: query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_mean, assignment_wait_p95, activation_rate, activation_duration_mean, activation_duration_p95.",
+            "description": "Up to eight distinct measurements. Defaults to `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_p95`, `activation_duration_p95`. Supply a comma-separated list. Allowed measurements: `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_mean`, `assignment_wait_p95`, `activation_rate`, `activation_duration_mean`, `activation_duration_p95`.",
             "schema": {
               "type": "string"
             }
@@ -12661,7 +12671,7 @@
             "name": "interval",
             "required": false,
             "in": "query",
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+            "description": "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
             "schema": {
               "type": "string",
               "enum": ["1m", "5m", "10m", "30m", "1h", "1d"]
@@ -12836,7 +12846,7 @@
             "name": "attributes",
             "required": false,
             "in": "query",
-            "description": "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+            "description": "Up to eight distinct measurements. Defaults to `ingestion_events_received_rate`, `ingestion_events_processed_rate`, `ingestion_bytes_received_rate`, `ingestion_bytes_processed_rate`, `replication_wal_lag_bytes`, `replication_receive_wal_lag_bytes`. Supply a comma-separated list. Allowed measurements: `ingestion_events_received_rate`, `ingestion_events_processed_rate`, `ingestion_bytes_received_rate`, `ingestion_bytes_processed_rate`, `replication_wal_lag_bytes`, `replication_receive_wal_lag_bytes`.",
             "schema": {
               "type": "string"
             }
@@ -12845,7 +12855,7 @@
             "name": "interval",
             "required": false,
             "in": "query",
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate windows are at least 5m.",
+            "description": "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate windows are at least 5m.",
             "schema": {
               "type": "string",
               "enum": ["1m", "5m", "10m", "30m", "1h", "1d"]
@@ -13020,7 +13030,7 @@
             "name": "attributes",
             "required": false,
             "in": "query",
-            "description": "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+            "description": "Up to eight distinct measurements. Defaults to `maintenance_pause_active`, `maintenance_run_rate`, `inline_flush_rows_rate`, `table_active_data_file_avg_size_bytes_mean`, `table_small_file_ratio_mean`, `table_deleted_row_ratio_mean`, `catalog_deletion_backlog_bytes`, `catalog_oldest_deletion_age`. Supply a comma-separated list. Allowed measurements: `maintenance_request_rate`, `maintenance_pause_active`, `maintenance_pause_duration_mean`, `maintenance_run_rate`, `maintenance_results_available`, `maintenance_merge_adjacent_files_created_rate`, `maintenance_rewrite_data_files_created_rate`, `maintenance_expired_snapshots_rate`, `maintenance_cleaned_up_files_rate`, `inline_flush_rows_rate`, `inline_flush_rows_mean`, `inline_flush_duration_mean`, `table_active_data_files_mean`, `table_active_data_bytes_mean`, `table_active_data_file_avg_size_bytes_mean`, `table_small_file_ratio_mean`, `table_active_delete_files_mean`, `table_active_delete_bytes_mean`, `table_deleted_row_ratio_mean`, `table_inlined_data_bytes`, `catalog_active_data_files`, `catalog_snapshots`, `catalog_oldest_snapshot_age`, `catalog_deletion_backlog_files`, `catalog_deletion_backlog_bytes`, `catalog_oldest_deletion_age`.",
             "schema": {
               "type": "string"
             }
@@ -13029,7 +13039,7 @@
             "name": "interval",
             "required": false,
             "in": "query",
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+            "description": "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
             "schema": {
               "type": "string",
               "enum": ["1m", "5m", "10m", "30m", "1h", "1d"]
@@ -13204,7 +13214,7 @@
             "name": "attributes",
             "required": false,
             "in": "query",
-            "description": "Up to eight distinct measurements. Defaults to query_rate, query_duration_p50, query_duration_p95, query_duration_p99, query_error_rate, query_timeout_rate. Supply a comma-separated list. Allowed measurements: query_rate, query_error_rate, query_timeout_rate, query_canceled_rate, query_duration_mean, query_duration_p50, query_duration_p95, query_duration_p99, duckdb_duration_mean, rpc_rate, rpc_duration_mean, rpc_duration_p95.",
+            "description": "Up to eight distinct measurements. Defaults to `query_rate`, `query_duration_p50`, `query_duration_p95`, `query_duration_p99`, `query_error_rate`, `query_timeout_rate`. Supply a comma-separated list. Allowed measurements: `query_rate`, `query_error_rate`, `query_timeout_rate`, `query_canceled_rate`, `query_duration_mean`, `query_duration_p50`, `query_duration_p95`, `query_duration_p99`, `duckdb_duration_mean`, `rpc_rate`, `rpc_duration_mean`, `rpc_duration_p95`.",
             "schema": {
               "type": "string"
             }
@@ -13213,7 +13223,7 @@
             "name": "interval",
             "required": false,
             "in": "query",
-            "description": "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+            "description": "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
             "schema": {
               "type": "string",
               "enum": ["1m", "5m", "10m", "30m", "1h", "1d"]
@@ -15330,9 +15340,107 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["infra", "control-plane"],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
         "x-fga-permissions": [["backups_write"]],
         "x-oauth-scope": "database:write"
+      }
+    },
+    "/v2/projects/{ref}/backups/downloadable-backups": {
+      "get": {
+        "operationId": "v2-project-get-downloadable-backups",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadableBackupsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to get project backups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Gets backups that might be downloadable, but potentially not restorable.",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
+        "x-fga-permissions": [["backups_read"]],
+        "x-oauth-scope": "database:read"
       }
     },
     "/v2/projects/{ref}/branches": {
@@ -15659,18 +15767,22 @@
             "in": "query",
             "schema": {
               "properties": {
-                "size": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "minLength": 1
                 },
                 "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
                   "type": "string",
                   "minLength": 1
                 },
-                "before": {
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
                   "type": "string",
-                  "minLength": 1
+                  "pattern": "^-?\\d+$"
                 }
               },
               "type": "object"
@@ -17197,6 +17309,906 @@
         "x-scalar-stability": "experimental"
       }
     },
+    "/v2/projects/{ref}/database/clone/cloneable-backups": {
+      "get": {
+        "operationId": "v2-projects-database-cloneable-backups",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloneableBackupsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to list cloneable backups candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the valid physical backups that can be used to clone into a new project",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
+        "x-fga-permissions": [["backups_read"]],
+        "x-oauth-scope": "database:read"
+      }
+    },
+    "/v2/projects/{ref}/database/clone/status": {
+      "get": {
+        "operationId": "v2-projects-database-clone-status",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloneStatusResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request for clone project status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to retrieve clone project status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve the current status of an existing cloning process",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
+        "x-fga-permissions": [["backups_read"]],
+        "x-oauth-scope": "database:read"
+      }
+    },
+    "/v2/projects/{ref}/environments/{environment}/variables": {
+      "get": {
+        "description": "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-list-environment-variables",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListEnvironmentVariablesResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List variables of an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: environment:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_variables_read"]],
+        "x-oauth-scope": "environment:read",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/environments/{environment}/variables/{name}": {
+      "put": {
+        "description": "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-set-environment-variable",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "description": "Name of the variable or secret. Variables and secrets share one namespace. Must not start with the SUPABASE_ prefix.",
+            "schema": {
+              "maxLength": 256,
+              "pattern": "^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+              "example": "API_URL",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2SetEnvironmentVariableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2EnvironmentVariableResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name belongs to a secret of the environment, or the environment holds the maximum number of entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create or replace a variable in an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: environment:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_variables_write"]],
+        "x-oauth-scope": "environment:write",
+        "x-scalar-stability": "experimental"
+      },
+      "delete": {
+        "description": "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-delete-environment-variable",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "description": "Name of the variable or secret. Variables and secrets share one namespace. Must not start with the SUPABASE_ prefix.",
+            "schema": {
+              "maxLength": 256,
+              "pattern": "^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+              "example": "API_URL",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Variable not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a variable from an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: environment:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_variables_write"]],
+        "x-oauth-scope": "environment:write",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/environments/{environment}/secrets": {
+      "get": {
+        "description": "Returns the names of the secrets. Secret values are never returned.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-list-environment-secrets",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListEnvironmentSecretsResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List secrets of an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: secrets:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_secrets_read"]],
+        "x-oauth-scope": "secrets:read",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/environments/{environment}/secrets/{name}": {
+      "put": {
+        "description": "Encrypts the value with the environment's data encryption key and stores it. The value cannot be read back.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-set-environment-secret",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "description": "Name of the variable or secret. Variables and secrets share one namespace. Must not start with the SUPABASE_ prefix.",
+            "schema": {
+              "maxLength": 256,
+              "pattern": "^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+              "example": "API_URL",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2SetEnvironmentSecretRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2EnvironmentSecretResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name belongs to a variable of the environment, or the environment holds the maximum number of entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create or replace a secret in an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: secrets:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_secrets_write"]],
+        "x-oauth-scope": "secrets:write",
+        "x-scalar-stability": "experimental"
+      },
+      "delete": {
+        "description": "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
+        "operationId": "v2-delete-environment-secret",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment",
+            "required": true,
+            "in": "path",
+            "description": "Environment of the project. The default branch uses `production`, every other branch `development`.",
+            "schema": {
+              "type": "string",
+              "enum": ["production", "development"]
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "description": "Name of the variable or secret. Variables and secrets share one namespace. Must not start with the SUPABASE_ prefix.",
+            "schema": {
+              "maxLength": 256,
+              "pattern": "^(?!SUPABASE_)[A-Za-z_][A-Za-z0-9_]*$",
+              "example": "API_URL",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "Not the root project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a secret from an environment",
+        "tags": ["Environments"],
+        "x-badges": [
+          {
+            "name": "Beta",
+            "position": "before"
+          },
+          {
+            "name": "OAuth scope: secrets:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["environment_secrets_write"]],
+        "x-oauth-scope": "secrets:write",
+        "x-scalar-stability": "experimental"
+      }
+    },
     "/v2/organizations/{slug}/roles": {
       "get": {
         "description": "Returns a list of org-level roles for the organization.",
@@ -17498,20 +18510,24 @@
             "in": "query",
             "schema": {
               "properties": {
-                "size": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                 },
                 "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
                   "type": "string",
                   "format": "uuid",
                   "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                 },
-                "before": {
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
                   "type": "string",
-                  "format": "uuid",
-                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  "pattern": "^-?\\d+$"
                 }
               },
               "type": "object"
@@ -17842,18 +18858,22 @@
             "in": "query",
             "schema": {
               "properties": {
-                "size": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "minLength": 1
                 },
                 "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
                   "type": "string",
                   "minLength": 1
                 },
-                "before": {
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
                   "type": "string",
-                  "minLength": 1
+                  "pattern": "^-?\\d+$"
                 }
               },
               "type": "object"
@@ -17964,26 +18984,28 @@
             "in": "query",
             "schema": {
               "properties": {
-                "size": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "minLength": 20,
+                  "maxLength": 20,
+                  "pattern": "^[a-z]+$",
+                  "example": "abcdefghijklmnopqrst"
                 },
                 "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
                   "type": "string",
                   "minLength": 20,
                   "maxLength": 20,
                   "pattern": "^[a-z]+$",
-                  "description": "Project ref",
                   "example": "abcdefghijklmnopqrst"
                 },
-                "before": {
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
                   "type": "string",
-                  "minLength": 20,
-                  "maxLength": 20,
-                  "pattern": "^[a-z]+$",
-                  "description": "Project ref",
-                  "example": "abcdefghijklmnopqrst"
+                  "pattern": "^-?\\d+$"
                 }
               },
               "type": "object"
@@ -18177,23 +19199,25 @@
           },
           {
             "in": "query",
-            "name": "page[offset]",
+            "name": "page",
             "schema": {
-              "default": "0",
-              "type": "string",
-              "pattern": "^\\d+$"
+              "type": "object",
+              "properties": {
+                "offset": {
+                  "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
+                  "default": "0",
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                },
+                "limit": {
+                  "description": "Up to how many records to return.",
+                  "default": "20",
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              }
             },
-            "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend."
-          },
-          {
-            "in": "query",
-            "name": "page[limit]",
-            "schema": {
-              "default": "20",
-              "type": "string",
-              "pattern": "^\\d+$"
-            },
-            "description": "Up to how many records to return."
+            "style": "deepObject"
           }
         ],
         "tags": ["Project webhooks"],
@@ -23128,33 +24152,32 @@
           },
           {
             "in": "query",
-            "name": "page[before]",
+            "name": "page",
             "schema": {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "type": "object",
+              "properties": {
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
+                  "type": "string",
+                  "pattern": "^-?\\d+$"
+                }
+              }
             },
-            "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param."
-          },
-          {
-            "in": "query",
-            "name": "page[after]",
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-            },
-            "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param."
-          },
-          {
-            "in": "query",
-            "name": "page[size]",
-            "schema": {
-              "default": "20",
-              "type": "string",
-              "pattern": "^\\d+$"
-            },
-            "description": "Up to how many records to return."
+            "style": "deepObject"
           }
         ],
         "tags": ["Project webhooks"],
@@ -26581,23 +27604,25 @@
           },
           {
             "in": "query",
-            "name": "page[offset]",
+            "name": "page",
             "schema": {
-              "default": "0",
-              "type": "string",
-              "pattern": "^\\d+$"
+              "type": "object",
+              "properties": {
+                "offset": {
+                  "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend.",
+                  "default": "0",
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                },
+                "limit": {
+                  "description": "Up to how many records to return.",
+                  "default": "20",
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              }
             },
-            "description": "Offset for offset-based pagination.\n\nOffset should be dividable by `page[limit]` without a reminder (`offset % limit === 0`), otherwise it will cause weird behavior when used on a frontend."
-          },
-          {
-            "in": "query",
-            "name": "page[limit]",
-            "schema": {
-              "default": "20",
-              "type": "string",
-              "pattern": "^\\d+$"
-            },
-            "description": "Up to how many records to return."
+            "style": "deepObject"
           }
         ],
         "tags": ["Organization webhooks"],
@@ -31520,33 +32545,32 @@
           },
           {
             "in": "query",
-            "name": "page[before]",
+            "name": "page",
             "schema": {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "type": "object",
+              "properties": {
+                "before": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "after": {
+                  "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param.",
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "size": {
+                  "description": "Up to how many records to return.\n\nMinimum: 1. Maximum: 100.",
+                  "example": "10",
+                  "default": "20",
+                  "type": "string",
+                  "pattern": "^-?\\d+$"
+                }
+              }
             },
-            "description": "Cursor in cursor-based pagination to return up to `page[size]` records before (exclusive) the entry specified by this query param."
-          },
-          {
-            "in": "query",
-            "name": "page[after]",
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-            },
-            "description": "Cursor in cursor-based pagination to return up to `page[size]` records after (exclusive) the entry specified by this query param."
-          },
-          {
-            "in": "query",
-            "name": "page[size]",
-            "schema": {
-              "default": "20",
-              "type": "string",
-              "pattern": "^\\d+$"
-            },
-            "description": "Up to how many records to return."
+            "style": "deepObject"
           }
         ],
         "tags": ["Organization webhooks"],
@@ -35198,7 +36222,7 @@
                 "description": "Entitlement feature key that failed the check"
               },
               "upgrade_url": {
-                "description": "Billing page URL for the organization, present when the org is resolvable",
+                "description": "Dashboard URL where the feature can be unlocked: the organization billing page, or the project add-ons page when a per-project add-on is missing. Present when the organization or project is resolvable",
                 "type": "string"
               }
             },
@@ -45008,6 +46032,7 @@
               "compute_not_enabled",
               "compute_request_rejected",
               "compute_unavailable",
+              "environment_root_project_required",
               "environment_secret_not_found",
               "environment_variable_already_exists",
               "environment_variable_limit_reached",
@@ -47221,7 +48246,7 @@
                           }
                         },
                         "required": ["code", "message"],
-                        "description": "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are omitted.",
+                        "description": "Safe classification of the current runtime failure. Includes static customer guidance, without exit codes, provider messages or worker logs; does not establish its underlying cause. Unrecognized or malformed diagnostics are returned as `null`.",
                         "nullable": true
                       },
                       "status": {
@@ -49967,6 +50992,48 @@
         },
         "required": ["data"]
       },
+      "DownloadableBackupsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_downloadable_backup"]
+                },
+                "id": {
+                  "type": "number"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "is_physical_backup": {
+                      "type": "boolean"
+                    },
+                    "inserted_at": {
+                      "type": "string"
+                    },
+                    "project_ref": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]
+                    }
+                  },
+                  "required": ["is_physical_backup", "inserted_at", "project_ref", "status"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
       "V2CreateBranchRequest": {
         "type": "object",
         "properties": {
@@ -52337,6 +53404,326 @@
         },
         "required": ["data"]
       },
+      "CloneableBackupsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_cloneable_backup"]
+                },
+                "id": {
+                  "type": "number"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "is_physical_backup": {
+                      "type": "boolean"
+                    },
+                    "inserted_at": {
+                      "type": "string"
+                    },
+                    "project_ref": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]
+                    }
+                  },
+                  "required": ["is_physical_backup", "inserted_at", "project_ref", "status"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "CloneStatusResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_clone_status"]
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "inserted_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "target_project": {
+                      "type": "object",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["ref", "name"],
+                      "description": "The destination cloned project"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["COMPLETED", "IN_PROGRESS", "FAILED", "REMOVED"],
+                      "description": "The cloning status"
+                    }
+                  },
+                  "required": ["inserted_at", "updated_at", "target_project", "status"]
+                }
+              },
+              "required": ["type", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ListEnvironmentVariablesResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["environment_variable"]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Name of the variable or secret."
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 24576,
+                      "description": "Value of the variable."
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    }
+                  },
+                  "required": ["value", "created_at", "updated_at"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "V2SetEnvironmentVariableRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["environment_variable"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24576,
+                    "pattern": "^[^\\r\\n]*$",
+                    "description": "Value of the variable. Must be a single line. Escape line breaks yourself, for example as `\\n`."
+                  }
+                },
+                "required": ["value"]
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2EnvironmentVariableResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["environment_variable"]
+              },
+              "id": {
+                "type": "string",
+                "description": "Name of the variable or secret."
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24576,
+                    "description": "Value of the variable."
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  }
+                },
+                "required": ["value", "created_at", "updated_at"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ListEnvironmentSecretsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["environment_secret"]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Name of the variable or secret."
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    }
+                  },
+                  "required": ["created_at", "updated_at"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "V2SetEnvironmentSecretRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["environment_secret"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24576,
+                    "pattern": "^[^\\r\\n]*$",
+                    "description": "Value of the secret. It is encrypted at rest and never returned by the API. Must be a single line. Escape line breaks yourself, for example as `\\n`."
+                  }
+                },
+                "required": ["value"]
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2EnvironmentSecretResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["environment_secret"]
+              },
+              "id": {
+                "type": "string",
+                "description": "Name of the variable or secret."
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  }
+                },
+                "required": ["created_at", "updated_at"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
       "V2ListRolesResponse_Output": {
         "type": "object",
         "properties": {
@@ -52474,6 +53861,7 @@
                   "compute_not_enabled",
                   "compute_request_rejected",
                   "compute_unavailable",
+                  "environment_root_project_required",
                   "environment_secret_not_found",
                   "environment_variable_already_exists",
                   "environment_variable_limit_reached",

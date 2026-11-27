@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { Clock, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
@@ -101,7 +101,7 @@ describe("readTelemetryConfig", () => {
 
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.some(expected));
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("decodes a legacy disabled telemetry state as denied consent", () =>
@@ -127,7 +127,7 @@ describe("readTelemetryConfig", () => {
           session_last_active: Date.parse("2026-04-01T12:00:00Z"),
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("decodes a legacy enabled telemetry state as granted consent", () =>
@@ -155,7 +155,7 @@ describe("readTelemetryConfig", () => {
           distinct_id: "user-123",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("keeps an overflowed session_last_active and the persisted consent", () =>
@@ -175,7 +175,7 @@ describe("readTelemetryConfig", () => {
           session_last_active: Infinity,
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("decodes a legacy state whose schema_version overflowed", () =>
@@ -195,26 +195,39 @@ describe("readTelemetryConfig", () => {
           session_last_active: Date.parse("2026-04-01T12:00:00Z"),
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("returns none for malformed JSON instead of throwing", () =>
+  it.effect("returns none for an empty file instead of throwing", () =>
     Effect.gen(function* () {
       const dir = tempRoot.current;
       yield* writeTelemetryFile(dir, "");
 
       const config = yield* readTelemetryConfig(dir);
       expect(config).toEqual(Option.none());
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
-  it.effect("returns none for structurally invalid telemetry config", () =>
-    Effect.gen(function* () {
-      const dir = tempRoot.current;
-      yield* writeTelemetryFile(dir, yield* encodeJson({ consent: "granted" }));
+  for (const [name, content] of [
+    [
+      "an opt-out with an unparsable timestamp",
+      '{"enabled":false,"device_id":"d","session_id":"s","session_last_active":"not-a-time"}',
+    ],
+    [
+      "granted consent with an empty device id",
+      '{"consent":"granted","device_id":"","session_id":"s","session_last_active":1}',
+    ],
+  ] as const) {
+    it.effect(`reads ${name} as an opt-out with fresh ids`, () =>
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        yield* writeTelemetryFile(dir, content);
 
-      const config = yield* readTelemetryConfig(dir);
-      expect(config).toEqual(Option.none());
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+        const config = Option.getOrThrow(yield* readTelemetryConfig(dir));
+        expect(config.consent).toBe("denied");
+        expect(config.device_id).not.toBe("d");
+        expect(config.device_id.length).toBeGreaterThan(0);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  }
 });

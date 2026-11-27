@@ -1429,7 +1429,7 @@ describe("makeSupabaseApiClient", () => {
 
         yield* client.execute(operationDefinitions.v2ListNotebooks, {
           ref: "abcdefghijklmnopqrst",
-          page: { size: 100, after: "cursor-1" },
+          page: { size: "100", after: "cursor-1" },
           filter: { name: "sales" },
         });
 
@@ -1764,6 +1764,38 @@ describe("retry policy", () => {
 
           expect(attempts).toBe(1);
           expect(exit).toEqual(Exit.succeed([]));
+        }),
+      ));
+
+    test("requestTimeoutMs also bounds reading a successful response body", () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const { requestTimes, exit } = yield* onVirtualClock(
+            Effect.gen(function* () {
+              const encoder = new TextEncoder();
+              let finishBody = () => {};
+              const body = new ReadableStream<Uint8Array>({
+                start: (controller) => {
+                  controller.enqueue(encoder.encode("["));
+                  finishBody = () => {
+                    controller.enqueue(encoder.encode("]"));
+                    controller.close();
+                  };
+                },
+              });
+              const call = yield* startVirtualCall(
+                listProjectsWith({ maxRetries: 0, requestTimeoutMs: 1000 }),
+                (request) => HttpClientResponse.fromWeb(request, new Response(body)),
+              );
+              yield* TestClock.adjust(Duration.seconds(1));
+              yield* Effect.sync(finishBody);
+              return { requestTimes: call.requestTimes, exit: yield* Fiber.join(call.fiber) };
+            }),
+          );
+
+          const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+          expect(requestTimes).toHaveLength(1);
+          expect(error).toMatchObject({ reason: { description: "request timed out" } });
         }),
       ));
   });

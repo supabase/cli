@@ -175,7 +175,7 @@ export const apiCommands = [
     definition: "v2GetWarehouseCapacity",
     summary: "Inspect Warehouse capacity diagnostics",
     description:
-      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time range, using the project’s stored Warehouse placement. Use since or both from and to; the default is the last 30 minutes. Each measurement includes its definition, unit, aggregation, requested and effective ranges, rate_window_seconds, source-sample freshness, availability, coverage, and full series with dimension labels such as reason, kind, and result. Executor invocations in flight are distinct from worker admission grants. Occupied admission includes active plus pending grants. The configured admission limit does not imply an open gate or spare capacity. Missing, stale, and insufficient observations remain unavailable or null; they do not establish healthy or idle capacity. Point timestamps are evaluation times; last_sample_at is the original source-sample time. Rates and latency quantiles describe the effective rate window at each point, not the entire requested range. Each request returns up to eight measurements, and a failure of one measurement does not discard the other results. No raw queries or backend selectors are accepted.",
+      "Returns capacity, admission, assignment-wait, and activation measurements over a bounded time\nrange, using the project’s stored Warehouse placement. Use `since` or both `from` and `to`;\nthe default is the last 30 minutes.\n\nEach measurement includes its definition, unit, aggregation, requested and effective ranges,\n`rate_window_seconds`, source-sample freshness, availability, coverage, and full series with\ndimension labels such as `reason`, `kind`, and `result`.\n\nExecutor invocations in flight are distinct from worker admission grants. Occupied admission\nincludes active plus pending grants. The configured admission limit does not imply an open\ngate or spare capacity. Missing, stale, and insufficient observations remain unavailable or\n`null`; they do not establish healthy or idle capacity.\n\nPoint timestamps are evaluation times; `last_sample_at` is the original source-sample time.\nRates and latency quantiles describe the effective rate window at each point, not the entire\nrequested range.\n\nEach request returns up to eight measurements, and a failure of one measurement does not\ndiscard the other results. No raw queries or backend selectors are accepted.",
     readOnly: true,
     flags: [
       {
@@ -208,7 +208,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_p95, activation_duration_p95. Supply a comma-separated list. Allowed measurements: query_in_flight, worker_admission_limit, worker_admission_active, worker_admission_pending, worker_admission_occupied, admission_rejection_rate, assignment_wait_mean, assignment_wait_p95, activation_rate, activation_duration_mean, activation_duration_p95.",
+          "Up to eight distinct measurements. Defaults to `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_p95`, `activation_duration_p95`. Supply a comma-separated list. Allowed measurements: `query_in_flight`, `worker_admission_limit`, `worker_admission_active`, `worker_admission_pending`, `worker_admission_occupied`, `admission_rejection_rate`, `assignment_wait_mean`, `assignment_wait_p95`, `activation_rate`, `activation_duration_mean`, `activation_duration_p95`.",
       },
       {
         name: "interval",
@@ -217,7 +217,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+          "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -297,7 +297,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes. Supply a comma-separated list. Allowed measurements: ingestion_events_received_rate, ingestion_events_processed_rate, ingestion_bytes_received_rate, ingestion_bytes_processed_rate, replication_wal_lag_bytes, replication_receive_wal_lag_bytes.",
+          "Up to eight distinct measurements. Defaults to `ingestion_events_received_rate`, `ingestion_events_processed_rate`, `ingestion_bytes_received_rate`, `ingestion_bytes_processed_rate`, `replication_wal_lag_bytes`, `replication_receive_wal_lag_bytes`. Supply a comma-separated list. Allowed measurements: `ingestion_events_received_rate`, `ingestion_events_processed_rate`, `ingestion_bytes_received_rate`, `ingestion_bytes_processed_rate`, `replication_wal_lag_bytes`, `replication_receive_wal_lag_bytes`.",
       },
       {
         name: "interval",
@@ -306,7 +306,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate windows are at least 5m.",
+          "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate windows are at least 5m.",
       },
     ],
     bindings: [
@@ -386,7 +386,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to query_rate, query_duration_p50, query_duration_p95, query_duration_p99, query_error_rate, query_timeout_rate. Supply a comma-separated list. Allowed measurements: query_rate, query_error_rate, query_timeout_rate, query_canceled_rate, query_duration_mean, query_duration_p50, query_duration_p95, query_duration_p99, duckdb_duration_mean, rpc_rate, rpc_duration_mean, rpc_duration_p95.",
+          "Up to eight distinct measurements. Defaults to `query_rate`, `query_duration_p50`, `query_duration_p95`, `query_duration_p99`, `query_error_rate`, `query_timeout_rate`. Supply a comma-separated list. Allowed measurements: `query_rate`, `query_error_rate`, `query_timeout_rate`, `query_canceled_rate`, `query_duration_mean`, `query_duration_p50`, `query_duration_p95`, `query_duration_p99`, `duckdb_duration_mean`, `rpc_rate`, `rpc_duration_mean`, `rpc_duration_p95`.",
       },
       {
         name: "interval",
@@ -395,7 +395,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+          "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -475,7 +475,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Up to eight distinct measurements. Defaults to maintenance_pause_active, maintenance_run_rate, inline_flush_rows_rate, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_deleted_row_ratio_mean, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age. Supply a comma-separated list. Allowed measurements: maintenance_request_rate, maintenance_pause_active, maintenance_pause_duration_mean, maintenance_run_rate, maintenance_results_available, maintenance_merge_adjacent_files_created_rate, maintenance_rewrite_data_files_created_rate, maintenance_expired_snapshots_rate, maintenance_cleaned_up_files_rate, inline_flush_rows_rate, inline_flush_rows_mean, inline_flush_duration_mean, table_active_data_files_mean, table_active_data_bytes_mean, table_active_data_file_avg_size_bytes_mean, table_small_file_ratio_mean, table_active_delete_files_mean, table_active_delete_bytes_mean, table_deleted_row_ratio_mean, table_inlined_data_bytes, catalog_active_data_files, catalog_snapshots, catalog_oldest_snapshot_age, catalog_deletion_backlog_files, catalog_deletion_backlog_bytes, catalog_oldest_deletion_age.",
+          "Up to eight distinct measurements. Defaults to `maintenance_pause_active`, `maintenance_run_rate`, `inline_flush_rows_rate`, `table_active_data_file_avg_size_bytes_mean`, `table_small_file_ratio_mean`, `table_deleted_row_ratio_mean`, `catalog_deletion_backlog_bytes`, `catalog_oldest_deletion_age`. Supply a comma-separated list. Allowed measurements: `maintenance_request_rate`, `maintenance_pause_active`, `maintenance_pause_duration_mean`, `maintenance_run_rate`, `maintenance_results_available`, `maintenance_merge_adjacent_files_created_rate`, `maintenance_rewrite_data_files_created_rate`, `maintenance_expired_snapshots_rate`, `maintenance_cleaned_up_files_rate`, `inline_flush_rows_rate`, `inline_flush_rows_mean`, `inline_flush_duration_mean`, `table_active_data_files_mean`, `table_active_data_bytes_mean`, `table_active_data_file_avg_size_bytes_mean`, `table_small_file_ratio_mean`, `table_active_delete_files_mean`, `table_active_delete_bytes_mean`, `table_deleted_row_ratio_mean`, `table_inlined_data_bytes`, `catalog_active_data_files`, `catalog_snapshots`, `catalog_oldest_snapshot_age`, `catalog_deletion_backlog_files`, `catalog_deletion_backlog_bytes`, `catalog_oldest_deletion_age`.",
       },
       {
         name: "interval",
@@ -484,7 +484,7 @@ export const apiCommands = [
         repeatable: false,
         required: false,
         description:
-          "Defaults to 1m. The effective step increases to stay within 1441 points per series. Rate and latency windows are at least 5m.",
+          "Defaults to 1m. The effective step increases to stay within 1,441 points per series. Rate and latency windows are at least 5m.",
       },
     ],
     bindings: [
@@ -633,7 +633,7 @@ export const apiCommands = [
     definition: "v2RestartWarehouseReplication",
     summary: "Start or restart Warehouse replication",
     description:
-      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. A failed pod with an active desired workload needs restart; start alone can leave it unchanged. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.",
+      "Starts a stopped managed pipeline or restarts a starting, started or failed pipeline, preserving the selected tables and saved layouts. Restart interrupts replication; in-progress initial copies may restart from scratch. If lost-slot recreation is configured, startup can rebuild destination tables. The response confirms acceptance only. Incomplete setup markers are preserved and require a successful setup retry. Inspect warehouse status for runtime diagnostics and observed table progress; these observations do not identify completion of this request. Inspect state before retrying an uncertain response.",
     readOnly: false,
     confirmDescription: true,
     flags: [],

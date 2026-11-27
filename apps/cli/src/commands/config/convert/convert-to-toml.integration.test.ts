@@ -43,6 +43,7 @@ interface SetupOpts {
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly promptSelectInterrupt?: boolean;
   readonly consent?: "granted" | "denied";
+  readonly firstRun?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -65,7 +66,11 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     mockTty({ stdinIsTty: opts.interactive ?? false, stdoutIsTty: opts.interactive ?? false }),
-    mockTelemetryRuntime({ consent: opts.consent ?? "granted" }),
+    mockTelemetryRuntime({
+      consent: opts.consent ?? "granted",
+      isFirstRun: opts.firstRun ?? false,
+      isTty: opts.interactive ?? false,
+    }),
     Layer.succeed(CommandTelemetryAttributes, {
       record: (values) => Effect.sync(() => void recorded.push(values)),
     }),
@@ -231,6 +236,19 @@ describe("config convert --to toml integration", () => {
 
   it.effect("does not ask for a reason when telemetry is opted out", () => {
     const { layer, out, recorded } = setup({ interactive: true, consent: "denied" });
+    return Effect.gen(function* () {
+      yield* writeFile(["supabase", "config.jsonc"], SIMPLE_JSONC);
+
+      yield* run().pipe(Effect.provide(layer));
+
+      expect(yield* exists("supabase", "config.toml")).toBe(true);
+      expect(out.promptSelectCalls).toEqual([]);
+      expect(reasonsRecorded(recorded)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.effect("does not ask for a reason on the first interactive run", () => {
+    const { layer, out, recorded } = setup({ interactive: true, firstRun: true });
     return Effect.gen(function* () {
       yield* writeFile(["supabase", "config.jsonc"], SIMPLE_JSONC);
 
