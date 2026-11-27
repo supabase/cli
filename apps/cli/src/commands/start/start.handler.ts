@@ -96,6 +96,10 @@ import { resolveConfigSubtree } from "../../config/cli-config-subtree.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { configFileRefOf } from "../../command-internal/config-advice.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
+import {
+  parseFileSizeLimit,
+  resolveBucketProps,
+} from "../../command-internal/storage-bucket-config.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import {
   dbNotRunningError,
@@ -115,6 +119,7 @@ import {
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import type { StartFlags } from "./start.command.ts";
 import {
+  StartBucketFileSizeLimitError,
   StartConfigLoadError,
   StartInvalidConfigError,
   StartSnippetsDirectoryError,
@@ -539,6 +544,36 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     );
     yield* warnIfPostgres14Deprecated(config.db.major_version);
 
+    // Storage caps every upload at `storage.file_size_limit`, so a larger bucket limit can never
+    // take effect, and Storage rejects creating such a bucket.
+    const gates = resolveStartGates({ config, excludedKeys });
+    if (gates.storage) {
+      const storageFileSizeLimitBytes = yield* wrapConfigOverride("storage.file_size_limit", () =>
+        parseFileSizeLimit(config.storage.file_size_limit),
+      );
+      const oversizedBuckets = yield* tryStartConfig(() =>
+        Object.entries(config.storage.buckets ?? {}).filter(
+          ([name, bucket]) =>
+            resolveBucketProps({
+              document: context.document,
+              name,
+              bucket,
+              storageFileSizeLimitBytes,
+            }).fileSizeLimit > storageFileSizeLimitBytes,
+        ),
+      );
+      if (oversizedBuckets.length > 0) {
+        return yield* new StartBucketFileSizeLimitError({
+          message: `${oversizedBuckets
+            .map(
+              ([name, bucket]) =>
+                `storage.buckets.${name}.file_size_limit (${bucket.file_size_limit}) exceeds storage.file_size_limit (${config.storage.file_size_limit}).`,
+            )
+            .join("\n")}\nRaise storage.file_size_limit or lower the bucket limit.`,
+        });
+      }
+    }
+
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = cliProjectFilterValue(projectId);
     const dbNotRunning = (status: string) => dbNotRunningError(dbContainerId, status);
@@ -664,9 +699,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     }
 
     // 4. No update-suggestion check: `start` has no Management API dependency by design.
-
-    // 5. Gate evaluation — see `start.gates.ts`.
-    const gates = resolveStartGates({ config, excludedKeys });
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.

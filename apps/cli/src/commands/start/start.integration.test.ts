@@ -5544,6 +5544,33 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
+  describe("bucket file_size_limit above storage.file_size_limit", () => {
+    it.effect("fails before any container work and names every offending bucket", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[storage]\nfile_size_limit = "50MiB"\n[storage.buckets.videos]\nfile_size_limit = "100MiB"\n[storage.buckets.photos]\nfile_size_limit = "1GiB"\n[storage.buckets.avatars]\nfile_size_limit = "1MiB"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartBucketFileSizeLimitError");
+          expect(serialized).toContain(
+            "storage.buckets.videos.file_size_limit (100MiB) exceeds storage.file_size_limit (50MiB).",
+          );
+          expect(serialized).toContain(
+            "storage.buckets.photos.file_size_limit (1GiB) exceeds storage.file_size_limit (50MiB).",
+          );
+          expect(serialized).not.toContain("storage.buckets.avatars");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+    );
+  });
+
   describe("SUPABASE_DB_ORIOLEDB_VERSION override", () => {
     it.effect(
       "fails before any container work when the removed SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is set",
