@@ -21,6 +21,24 @@ describe("postgres-config", () => {
       ),
     );
 
+    testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no config overrides",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run([
+              "postgres-config",
+              "get",
+              "--experimental",
+              `--remote=${projectRef}`,
+            ]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
+    );
+
     testBehaviour(
       "returns config overrides as JSON with --output json",
       ({ run, projectRef, signal }) =>
@@ -1558,6 +1576,19 @@ describe("snippets", () => {
         }),
         signal,
       ),
+    );
+
+    testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no snippets",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run(["snippets", "list", `--remote=${projectRef}`]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
     );
 
     testBehaviour(

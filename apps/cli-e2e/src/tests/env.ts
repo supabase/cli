@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import { Config, ConfigProvider, Effect, Option } from "effect";
 import { REPLAY_PROJECT_REF } from "../server/placeholder.ts";
 
@@ -15,6 +16,11 @@ const readEnv = (name: string): string | undefined =>
 const MODE = readEnv("CLI_E2E_MODE") ?? (readEnv("RECORD") === "true" ? "record" : "replay");
 
 export const isRecording = MODE === "record";
+
+/** Concurrent tests and CLI runs in replay mode: `E2E_CONCURRENCY`, else the CPU count; recording is serial. */
+export const E2E_CONCURRENCY = isRecording
+  ? 1
+  : Math.max(1, Number.parseInt(readEnv("E2E_CONCURRENCY") ?? "", 10) || availableParallelism());
 
 // The record proxy target. Normalised from CLI_E2E_API_URL so
 // `CLI_E2E_MODE=record CLI_E2E_API_URL=…` works without also setting the legacy var.

@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { describe, expect } from "vitest";
-import { PROJECT_REF } from "./env.ts";
+import { isRecording, PROJECT_REF } from "./env.ts";
 import { postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 describe("network-bans", () => {
@@ -18,6 +18,24 @@ describe("network-bans", () => {
         }),
         signal,
       ),
+    );
+
+    testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no banned IPs",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run([
+              "network-bans",
+              "get",
+              "--experimental",
+              `--remote=${projectRef}`,
+            ]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
     );
 
     testBehaviour("returns json output with --output json", ({ run, projectRef, signal }) =>

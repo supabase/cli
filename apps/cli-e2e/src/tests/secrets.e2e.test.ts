@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { describe, expect } from "vitest";
-import { PROJECT_REF } from "./env.ts";
+import { isRecording, PROJECT_REF } from "./env.ts";
 import { decodeJsonOutput, postControl, runE2e, testBehaviour } from "./test-context.ts";
 
 describe("secrets", () => {
@@ -15,6 +15,19 @@ describe("secrets", () => {
         }),
         signal,
       ),
+    );
+
+    testBehaviour.skipIf(isRecording)(
+      "shows an empty state when there are no secrets",
+      ({ run, projectRef, signal }) =>
+        runE2e(
+          Effect.gen(function* () {
+            const result = yield* run(["secrets", "list", `--remote=${projectRef}`]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).not.toMatch(/undefined|null|NaN|\[object Object\]/);
+          }),
+          signal,
+        ),
     );
 
     testBehaviour("exits non-zero on 401", ({ run, apiUrl, signal }) =>

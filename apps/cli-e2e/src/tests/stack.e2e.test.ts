@@ -33,9 +33,11 @@ interface StackFixtures {
   ) => Effect.Effect<CLIResult, CliExecError>;
 }
 
-const testStack = testBehaviour.extend<StackFixtures>({
-  stackRun: ({ runGuard, workspace }, use) => {
-    const serverUrl = inject("replayServerUrl") as string;
+// DOCKER_HOST and the local stack API port carry no path, so these tests use the
+// un-prefixed replay state; vitest.config.ts runs this file serially.
+const testStack = testBehaviour.extend<StackFixtures & { replayUrl: string }>({
+  replayUrl: ({ task: _task }, use) => use(inject("replayServerUrl")),
+  stackRun: ({ runGuard, workspace, replayUrl: serverUrl }, use) => {
     const dockerHostUrl = inject("dockerHostUrl") as string;
     const harness = createHarness({
       apiUrl: serverUrl,
@@ -134,10 +136,10 @@ describe("start", () => {
   test.todo("starts with --exclude studio and stops cleanly");
 });
 
-// `seed buckets` makes storage HTTP calls (not Docker), so plain testBehaviour
-// with `run` is correct.
+// `seed buckets` makes storage HTTP calls (not Docker) to the local API port, so it
+// uses `run` with the un-prefixed replay state of `testStack`.
 describe("seed buckets", () => {
-  testBehaviour("creates buckets defined in config", ({ workspace, run, apiUrl, signal }) =>
+  testStack("creates buckets defined in config", ({ workspace, run, apiUrl, signal }) =>
     runE2e(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
