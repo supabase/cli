@@ -127,7 +127,7 @@ export type StartSetupLocalDatabaseError =
   | MigrationSeedError
   | ImagePrepullError;
 
-/** Already-resolved Docker images for the three PG15+ one-shot migrate jobs. */
+/** Already-resolved Docker images for the three one-shot migrate jobs. */
 export interface StartDbSetupImages {
   /** Resolved by the caller; not part of the decoded `CliConfig` schema. */
   readonly realtime: string;
@@ -136,7 +136,7 @@ export interface StartDbSetupImages {
 }
 
 /**
- * Computes the three PG15+ one-shot setup jobs' pinned image names via {@link resolvePinnedImage},
+ * Computes the three one-shot setup jobs' pinned image names via {@link resolvePinnedImage},
  * so a linked project's version pins apply here too.
  *
  * Does not resolve these against the registry as a batch: {@link runStartMigrateJob} resolves
@@ -188,7 +188,7 @@ export const resolveDbSetupPrelude = <E>(setup: {
 export interface SetupDatabaseInput {
   /**
    * An already-open session to the local Postgres database, dialed via the host-facing address —
-   * not the internal Docker-network address the PG15+ one-shot jobs below connect through (see
+   * not the internal Docker-network address the one-shot jobs below connect through (see
    * `networkId`/`dbHost`).
    */
   readonly session: DbSession;
@@ -203,18 +203,18 @@ export interface SetupDatabaseInput {
   /** `db.major_version` (15 or 17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
-   * The internal Docker-network address the PG15+ one-shot jobs connect through. The real local
+   * The internal Docker-network address the one-shot jobs connect through. The real local
    * `db` container's caller passes its service container name; the shadow-database variant
    * passes the shadow container's own short id instead, which resolves via Docker's embedded DNS
    * even though that container has no name or alias.
    */
   readonly dbHost: string;
   /**
-   * Labels the PG15+ one-shot job containers. Independent of {@link dbHost}: this labels the
+   * Labels the one-shot job containers. Independent of {@link dbHost}: this labels the
    * job containers themselves, not the (possibly different) container `dbHost` addresses.
    */
   readonly projectId: string;
-  /** The `start` run's Docker network id; every PG15+ one-shot job joins it. */
+  /** The `start` run's Docker network id; every one-shot job joins it. */
   readonly networkId: string;
   /** Reused (not recomputed) to derive the internal DB password via `startInternalDbPassword`. */
   readonly dbUrl: string;
@@ -279,7 +279,7 @@ export interface StartSetupLocalDatabaseInput extends Omit<
   readonly experimental: boolean;
   /**
    * The migration version to reapply. `db start` always passes `""` (every pending migration);
-   * `db reset`'s PG15 recreate passes its own resolved reset version instead.
+   * `db reset`'s recreate passes its own resolved reset version instead.
    */
   readonly version: string;
 }
@@ -321,7 +321,7 @@ const execSqlConstant = Effect.fnUntraced(function* (
 });
 
 /**
- * Runs one PG15+ one-shot service-migration job to completion: foreground, on the same Docker
+ * Runs one one-shot service-migration job to completion: foreground, on the same Docker
  * network as `db`, labeled with `opts.projectId` so an interrupted run's orphaned container stays
  * discoverable by `supabase stop`. Stdout is discarded; stderr is teed to the parent's own stderr
  * only under `--debug`.
@@ -577,7 +577,7 @@ export const applyDatabaseWebhooks = Effect.fnUntraced(function* (
 const WEBHOOK_SCHEMA_LOCK_ID_SQL = "hashtext('supabase_internal.supabase_functions')";
 
 /**
- * Creates the `supabase_functions` schema on stack databases, which never run the PG15+ entrypoint
+ * Creates the `supabase_functions` schema on stack databases, which never run the entrypoint
  * that creates it. Runs under an advisory lock and skips when the schema exists, since the template
  * is not re-runnable.
  */
@@ -798,7 +798,7 @@ export const startSetupLocalDatabase = (
   });
 
 /**
- * The `setup` shape shared by `db start`'s fresh-volume branch and `db reset`'s PG15 recreate:
+ * The `setup` shape shared by `db start`'s fresh-volume branch and `db reset`'s recreate:
  * everything {@link startSetupLocalDatabase} needs, minus what {@link runFreshDbSetup} itself
  * already resolves and threads through (`session`, `images`).
  */

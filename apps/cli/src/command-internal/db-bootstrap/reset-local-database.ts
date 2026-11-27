@@ -294,7 +294,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
-  // PG15 fresh-volume migrate jobs tee stderr when `--debug` is set.
+  // Fresh-volume migrate jobs tee stderr when `--debug` is set.
   const debug = yield* DebugFlag;
 
   // Error if the local db container is down.

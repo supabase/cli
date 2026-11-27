@@ -340,7 +340,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     runCapture: () => Effect.die("runCapture unused"),
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
-        // The shadow's own PG15+ one-shot jobs share this `runStream` but always set
+        // The shadow's own one-shot jobs share this `runStream` but always set
         // `skipImageResolve: true`; succeed them unconditionally so they're never
         // counted alongside the real `dumpCalls` this suite asserts on.
         if (runOpts.skipImageResolve === true) {

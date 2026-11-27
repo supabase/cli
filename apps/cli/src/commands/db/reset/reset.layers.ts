@@ -23,7 +23,7 @@ import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-
  * project-ref resolution, and the linked-project cache, all over the lazy management-API factory
  * so the local/`--db-url` paths never resolve an access token at layer-build time.
  *
- * `dockerRunLayer` backs the native local recreate's PG15+ one-shot migrate jobs.
+ * `dockerRunLayer` backs the native local recreate's one-shot migrate jobs.
  * `CommandSettings`/`ChildProcessSpawner`/`FileSystem`/`Path`/`RuntimeInfo` are ambient from the
  * root runtime (`shared/cli/run.ts`).
  */

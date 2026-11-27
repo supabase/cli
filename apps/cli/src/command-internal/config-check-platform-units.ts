@@ -173,9 +173,9 @@ export const dbMajorVersion = syncUnit({
       return [
         invalid(
           path,
-          `Postgres version ${version}.x is unsupported. To use the CLI, upgrade your project to Postgres 17, then set db.major_version = 17 in your project config: https://supabase.com/docs/guides/platform/upgrading.`,
+          `Postgres version ${version}.x is unsupported. To use the CLI, upgrade your project to Postgres 17 (https://supabase.com/docs/guides/platform/upgrading), set db.major_version = 17 in your project config, then run supabase stop --no-backup to recreate the local database.`,
           "unsupported Postgres version",
-          "upgrade the project to Postgres 17 and set db.major_version = 17; see https://supabase.com/docs/guides/platform/upgrading",
+          "upgrade the project to Postgres 17 (see https://supabase.com/docs/guides/platform/upgrading), set db.major_version = 17, then run supabase stop --no-backup to recreate the local database",
         ),
       ];
     }

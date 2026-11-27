@@ -82,7 +82,7 @@ describe("shadowCacheKey", () => {
       { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
       {
-        label: "storage migration pin (storage enabled, majorVersion >= 15)",
+        label: "storage migration pin (storage enabled)",
         inputs: { ...base, storageTargetMigration: "20250607080910" },
       },
       {
@@ -90,7 +90,7 @@ describe("shadowCacheKey", () => {
         inputs: { ...base, storageTargetMigration: "" },
       },
       {
-        label: "jwks (realtime enabled, majorVersion >= 15)",
+        label: "jwks (realtime enabled)",
         inputs: { ...base, jwks: '{"keys":["rotated"]}' },
       },
       {

@@ -170,7 +170,7 @@ function bindsFromCreateArgs(args: ReadonlyArray<string>): ReadonlyArray<string>
   return binds;
 }
 
-/** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
+/** The three one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
 function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
@@ -402,7 +402,7 @@ function alwaysReadyHttpClient() {
   return { layer, calls };
 }
 
-/** PG15+ (this suite's default) never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
+/** Setup never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: DbSession = {

@@ -95,7 +95,7 @@ function mockDockerRun() {
       runs.push(runOpts);
       return Effect.succeed({ exitCode: 0, stdout: new Uint8Array(), stderr: "" });
     },
-    // The shadow's own PG15+ one-shot platform-baseline jobs (`runStartMigrateJob`)
+    // The shadow's own one-shot platform-baseline jobs (`runStartMigrateJob`)
     // go through `runStream`, not `runCapture` — see `db-setup.ts`'s own doc comment.
     runStream: (runOpts) => {
       runs.push(runOpts);
@@ -617,7 +617,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     },
   );
 
-  it.effect("resolves JWKS on PG15+ when realtime is enabled", () => {
+  it.effect("resolves JWKS when realtime is enabled", () => {
     const { session } = fakeSession();
     const workdir = tempRoot.current;
     const mock = mockSpawner();

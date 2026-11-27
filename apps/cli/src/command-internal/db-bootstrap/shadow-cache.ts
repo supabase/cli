@@ -86,7 +86,7 @@ const shadowCacheUnavailable = (
   opts: { readonly tarSuspect?: boolean } = {},
 ): ShadowCacheUnavailable => ({ reason, ...opts });
 
-/** One of the three PG15+ one-shot migrate jobs, as the cache key sees it. */
+/** One of the three one-shot migrate jobs, as the cache key sees it. */
 interface ShadowCacheServiceInput {
   readonly enabled: boolean;
   /** Registry-resolved image; hashed only when {@link enabled}. */

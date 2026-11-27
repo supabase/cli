@@ -2858,13 +2858,13 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("fresh volume: DB setup + bucket seeding", () => {
-    /** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
+    /** The three one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
     function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
       return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
     }
 
     it.effect(
-      "triggers the SetupLocalDatabase-equivalent pipeline (PG15+ one-shot migrate jobs) on a fresh volume",
+      "triggers the SetupLocalDatabase-equivalent pipeline (one-shot migrate jobs) on a fresh volume",
       () =>
         Effect.gen(function* () {
           const { layer, out, child } = yield* setup({ route: freshVolumeRoute(defaultRoute()) });
@@ -5411,7 +5411,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_REALTIME_* env overrides", () => {
     it.effect(
-      "honors SUPABASE_REALTIME_IP_VERSION/_MAX_HEADER_LENGTH for both the long-running container and the PG15+ setup job",
+      "honors SUPABASE_REALTIME_IP_VERSION/_MAX_HEADER_LENGTH for both the long-running container and the setup job",
       () =>
         withEnvVar(
           "SUPABASE_REALTIME_IP_VERSION",
@@ -5433,7 +5433,7 @@ content_path = "./supabase/templates/custom_notice.html"
               expect(realtimeCreate?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
               expect(realtimeCreate?.env["MAX_HEADER_LENGTH"]).toBe("8192");
 
-              // The first of the three PG15+ one-shot migrate jobs (realtime, storage, auth
+              // The first of the three one-shot migrate jobs (realtime, storage, auth
               // order) — see the "fresh volume: DB setup" describe block's own
               // `dbSetupJobCalls` helper for the same `run --rm` shape.
               const realtimeSetupJob = child.spawned.find(
@@ -5501,7 +5501,7 @@ content_path = "./supabase/templates/custom_notice.html"
             );
             expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
 
-            // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
+            // Second of the three one-shot migrate jobs (realtime, storage, auth order).
             const migrateJobs = child.spawned.filter(
               (s) => s.args[0] === "run" && s.args[1] === "--rm",
             );

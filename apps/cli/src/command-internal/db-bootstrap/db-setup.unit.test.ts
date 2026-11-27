@@ -232,16 +232,14 @@ describe("startSetupLocalDatabase", () => {
   });
 
   describe("schema initialisation", () => {
-    it.effect("runs one-shot docker jobs and execs no schema SQL", () => {
+    it.effect("initialises the schema through one one-shot docker job per enabled service", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const workdir = yield* makeWorkdir();
-        const { session, calls } = fakeSession();
+        const { session } = fakeSession();
         const out = mockOutput();
         const docker = mockDockerRun();
         yield* run(baseInput(workdir, session, { majorVersion: 17 }), out, docker);
-        const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-        expect(execSql.some((sql) => sql.includes("CREATE ROLE anon"))).toBe(false);
         // Default config: realtime, storage, and auth are all enabled.
         expect(docker.runs.length).toBe(3);
         yield* fs.remove(workdir, { recursive: true, force: true });

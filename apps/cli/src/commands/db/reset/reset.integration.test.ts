@@ -407,7 +407,7 @@ const restartedContainers = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray
 const kongReloadCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> =>
   spawned.filter((s) => s.args[0] === "exec" && s.args[1] === KONG_ID);
 
-/** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
+/** The three one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
 const dbSetupJobCalls = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> =>
   spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 
@@ -1255,7 +1255,7 @@ describe("db reset", () => {
     return { ...ctx, timeline, readyProbes };
   }
 
-  describe("local reset — PG15+", () => {
+  describe("local reset", () => {
     it.effect("recreates the container, waits healthy, and runs the setup pipeline", () => {
       const { layer, out, child, telemetry } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
@@ -1358,7 +1358,7 @@ describe("db reset", () => {
       },
     );
 
-    it.effect("reapplies migrations and seeds after a default local reset (PG15)", () => {
+    it.effect("reapplies migrations and seeds after a default local reset", () => {
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: {

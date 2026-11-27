@@ -152,7 +152,7 @@ interface SetupOpts {
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   // Message for a failing PGDELTA_DEBUG shadow-catalog export.
   readonly diffFailWith?: string;
-  // Makes the shadow's PG15+ baseline job(s) exit non-zero; the shadow should
+  // Makes the shadow's baseline job(s) exit non-zero; the shadow should
   // still be removed.
   readonly failShadowSetupJob?: boolean;
   readonly networkId?: string; // --network-id value forwarded to docker runs
@@ -462,7 +462,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   // Tracks the migra OOM bash fallback's own `runCapture` calls; the native shadow's
-  // PG15+ one-shot setup jobs go through `runStream` instead and are tracked
+  // one-shot setup jobs go through `runStream` instead and are tracked
   // separately in `shadowSetupJobCalls`.
   const dockerCalls: Array<DockerRunOpts> = [];
   // The pgAdmin differ's own `runCapture` calls, distinguished from `dockerCalls`
@@ -507,7 +507,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         stderr: "",
       });
     },
-    // The shadow's own PG15+ one-shot platform-baseline job(s).
+    // The shadow's own one-shot platform-baseline job(s).
     runStream: (dockerOpts) => {
       shadowSetupJobCalls.push(dockerOpts);
       return Effect.succeed({
