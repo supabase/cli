@@ -511,6 +511,15 @@ export async function runFastForward(
     );
   }
 
+  if (input.approver === AUTO_APPROVER_LOGIN && promotion.kind !== "sync") {
+    return refuse(
+      io,
+      input,
+      `${AUTO_APPROVER_LOGIN} cannot approve a ${promotion.kind} promotion`,
+      `Not fast-forwarding \`${promotion.target}\`: an approval from \`${AUTO_APPROVER_LOGIN}\` does not move this promotion. A maintainer must approve it.`,
+    );
+  }
+
   const headSha = pullRequest.head.sha;
   const approvedSha = input.reviewCommitId ?? headSha;
   if (pullRequest.draft) {
