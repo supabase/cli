@@ -96,18 +96,25 @@ function fakeIo(
     approve: async (target) => {
       record("approve", target);
     },
-    refresh: async (target) => ({
-      open: true,
-      draft: target.draft,
-      baseRef: target.baseRef,
-      headRef: target.headRef,
-      headSha: target.headSha,
-      labels: target.labels,
-      autoMergeEnabled: target.autoMergeEnabled,
-      inMergeQueue: false,
-      ...options.refresh,
-      ...options.refreshSequence?.[refreshCalls++],
-    }),
+    refresh: async (target) => {
+      const state = {
+        open: true,
+        draft: target.draft,
+        baseRef: target.baseRef,
+        headRef: target.headRef,
+        headSha: target.headSha,
+        labels: target.labels,
+        autoMergeEnabled: target.autoMergeEnabled,
+        inMergeQueue: false,
+        ...options.refresh,
+        ...options.refreshSequence?.[refreshCalls++],
+      };
+      return {
+        autoMergeByBot: state.autoMergeEnabled,
+        queuedByBot: state.inMergeQueue,
+        ...state,
+      };
+    },
     queue: async (target) => {
       record("queue", target);
     },
@@ -349,14 +356,19 @@ describe("sweepBotPrs idempotence and modes", () => {
     expect(entries[0]).toMatchObject({ verdict: "held (approval dismissed)", actions: [] });
   });
 
-  test("leaves auto-merge on a held PR with no active bot approval alone", async () => {
+  test("withdraws bot-created auto-merge and queue entry when a maintainer dismissed the bot approval", async () => {
     const { io, writes } = fakeIo([pr({ autoMergeEnabled: true, assignees: [APPROVER_LOGIN] })], {
+      refresh: { inMergeQueue: true },
       reviews: [{ id: 5, user: APPROVER_LOGIN, state: "DISMISSED" }],
     });
 
-    await run(io);
+    const entries = await run(io);
 
-    expect(writes).toEqual([]);
+    expect(writes).toEqual(["dequeue:1", "disableAutoMerge:1"]);
+    expect(entries[0]).toMatchObject({
+      verdict: "held (approval dismissed)",
+      actions: ["dequeue", "disable auto-merge"],
+    });
   });
 
   test("holds a draft PR, dismisses its bot approval and disables auto-merge", async () => {
@@ -574,6 +586,29 @@ describe("sweepBotPrs idempotence and modes", () => {
     );
   });
 
+  test("leaves maintainer-created auto-merge and queue entry on a tainted PR but dismisses the bot approval", async () => {
+    const { io, writes } = fakeIo([pr({ autoMergeEnabled: true })], {
+      activity: () => [
+        { type: "push", actor: "jgoux", after: SHA },
+        { type: "branch_creation", actor: RELEASER, after: "b".repeat(40) },
+      ],
+      refresh: {
+        inMergeQueue: true,
+        autoMergeByBot: false,
+        queuedByBot: false,
+      },
+      reviews: [{ id: 5, user: APPROVER_LOGIN, state: "APPROVED" }],
+    });
+
+    const entries = await run(io);
+
+    expect(writes).toEqual(["dismiss(5):1"]);
+    expect(entries[0]).toMatchObject({
+      verdict: "tainted (push by jgoux)",
+      actions: ["dismiss approval"],
+    });
+  });
+
   test("makes no writes on a trusted PR when listing reviews fails", async () => {
     const { io, writes } = fakeIo([pr()], { failReviews: true });
 
@@ -687,6 +722,47 @@ describe("createBotPrIo call-site guard", () => {
     const io = createBotPrIo({ repository: REPO, appToken: "app", approverToken: "approver" });
 
     await expect(io.queue(pr())).rejects.toThrow(/auto-merge failed.*enqueue failed/);
+  });
+
+  test("refresh treats the releaser app, with or without [bot], as bot-created automation", async () => {
+    const respond = (autoMergeLogin: string, enqueuerLogin: string) =>
+      (async () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  state: "OPEN",
+                  isDraft: false,
+                  baseRefName: "develop",
+                  headRefName: "sync/api-package",
+                  headRefOid: SHA,
+                  labels: { nodes: [] },
+                  autoMergeRequest: { enabledBy: { login: autoMergeLogin } },
+                  isInMergeQueue: true,
+                  mergeQueueEntry: { enqueuer: { login: enqueuerLogin } },
+                },
+              },
+            },
+          }),
+        )) as unknown as typeof fetch;
+    const io = createBotPrIo({ repository: REPO, appToken: "app", approverToken: "approver" });
+
+    globalThis.fetch = respond("supabase-cli-releaser", "supabase-cli-releaser[bot]");
+    expect(await io.refresh(pr())).toMatchObject({
+      autoMergeEnabled: true,
+      inMergeQueue: true,
+      autoMergeByBot: true,
+      queuedByBot: true,
+    });
+
+    globalThis.fetch = respond("jgoux", "jgoux");
+    expect(await io.refresh(pr())).toMatchObject({
+      autoMergeEnabled: true,
+      inMergeQueue: true,
+      autoMergeByBot: false,
+      queuedByBot: false,
+    });
   });
 
   test("approve for an eligible pull request posts the review pinned to the head", async () => {

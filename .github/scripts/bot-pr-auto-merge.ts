@@ -12,6 +12,7 @@ import { appendFileSync } from "node:fs";
 export const APPROVER_LOGIN = "supabase-oss";
 export const BASE_BRANCH = "develop";
 
+const SWEEP_APP_LOGIN = "supabase-cli-releaser";
 const DO_NOT_MERGE_LABEL = "do not merge";
 const PROTECTED_HEADS = new Set(["develop", "main", "next"]);
 const FORBIDDEN_HEAD_PREFIXES = ["sync/", "release-notes/", "hotfix/", "backport/"];
@@ -67,6 +68,8 @@ export interface BotPrState {
   labels: string[];
   autoMergeEnabled: boolean;
   inMergeQueue: boolean;
+  autoMergeByBot: boolean;
+  queuedByBot: boolean;
 }
 
 export type Provenance =
@@ -287,14 +290,12 @@ async function handlePr(
     const botApprovals = reviews.filter(
       (review) => review.user?.toLowerCase() === APPROVER_LOGIN && review.state === "APPROVED",
     );
-    // Without the review list the bot's approval may still be live, so fail closed.
-    const withdrawMerge =
-      reviewsError !== undefined ||
-      (botApprovals.length > 0 && otherApprovers(reviews).length === 0);
-    if (withdrawMerge && state.inMergeQueue) {
+    // Only the sweep's own automation is withdrawn; without the review list, fail closed.
+    const withdrawMerge = reviewsError !== undefined || otherApprovers(reviews).length === 0;
+    if (withdrawMerge && state.inMergeQueue && state.queuedByBot) {
       await attempt("dequeue", () => io.dequeue(live));
     }
-    if (withdrawMerge && state.autoMergeEnabled) {
+    if (withdrawMerge && state.autoMergeEnabled && state.autoMergeByBot) {
       await attempt("disable auto-merge", () => io.disableAutoMerge(live));
     }
     if (reviewsError) {
@@ -459,6 +460,11 @@ async function graphql<T = unknown>(token: string, query: string, variables: obj
   return payload.data as T;
 }
 
+// GraphQL reports the app as `supabase-cli-releaser` on some fields and with a `[bot]` suffix on others.
+function isSweepApp(login: string | undefined): boolean {
+  return login?.replace(/\[bot\]$/, "") === SWEEP_APP_LOGIN;
+}
+
 interface GraphqlPullRequest {
   state: string;
   isDraft: boolean;
@@ -466,8 +472,9 @@ interface GraphqlPullRequest {
   headRefName: string;
   headRefOid: string;
   labels: { nodes: Array<{ name: string }> };
-  autoMergeRequest: { enabledAt: string | null } | null;
+  autoMergeRequest: { enabledBy: { login: string } | null } | null;
   isInMergeQueue: boolean;
+  mergeQueueEntry: { enqueuer: { login: string } | null } | null;
 }
 
 interface RestPull {
@@ -597,9 +604,16 @@ export function createBotPrIo({ repository, appToken, approverToken }: BotPrIoCo
                   }
                 }
                 autoMergeRequest {
-                  enabledAt
+                  enabledBy {
+                    login
+                  }
                 }
                 isInMergeQueue
+                mergeQueueEntry {
+                  enqueuer {
+                    login
+                  }
+                }
               }
             }
           }
@@ -616,6 +630,8 @@ export function createBotPrIo({ repository, appToken, approverToken }: BotPrIoCo
         labels: current.labels.nodes.map((label) => label.name),
         autoMergeEnabled: current.autoMergeRequest != null,
         inMergeQueue: current.isInMergeQueue,
+        autoMergeByBot: isSweepApp(current.autoMergeRequest?.enabledBy?.login),
+        queuedByBot: isSweepApp(current.mergeQueueEntry?.enqueuer?.login),
       };
     },
 
