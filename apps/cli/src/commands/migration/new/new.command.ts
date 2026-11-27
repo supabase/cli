@@ -33,7 +33,7 @@ export const migrationNewCommand = Command.make("new", config).pipe(
     runtime: migrationNewRuntime,
     hooks: {
       onResultReady: ({ path }, { ux, relativeToWorkdir }) =>
-        ux.stdoutLine(createdMessage(relativeToWorkdir(path))),
+        ux.writeToStdout(createdMessage(relativeToWorkdir(path))),
     },
   }),
   withTargetPolicy({ group: "local-only", consent: "none" }),

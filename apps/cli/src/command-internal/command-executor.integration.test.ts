@@ -210,14 +210,23 @@ it.effect.each(["text", "json", "stream-json"] as const)(
             owner: "executor",
             output,
             handler: () =>
-              CommandUX.use((ux) => ux.message("Working").pipe(Effect.as({ value: "result" }))),
+              CommandUX.use((ux) =>
+                ux
+                  .writeToStderr("Working")
+                  .pipe(
+                    Effect.andThen(
+                      ux.writeToStderr(" in text mode\n", { suppressInMachineMode: true }),
+                    ),
+                    Effect.as({ value: "result" }),
+                  ),
+              ),
             hooks: {
               onResultReady: ({ value }, { ux }) =>
                 Effect.gen(function* () {
                   hookCalls++;
                   yield* Deferred.succeed(hookStarted, undefined);
                   yield* Deferred.await(allowHook);
-                  yield* ux.stdoutLine(`Ready: ${value}`);
+                  yield* ux.writeToStdout(`Ready: ${value}`);
                 }),
             },
           },
@@ -227,7 +236,7 @@ it.effect.each(["text", "json", "stream-json"] as const)(
       ).pipe(Effect.forkChild);
       yield* Effect.gen(function* () {
         yield* Deferred.await(releaseStarted);
-        expect(out.stderrText).toBe(format === "text" ? "Working\n" : "");
+        expect(out.stderrText).toBe(format === "text" ? "Working in text mode\n" : "Working");
         expect(out.stdoutText).toBe("");
         expect(out.events).toEqual([]);
         expect(hookCalls).toBe(0);

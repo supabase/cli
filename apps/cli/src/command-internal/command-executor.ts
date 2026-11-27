@@ -36,8 +36,13 @@ interface CommandUXShape {
     message: string,
     operation: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
-  readonly message: (message: string) => Effect.Effect<void>;
-  readonly stdoutLine: (message: string) => Effect.Effect<void>;
+  /** Writes text unchanged in every format unless suppression is requested. */
+  readonly writeToStderr: (
+    text: string,
+    options?: { readonly suppressInMachineMode?: boolean },
+  ) => Effect.Effect<void>;
+  /** Appends a newline in text mode and writes nothing in machine modes. */
+  readonly writeToStdout: (message: string) => Effect.Effect<void>;
 }
 
 export class CommandUX extends Context.Service<CommandUX, CommandUXShape>()("supabase/CommandUX") {}
@@ -51,7 +56,7 @@ export class ResolvedProject extends Context.Service<
 >()("supabase/ResolvedProject") {}
 
 interface ResultReadyContext {
-  readonly ux: Pick<CommandUXShape, "stdoutLine">;
+  readonly ux: Pick<CommandUXShape, "writeToStdout">;
   readonly relativeToWorkdir: (path: string) => string;
 }
 
@@ -139,8 +144,9 @@ const commandUX = (output: Output["Service"]): CommandUXShape => ({
               ),
             ),
         ),
-  message: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`, "stderr")),
-  stdoutLine: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`)),
+  writeToStderr: (text, options) =>
+    options?.suppressInMachineMode && isMachine(output) ? Effect.void : output.raw(text, "stderr"),
+  writeToStdout: (message) => (isMachine(output) ? Effect.void : output.raw(`${message}\n`)),
 });
 
 const bestEffort = (effect: Effect.Effect<void>) => effect.pipe(Effect.ignoreCause);
@@ -215,7 +221,7 @@ const run: CommandExecutorShape["run"] = (declaration, flags, required) =>
         const { workdir } = yield* CommandSettings;
         const path = yield* Path.Path;
         yield* onResultReady(result, {
-          ux: { stdoutLine: ux.stdoutLine },
+          ux: { writeToStdout: ux.writeToStdout },
           relativeToWorkdir: (target) => path.relative(workdir, target),
         });
       }

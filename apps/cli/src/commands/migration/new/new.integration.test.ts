@@ -50,8 +50,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CommandUX, {
       requireHostedMutationConsent,
       task: (_message, operation) => operation,
-      message: () => Effect.void,
-      stdoutLine: (text) => Effect.sync(() => lines.push(`${text}\n`)),
+      writeToStderr: () => Effect.void,
+      writeToStdout: (text) => Effect.sync(() => lines.push(`${text}\n`)),
     }),
     Layer.succeed(ResolvedProject, { record: () => Effect.void }),
     mockStdin(opts.isTTY ?? true, opts.piped),

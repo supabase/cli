@@ -71,7 +71,7 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
               }),
           ),
           Effect.tapError(() =>
-            ux.stdoutLine(createdMessage(path.relative(cliSettings.workdir, migrationPath))),
+            ux.writeToStdout(createdMessage(path.relative(cliSettings.workdir, migrationPath))),
           ),
         );
       }),
