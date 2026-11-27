@@ -165,7 +165,4 @@ export const tags = {
 export const vocabulary: View.Vocabulary<Elements> = { name, tags, textParents: ["text"] };
 
 /** Defines a component with this vocabulary already supplied. */
-export const component: Component.Define<Elements> = (options) =>
-  // -- `Define`'s generic signature cannot be satisfied without a cast, as in `@effect/ui-opentui`;
-  // an upstream gap that a typed `withElements` on `Component` would close.
-  Component.define({ ...options, elements: vocabulary }) as never;
+export const component: Component.Define<Elements> = Component.withElements(vocabulary);

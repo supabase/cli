@@ -2,6 +2,7 @@
   "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext"],
+    "exactOptionalPropertyTypes": true,
     "types": ["bun"]
   },
   "include": ["src/**/*.ts"]

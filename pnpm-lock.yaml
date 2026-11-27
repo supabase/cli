@@ -645,8 +645,8 @@ importers:
   packages/ui-terminal:
     dependencies:
       '@effect/ui':
-        specifier: https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b
-        version: https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
+        specifier: https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b
+        version: https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))
       effect:
         specifier: 'catalog:'
         version: 4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47)
@@ -978,8 +978,8 @@ packages:
     resolution: {integrity: sha512-jCJIUcNgI0vaoylao/mhOv+7hDfaJRwZJSJrg5kA/FCQ4aGDhAYqyQx+hoZh8AW3pzD9Qp1RWtUsVFqOzIOENw==}
     hasBin: true
 
-  '@effect/ui@https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b':
-    resolution: {integrity: sha512-wiZ/TVbVGpkRoW/Js2x4OhnQiLvCYOw8DOmObSHYM8mhcbxyqFW0RmMrCKtd+iPqMoPTVp4ugIOWDYVQELOpHA==, tarball: https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b}
+  '@effect/ui@https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b':
+    resolution: {integrity: sha512-uYecYnIGC/Q15cl914C6Zbr1FOT1ahCjy625xwQyDODgNdq/yPEdxr6UuhkaYp83zWsiL4rVJsz8nFHziOCBDw==, tarball: https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b}
     version: 0.0.0
     peerDependencies:
       effect: ^4.1.4
@@ -5675,7 +5675,7 @@ snapshots:
       '@effect/tsgo-win32-arm64': 0.37.0
       '@effect/tsgo-win32-x64': 0.37.0
 
-  '@effect/ui@https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))':
+  '@effect/ui@https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b(effect@4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47))':
     dependencies:
       effect: 4.1.4(patch_hash=f36724e2037d8928fa1cbf46283b63d8a729f4183e7e5a42e8fcb0c1f6328a47)
 

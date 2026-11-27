@@ -2,9 +2,9 @@ import type { KeyPayload } from "../Terminal.ts";
 import type { Key } from "./key.ts";
 
 interface Modifiers {
-  readonly shift?: true;
-  readonly meta?: true;
-  readonly ctrl?: true;
+  readonly shift?: true | undefined;
+  readonly meta?: true | undefined;
+  readonly ctrl?: true | undefined;
 }
 
 const press = (

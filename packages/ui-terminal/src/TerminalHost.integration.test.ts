@@ -87,6 +87,29 @@ const Tall = Terminal.component({
     ),
 });
 
+const PickerEvents = UiSchema.TaggedEnum({ Picked: { count: Schema.Finite } });
+
+const Picker = Terminal.component({
+  name: "Picker",
+  model: Schema.Struct({ count: Schema.Finite }),
+  message: BannerMessage,
+  events: PickerEvents,
+}).make({
+  init: () => ({ count: 0 }),
+  update: {
+    Ticked: ($) =>
+      $.evolve({ count: (n) => n + 1 }).emit(PickerEvents.Picked({ count: $.model.count + 1 })),
+    Done: ($) => $.run(TerminalCommand.finish()),
+  },
+  subscriptions: () => [
+    TerminalSubscription.shortcuts([
+      { key: "+", message: BannerMessage.Ticked() },
+      { key: "return", message: BannerMessage.Done() },
+    ]),
+  ],
+  view: (h, model) => h.text.children(`picked ${model.count}`),
+});
+
 const Broken = Terminal.component({
   name: "Broken",
   model: Schema.Struct({}),
@@ -186,6 +209,46 @@ describe("inline run on a headless terminal", () => {
         });
         expect(Exit.hasInterrupts(exit)).toBe(false);
         expect(yield* t.rawModeTransitions).toEqual([true, false]);
+      }),
+    ),
+  );
+
+  it.effect("hands the root's typed events to onEmit in emission order", () =>
+    withTerminal((t) =>
+      Effect.gen(function* () {
+        const picked: Array<number> = [];
+        const fiber = yield* TerminalTest.startOn(
+          t,
+          TerminalHost.run(
+            Picker,
+            {},
+            {
+              onEmit: (event) => {
+                if (event._tag === "Picked") picked.push(event.count);
+              },
+            },
+          ),
+        );
+        yield* t.untilScreen(showing("picked 0"));
+        yield* t.type("++");
+        yield* t.untilScreen(showing("picked 2"));
+        yield* t.type("\r");
+        yield* Fiber.join(fiber);
+
+        expect(picked).toEqual([1, 2]);
+      }),
+    ),
+  );
+
+  it.effect("keeps the fallback frame on screen when the view crashes", () =>
+    withTerminal((t) =>
+      Effect.gen(function* () {
+        t.terminal.write("$ run\r\n");
+        const fiber = yield* TerminalTest.startOn(t, TerminalHost.run(Broken, {}));
+        yield* Fiber.await(fiber);
+
+        expect((yield* t.scrollback).slice(0, 2)).toEqual(["$ run", "The view failed."]);
+        expect(yield* t.cursor).toEqual({ x: 0, y: 2 });
       }),
     ),
   );

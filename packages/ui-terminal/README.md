@@ -51,6 +51,9 @@ interrupts the fiber that opened the session, on `run` and `mountEffect` alike. 
 the final frame stays in the scrollback, the cursor lands below it and the terminal is restored.
 `mountEffect` returns a handle whose `finished` effect resolves with the model at `finish`.
 
+Both take mount options: `renderer.theme`, `query`, `fallback` for a crashed view, and `onEmit`,
+which receives the root's typed events in emission order, those of `init` before the mount returns.
+
 ## Signals
 
 The embedding app owns signals; the package installs no handlers. `run` and `mountEffect` restore the

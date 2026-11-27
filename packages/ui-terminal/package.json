@@ -16,7 +16,7 @@
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b",
+    "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b",
     "effect": "catalog:",
     "yoga-layout": "3.2.1"
   },

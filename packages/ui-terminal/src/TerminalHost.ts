@@ -202,6 +202,8 @@ export const makeHost = ({ yoga, terminal, theme }: MakeHostOptions): MadeHost =
     controlled: new Set(),
     runsMounts: false,
     commit: () => render(false),
+    // The session owns the root, so the mount closing is the end of the frame, however it closes.
+    unmounting: () => render(true),
   };
 
   return {
@@ -240,7 +242,7 @@ export interface Mounted<out Model, in Msg> {
   readonly finished: Effect.Effect<Model | undefined>;
 }
 
-export interface MountOptions<V extends View.Elements, RF = never> {
+export interface MountOptions<V extends View.Elements, RF = never, Events = never> {
   readonly fallback?:
     | ((
         failure: AsyncResult.Failure<never, unknown>,
@@ -249,6 +251,8 @@ export interface MountOptions<V extends View.Elements, RF = never> {
     | undefined;
   readonly query?: Renderer.QueryOptions | undefined;
   readonly renderer?: RendererOptions | undefined;
+  /** Receives the root's events in emission order, those of `init` before the mount returns. */
+  readonly onEmit?: ((event: Events) => void) | undefined;
 }
 
 const nonInteractiveReason = (capabilities: Capabilities): NonInteractive["reason"] | undefined => {
@@ -352,7 +356,7 @@ const mountSession = Effect.fn("Terminal.mount")(function* <
 >(
   component: Component.Members<Name, Props, Model, Msg, Events, R, Terminal.Elements>,
   props: Props | Effect.Effect<Props, never, RP>,
-  options: MountOptions<Terminal.Elements, RF> | undefined,
+  options: MountOptions<Terminal.Elements, RF, Events> | undefined,
 ) {
   const session = yield* openSession(options?.renderer);
   // A failed root would otherwise be logged and leave a run waiting for a `Finish` that never comes.
@@ -365,11 +369,6 @@ const mountSession = Effect.fn("Terminal.mount")(function* <
         : options.fallback(failure, h);
     },
   }).pipe(Effect.provide(session.services));
-  // Finalizers run last-in first-out, so this draws the frame before the mount's own teardown
-  // commits an empty tree; an interrupt keeps the last frame like a normal exit does.
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(session.tui.finish).pipe(Effect.withSpan("Terminal.restoreScreen")),
-  );
   const finished = Deferred.await(session.finished).pipe(
     Effect.andThen(
       Effect.sync(() => {
@@ -394,7 +393,7 @@ export const mountEffect = <
 >(
   component: Component.Members<Name, Props, Model, Msg, Events, R, Terminal.Elements>,
   props: Props | Effect.Effect<Props, never, RP>,
-  options?: MountOptions<Terminal.Elements, RF>,
+  options?: MountOptions<Terminal.Elements, RF, Events>,
 ): Effect.Effect<
   Mounted<Model, Msg>,
   NonInteractive,
@@ -410,7 +409,7 @@ export const mountEffect = <
 export const run = <Name extends string, Props, Model, Msg, Events, R, RF = never, RP = never>(
   component: Component.Members<Name, Props, Model, Msg, Events, R, Terminal.Elements>,
   props: Props | Effect.Effect<Props, never, RP>,
-  options?: MountOptions<Terminal.Elements, RF>,
+  options?: MountOptions<Terminal.Elements, RF, Events>,
 ): Effect.Effect<
   Model | undefined,
   NonInteractive,
