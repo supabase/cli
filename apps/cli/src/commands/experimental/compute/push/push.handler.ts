@@ -1,8 +1,8 @@
 import { cliConfigFormatForPath } from "@supabase/config/internal";
-import { Effect, FileSystem, Option, Path, type Schedule } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, type Schedule } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
-import { renderComputeDetails } from "../compute.format.ts";
+import { formatWaited, renderComputeDetails } from "../compute.format.ts";
 import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
@@ -42,12 +42,14 @@ import {
 } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import {
-  awaitComputeBuild,
+  awaitComputeServing,
   createComputeUpload,
   deployCompute,
+  isComputeServing,
   parseComputeSecretsScopeToAPIFormat,
   uploadBuildContext,
   type ComputeDeploySpec,
+  type ComputeRecord,
 } from "../../../../shared/compute/compute-api.ts";
 import {
   NoComputeToDeployError,
@@ -76,8 +78,9 @@ import type { ComputePushFlags } from "./push.command.ts";
  * `supabase compute push [name...]` — deploys the named compute
  * (or every compute, if none are named), reading runtime, size, exposure, and
  * source from `[compute.<name>]`; an unrecorded runtime is guessed and
- * reported. Builds run server-side from an uploaded context and are waited on
- * by default; `--no-wait` returns once the deploy is accepted.
+ * reported. Builds run server-side from an uploaded context, and a plain push waits for the
+ * deploy's code to actually be serving — the build landing is not the end of it; `--no-wait`
+ * returns once the deploy is accepted.
  */
 
 const entryRef = ({ format }: ConfigFileRef, name: string): string =>
@@ -288,6 +291,29 @@ function addYourCode(sourceDisplay: string): string {
   return `Add your compute's code to ${sourceDisplay}, then run this command again.`;
 }
 
+/**
+ * The instance row, and the progress line while waiting on a rollout.
+ *
+ * Falls back to the declared count alone whenever the tally is absent — it is omitted until the
+ * first image lands, and replaced by `instances_error` when the control plane's read-through
+ * fails, neither of which says anything about how many instances are up.
+ */
+function describeTally(compute: ComputeRecord): string {
+  const { instances } = compute;
+  if (instances === undefined) {
+    return `${compute.spec.instances} declared`;
+  }
+  const stale = instances.stale > 0 ? `, ${instances.stale} stale` : "";
+  return `${instances.ready}/${instances.declared} serving${stale}`;
+}
+
+/** `3m21s (1m04s building)`, or just the total when nothing was built. */
+function describeWaited(waited: { readonly total: number; readonly build: number }): string {
+  const total = formatWaited(waited.total);
+  // Under a second is the poll cadence, not a build worth attributing.
+  return waited.build < 1000 ? total : `${total} (${formatWaited(waited.build)} building)`;
+}
+
 const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly project: ComputeProject;
   readonly name: string;
@@ -483,25 +509,46 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     Effect.tapError(() => deploying.fail()),
   );
 
-  // Polled only when the deploy response left the build unresolved.
-  // `V2DeployAWorkerOutput` permits a terminal `active` or `failed` on the
-  // deploy itself, and that verdict is this deploy's — a fresh `GET` can only
-  // contradict it: `awaitComputeBuild` reads a post-deploy 404 as "still
-  // building", so an already-`failed` deploy could burn the whole poll budget
-  // and surface as a timeout, and a concurrent deployment could answer with a
-  // state that belongs to someone else's build.
-  const settled =
-    input.noWait || accepted.buildState !== "building"
-      ? accepted
-      : yield* awaitComputeBuild(api, projectRef, name, {
-          schedule: input.pollSchedule,
-          retrySchedule: input.pollRetrySchedule,
-          refSuffix: input.refSuffix,
-          onPoll: (polled) =>
-            polled.buildState === "building"
-              ? deploying.message("Building compute...")
-              : Effect.void,
-        }).pipe(Effect.tapError(() => deploying.fail()));
+  // A terminal `active` on the deploy response is no longer a reason to skip the poll. It is
+  // exactly the case where nothing was built — a bare-image redeploy, or a build skipped as
+  // unchanged — and the instances go on serving the previous code until the control plane
+  // recycles them. Stopping there is what let `push` report "Deployed" over a rollout that had
+  // not started. A `failed` response still short-circuits: that verdict is this deploy's, and a
+  // fresh `GET` can only contradict it — `awaitComputeServing` reads a post-deploy 404 as "not
+  // settled yet", so an already-failed deploy would burn the whole poll budget and surface as a
+  // timeout, and a concurrent deployment could answer with a state belonging to someone else's
+  // build.
+  const shortCircuit = input.noWait || accepted.buildState === "failed";
+
+  // Transitions as this deploy's own polls saw them, at the poll cadence's resolution. This is
+  // the only timing available to the CLI: the API publishes no per-stage stamps, so the build
+  // mark is "when we first observed the image landed", which includes the control plane's own
+  // detection lag rather than the build alone.
+  const startedAt = yield* Clock.currentTimeMillis;
+  let builtAt: number | undefined = accepted.buildState === "building" ? undefined : startedAt;
+
+  const settled = shortCircuit
+    ? accepted
+    : yield* awaitComputeServing(api, projectRef, name, {
+        schedule: input.pollSchedule,
+        retrySchedule: input.pollRetrySchedule,
+        refSuffix: input.refSuffix,
+        onPoll: (polled) =>
+          Effect.gen(function* () {
+            if (polled.buildState === "building") {
+              return yield* deploying.message("Building compute...");
+            }
+            builtAt ??= yield* Clock.currentTimeMillis;
+            if (!isComputeServing(polled)) {
+              yield* deploying.message(`Starting instances... ${describeTally(polled)}`);
+            }
+          }),
+      }).pipe(Effect.tapError(() => deploying.fail()));
+
+  const finishedAt = yield* Clock.currentTimeMillis;
+  const waited = shortCircuit
+    ? undefined
+    : { total: finishedAt - startedAt, build: (builtAt ?? finishedAt) - startedAt };
 
   yield* Effect.annotateCurrentSpan({
     "compute.waited": !input.noWait && accepted.buildState === "building",
@@ -558,6 +605,11 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
         // empty-valued row.
         ["Image", imageVersion ?? ""],
         ["Access", settled.spec.exposure],
+        ["Instances", describeTally(settled)],
+        // How long the wait actually took, and how much of it was over before the image
+        // landed. The API publishes no per-stage timing, so this is the only attribution a
+        // caller gets for a deploy that felt slow.
+        ["Waited", waited === undefined ? "" : describeWaited(waited)],
         ["Secrets Scope", formatSecretsScope(settledSecretsScope ?? "")],
         ["URL", url ?? ""],
       ]),
@@ -586,6 +638,10 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     // deploy completed. Same reason `url` is spread below.
     ...(imageVersion === undefined ? {} : { image_version: imageVersion }),
     build_state: settled.buildState,
+    ...(settled.instances === undefined ? {} : { instances_ready: settled.instances.ready }),
+    ...(settled.instances === undefined ? {} : { instances_stale: settled.instances.stale }),
+    // Flat scalars rather than a nested object: `-o env` and `-o toml` both take this payload.
+    ...(waited === undefined ? {} : { waited_ms: waited.total, waited_build_ms: waited.build }),
     ...(url === undefined ? {} : { url }),
   };
 });
