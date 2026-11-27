@@ -2281,8 +2281,8 @@ describe("generated warehouse commands", () => {
       const { sent, out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
         route: enableThenPoll([
-          { status: 200, body: statusBody("pending") },
-          { status: 200, body: statusBody("pending") },
+          { status: 200, body: statusBody("running") },
+          { status: 200, body: statusBody("running") },
           { status: 200, body: statusBody("succeeded") },
         ]),
       });
@@ -2315,7 +2315,7 @@ describe("generated warehouse commands", () => {
     it.effect("times out on the controlled clock when the status never settles", () => {
       const { sent, run } = setup(
         ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "10s"],
-        { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("pending") }]) },
+        { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("running") }]) },
       );
       return Effect.gen(function* () {
         const fiber = yield* run.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
@@ -2426,7 +2426,7 @@ describe("generated warehouse commands", () => {
       const { sent, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
         route: enableThenPoll([
-          { status: 200, body: statusBody("pending", "retrying") },
+          { status: 200, body: statusBody("running", "retrying") },
           { status: 200, body: statusBody("succeeded") },
         ]),
       });
@@ -2474,7 +2474,7 @@ describe("generated warehouse commands", () => {
         });
         const stalling = setup(
           ["warehouse", "enable", "--schema", "public", "--wait", "--timeout", "10s"],
-          { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("pending") }]) },
+          { yes: true, route: enableThenPoll([{ status: 200, body: statusBody("running") }]) },
         );
         const suggestion = `Check it with \`supabase warehouse status --remote=${VALID_REF}\`.`;
         return Effect.gen(function* () {
@@ -2694,7 +2694,7 @@ describe("generated warehouse commands", () => {
           yes: true,
           stdoutIsTty: true,
           route: enableThenPoll([
-            { status: 200, body: statusBody("pending") },
+            { status: 200, body: statusBody("running") },
             { status: 200, body: statusBody("succeeded") },
           ]),
         });
@@ -2717,7 +2717,7 @@ describe("generated warehouse commands", () => {
           expect(out.progressEvents).toEqual([
             { type: "start", message: "Enable Warehouse replication" },
             { type: "start", message: polling },
-            { type: "message", message: `${polling} (status: pending)` },
+            { type: "message", message: `${polling} (status: running)` },
             { type: "message", message: `${polling} (status: succeeded)` },
           ]);
           expect(out.taskSettlements).toEqual([{ type: "clear" }, { type: "clear" }]);
@@ -2765,7 +2765,7 @@ describe("generated warehouse commands", () => {
       const { out, run } = setup(["warehouse", "enable", "--schema", "public", "--wait"], {
         yes: true,
         stdoutIsTty: true,
-        route: enableThenPoll([{ status: 200, body: statusBody("pending") }]),
+        route: enableThenPoll([{ status: 200, body: statusBody("running") }]),
       });
       return Effect.gen(function* () {
         const fiber = yield* run.pipe(Effect.forkChild({ startImmediately: true }));
