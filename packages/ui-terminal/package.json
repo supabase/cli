@@ -8,7 +8,6 @@
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {
-    "gallery": "bun examples/gallery.ts",
     "test": "pnpm run test:unit && pnpm run test:integration",
     "test:unit": "pnpm exec turbo run @supabase/ui-terminal#test:unit:run --",
     "test:unit:run": "vitest run --project unit --coverage.reportsDirectory=coverage/unit",
@@ -22,7 +21,6 @@
     "yoga-layout": "3.2.1"
   },
   "devDependencies": {
-    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

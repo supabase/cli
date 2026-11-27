@@ -1,3 +1,4 @@
+/** A symbol with an ASCII stand-in for terminals without Unicode. */
 export interface Glyph {
   readonly unicode: string;
   readonly ascii: string;

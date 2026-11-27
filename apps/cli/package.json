@@ -41,7 +41,8 @@
     "test:e2e:run": "bun --bun vitest run --project e2e --project e2e-exclusive",
     "test:live": "bun --bun vitest run --project live",
     "test:smoke": "bun run tests/smoke-test.ts",
-    "types:check": "tsc --noEmit -p tsconfig.types.json"
+    "types:check": "tsc --noEmit -p tsconfig.types.json",
+    "ui:gallery": "bun src/ui/gallery.ts"
   },
   "dependencies": {
     "eciesjs": "^0.5.0",
@@ -53,6 +54,7 @@
     "@clack/prompts": "^1.7.0",
     "@effect/platform-bun": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@7bff56b",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/keyring": "^1.3.0",
@@ -63,6 +65,7 @@
     "@supabase/stack": "workspace:*",
     "@supabase/supabase-js": "catalog:",
     "@supabase/typegen": "0.4.0",
+    "@supabase/ui-terminal": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/pg": "^8.23.1",

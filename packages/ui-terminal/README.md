@@ -66,9 +66,7 @@ on SIGINT, SIGTERM and SIGHUP.
 | ---------------------- | ----------------------------------------------------------------------------------------- |
 | `Terminal`             | The `box`, `static` and `text` elements, `component`, and the host service.               |
 | `TerminalHost`         | `run` and `mountEffect`, plus the process transport and its errors.                       |
-| `TerminalBlocks`       | `Spinner`, `Select` and `KeyValue`, with their props schemas.                             |
 | `TerminalCommand`      | `finish`, which ends a run.                                                               |
-| `TerminalPrompt`       | `select`, an inline list that resolves with the chosen value.                             |
 | `TerminalSubscription` | `onKeyPress`, `onResize` and `shortcuts`.                                                 |
 | `TerminalKeyboard`     | The pure `shortcuts` key matcher behind the subscription.                                 |
 | `TerminalTheme`        | Tones (`default`, `muted`, `accent`, `success`, `warning`, `danger`, `info`) and themes.  |
@@ -80,11 +78,6 @@ with `TerminalTheme.layer(spec)` or the `renderer.theme` mount option.
 The testing entry runs the production decoder and writer against `@xterm/headless`, so tests
 assert on the rendered screen, the scrollback, the cursor and the raw-mode transitions without a
 native library or a real terminal.
-
-## Gallery
-
-`pnpm gallery` runs `examples/gallery.ts`: spinners in each state, a key-value box and a `select`
-prompt. It needs a real TTY.
 
 ## Environment
 

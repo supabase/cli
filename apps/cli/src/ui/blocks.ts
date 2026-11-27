@@ -1,18 +1,15 @@
 import { Subscription, UiSchema } from "@effect/ui";
 import { Schema, Stream } from "effect";
 
-import { glyphs, pick, spinnerFrames } from "./internal/glyphs.ts";
-import type { Glyph } from "./internal/glyphs.ts";
-import * as Terminal from "./Terminal.ts";
-import * as TerminalSubscription from "./TerminalSubscription.ts";
-import * as TerminalTheme from "./TerminalTheme.ts";
+import { Terminal, TerminalSubscription, TerminalTheme } from "@supabase/ui-terminal";
 
-/** The states of a `Spinner`. */
-export const Status = Schema.Literals(["running", "succeeded", "failed", "warning"]);
-export type Status = typeof Status.Type;
+import { glyphs, pick, spinnerFrames } from "./glyphs.ts";
+import type { Glyph } from "./glyphs.ts";
 
-/** Props of `Spinner`; `unicode` picks glyphs or their ASCII stand-ins. */
-export const SpinnerProps = Schema.Struct({
+const Status = Schema.Literals(["running", "succeeded", "failed", "warning"]);
+type Status = typeof Status.Type;
+
+const SpinnerProps = Schema.Struct({
   label: Schema.String,
   status: Schema.optionalKey(Status),
   tone: Schema.optionalKey(TerminalTheme.Tone),
@@ -27,7 +24,7 @@ const stopped: Record<Exclude<Status, "running">, { glyph: Glyph; tone: Terminal
   warning: { glyph: glyphs.warning, tone: "warning" },
 };
 
-/** A status line: an animated glyph while running, a toned one once it has stopped. */
+/** A status line, with `unicode` picking glyphs over ASCII: an animated glyph while running, a toned one once it has stopped. */
 export const Spinner = Terminal.component({
   name: "Spinner",
   props: SpinnerProps,
@@ -65,7 +62,7 @@ const SelectOption = Schema.Struct({
   hint: Schema.optionalKey(Schema.String),
 });
 
-/** Props of `Select`; `initial` is the index highlighted first. */
+/** Props of `Select`; `initial` is the index highlighted first and `unicode` picks glyphs over ASCII. */
 export const SelectProps = Schema.Struct({
   message: Schema.String,
   options: Schema.Array(SelectOption),
@@ -86,8 +83,7 @@ const SelectMessage = UiSchema.TaggedEnum({
   PressedEnter: {},
 });
 
-/** Events of `Select`: `Submitted` carries the chosen option's index. */
-export const SelectEvents = UiSchema.TaggedEnum({ Submitted: { index: Schema.Finite } });
+const SelectEvents = UiSchema.TaggedEnum({ Submitted: { index: Schema.Finite } });
 
 const oneLine = (value: string) => value.replace(/\s*[\r\n]+\s*/g, " ");
 
@@ -184,8 +180,7 @@ export const Select = Terminal.component({
   },
 });
 
-/** Input of `KeyValue`. */
-export interface KeyValueConfig {
+interface KeyValueConfig {
   readonly entries: ReadonlyArray<{ readonly key: string; readonly value: string }>;
   readonly tone?: TerminalTheme.Tone;
   readonly unicode: boolean;

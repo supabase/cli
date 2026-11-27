@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import { TerminalTest } from "@supabase/ui-terminal/testing";
 import { Effect, Fiber } from "effect";
 
-import { TerminalPrompt } from "./index.ts";
-import { TerminalTest } from "./testing/index.ts";
+import { select } from "./prompt.ts";
 
 const regions = {
   message: "Which region?",
@@ -15,14 +15,14 @@ const regions = {
 const showing = (text: string) => (rows: ReadonlyArray<string>) =>
   rows.some((row) => row.includes(text));
 
-describe("terminal prompt", () => {
+describe("ui prompt", () => {
   it.effect(
     "select resolves with the chosen value and leaves the submitted state above the cursor",
     () =>
       TerminalTest.withTestTerminal({ columns: 60, rows: 10 }, (t) =>
         Effect.gen(function* () {
           t.terminal.write("$ supabase init\r\n");
-          const fiber = yield* TerminalTest.startOn(t, TerminalPrompt.select(regions));
+          const fiber = yield* TerminalTest.startOn(t, select(regions));
           const listed = yield* t.untilScreen(showing("● East US"));
           expect(listed.slice(1, 4)).toEqual([
             "◆ Which region?",
@@ -48,10 +48,7 @@ describe("terminal prompt", () => {
   it.effect("select starts on the `initial` option", () =>
     TerminalTest.withTestTerminal({ columns: 60, rows: 10 }, (t) =>
       Effect.gen(function* () {
-        const fiber = yield* TerminalTest.startOn(
-          t,
-          TerminalPrompt.select({ ...regions, initial: "eu-west-1" }),
-        );
+        const fiber = yield* TerminalTest.startOn(t, select({ ...regions, initial: "eu-west-1" }));
         yield* t.untilScreen(showing("● West EU"));
         yield* t.type("\r");
         expect(yield* Fiber.join(fiber)).toBe("eu-west-1");

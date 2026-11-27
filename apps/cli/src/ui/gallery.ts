@@ -1,17 +1,17 @@
-import { NodeRuntime } from "@effect/platform-node";
+import { BunRuntime } from "@effect/platform-bun";
 import { Command, UiSchema } from "@effect/ui";
-import { Console, Effect, Schema } from "effect";
-
 import {
   Terminal,
-  TerminalBlocks,
   TerminalCommand,
   TerminalHost,
-  TerminalPrompt,
   TerminalSubscription,
-} from "../src/index.ts";
+  TerminalTheme,
+} from "@supabase/ui-terminal";
+import { Console, Effect, Layer, Schema } from "effect";
 
-const { KeyValue, Spinner } = TerminalBlocks;
+import { KeyValue, Spinner } from "./blocks.ts";
+import { select } from "./prompt.ts";
+import { supabaseTheme } from "./theme.ts";
 
 const GalleryProps = Schema.Struct({ unicode: Schema.Boolean });
 
@@ -87,7 +87,7 @@ const Gallery = Terminal.component({
 const gallery = Effect.gen(function* () {
   const terminal = yield* TerminalHost.Transport;
   yield* TerminalHost.run(Gallery, { unicode: terminal.capabilities.unicode });
-  const region = yield* TerminalPrompt.select({
+  const region = yield* select({
     message: "Which region?",
     options: [
       { value: "us-east-1", label: "East US (N. Virginia)", hint: "closest" },
@@ -98,4 +98,8 @@ const gallery = Effect.gen(function* () {
   yield* Console.log(`region: ${region}`);
 });
 
-NodeRuntime.runMain(gallery.pipe(Effect.provide(TerminalHost.layerProcess)));
+BunRuntime.runMain(
+  gallery.pipe(
+    Effect.provide(Layer.merge(TerminalHost.layerProcess, TerminalTheme.layer(supabaseTheme))),
+  ),
+);

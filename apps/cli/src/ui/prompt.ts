@@ -2,13 +2,11 @@ import { UiSchema } from "@effect/ui";
 import { Effect, Option, Schema } from "effect";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 
-import * as Terminal from "./Terminal.ts";
-import * as TerminalBlocks from "./TerminalBlocks.ts";
-import * as TerminalCommand from "./TerminalCommand.ts";
-import * as TerminalHost from "./TerminalHost.ts";
+import { Terminal, TerminalCommand, TerminalHost } from "@supabase/ui-terminal";
 
-/** Options of `select`; `initial` names the option highlighted first. */
-export interface SelectConfig<A> {
+import { Select, SelectProps } from "./blocks.ts";
+
+interface SelectConfig<A> {
   readonly message: string;
   readonly options: NonEmptyReadonlyArray<{
     readonly value: A;
@@ -23,7 +21,7 @@ const PromptMessage = UiSchema.TaggedEnum({ SubmittedSelect: { index: Schema.Fin
 
 const SelectPrompt = Terminal.component({
   name: "SelectPrompt",
-  props: TerminalBlocks.SelectProps,
+  props: SelectProps,
   model: PromptModel,
   message: PromptMessage,
 }).make({
@@ -32,7 +30,7 @@ const SelectPrompt = Terminal.component({
     SubmittedSelect: ($, { index }) => $.evolve({ index }).run(TerminalCommand.finish()),
   },
   view: (h) =>
-    TerminalBlocks.Select(h, {
+    Select(h, {
       props: h.props,
       onEmit: { Submitted: ({ index }) => PromptMessage.SubmittedSelect({ index }) },
     }),
@@ -42,7 +40,7 @@ const SelectPrompt = Terminal.component({
  * Shows a list inline below the shell prompt and resolves with the chosen value. The submitted
  * state stays in the scrollback with the cursor below it. Fails with `NonInteractive` without a TTY.
  */
-export const select = Effect.fn("TerminalPrompt.select")(function* <A>(config: SelectConfig<A>) {
+export const select = Effect.fn("Ui.select")(function* <A>(config: SelectConfig<A>) {
   const terminal = yield* TerminalHost.Transport;
   const initial =
     config.initial === undefined

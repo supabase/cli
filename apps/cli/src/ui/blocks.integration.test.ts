@@ -1,10 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
+import { Terminal, TerminalHost } from "@supabase/ui-terminal";
+import { TerminalTest } from "@supabase/ui-terminal/testing";
 import { Effect, Fiber, Schema } from "effect";
 
-import { Terminal, TerminalBlocks, TerminalHost } from "./index.ts";
-import { TerminalTest } from "./testing/index.ts";
-
-const { KeyValue, Select, Spinner } = TerminalBlocks;
+import { KeyValue, Select, Spinner } from "./blocks.ts";
 
 const showing = (text: string) => (rows: ReadonlyArray<string>) =>
   rows.some((row) => row.includes(text));
@@ -49,7 +48,7 @@ const Stopped = Terminal.component({
   },
 });
 
-describe("terminal blocks", () => {
+describe("ui blocks", () => {
   it.effect("KeyValue aligns values, wraps long ones, and keeps the box edge straight", () =>
     TerminalTest.withTestTerminal({ columns: 36, rows: 24 }, (t) =>
       Effect.gen(function* () {

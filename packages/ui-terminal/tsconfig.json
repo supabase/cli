@@ -5,5 +5,5 @@
     "exactOptionalPropertyTypes": true,
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "examples/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }
