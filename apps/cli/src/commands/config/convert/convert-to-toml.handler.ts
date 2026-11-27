@@ -5,6 +5,7 @@ import { canPrompt } from "../../../command-internal/hosted-consent/hosted-conse
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { telemetrySendsThisRun } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import {
   PropConvertMovedCommentCount,
@@ -60,7 +61,7 @@ import {
 const promptForReason = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const telemetryRuntime = yield* TelemetryRuntime;
-  if (telemetryRuntime.consent !== "granted" || !(yield* canPrompt)) {
+  if (!telemetrySendsThisRun(telemetryRuntime) || !(yield* canPrompt)) {
     return undefined;
   }
   const answer = yield* output

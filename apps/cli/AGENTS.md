@@ -222,6 +222,10 @@ stack-started after health succeeds, and upgrade-suggested billing-gate events w
 envelope and payload semantics. Use the catalog and the telemetry tests for the complete current
 event contract.
 
+Telemetry opt-out: every send goes through the `Analytics` layer, every reader and writer of
+`telemetry.json` resolves it from `TelemetryRuntime.configDir`, and event and group properties
+carry no user-chosen names.
+
 ## Error classification
 
 `src/shared/telemetry/error-actionability.ts` owns the closed actionability vocabulary. Export every

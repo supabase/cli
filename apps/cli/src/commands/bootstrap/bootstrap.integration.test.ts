@@ -402,7 +402,7 @@ describe("bootstrap integration", () => {
           {
             groupType: "project",
             groupKey: VALID_REF,
-            properties: { name: CREATED.name, organization_slug: CREATED.organization_slug },
+            properties: { organization_slug: CREATED.organization_slug },
           },
         ]);
       }).pipe(Effect.provide(BunServices.layer)),

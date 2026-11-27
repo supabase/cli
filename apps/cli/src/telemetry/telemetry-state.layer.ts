@@ -1,11 +1,10 @@
 import { DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { SecureRandom } from "effect/crypto";
-import { homedir } from "node:os";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import { publishTelemetryFile } from "../shared/telemetry/consent.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
-import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
 
 interface State {
@@ -26,9 +25,8 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-const telemetryPath = Effect.fnUntraced(function* (pathSvc: Path.Path) {
-  return pathSvc.join(yield* readSupabaseHome(pathSvc, homedir()), "telemetry.json");
-});
+const telemetryPath = (pathSvc: Path.Path, configDir: string) =>
+  pathSvc.join(configDir, "telemetry.json");
 
 /**
  * Serializes the state, splicing a carried exact `schema_version` token back in verbatim via
@@ -286,9 +284,9 @@ function lastNonNullString(
  * Decodes the on-disk telemetry state: all-or-nothing, never salvaging individual fields. A file
  * missing (or mistyping) any required piece — an `enabled` bool (or a `granted`/`denied`
  * `consent`), a parseable `session_last_active`, and non-empty `device_id` and `session_id` — is
- * treated as wholly malformed, so the caller recreates everything fresh: `enabled` back to
- * `true`, new `device_id`, new `session_id`. A corrupt file that still says `"enabled": false`
- * does not stay disabled.
+ * treated as wholly malformed, so the caller recreates everything fresh: new `device_id`, new
+ * `session_id`, and `enabled: false`, because the malformed content may hold an opt-out. Only a
+ * missing or empty file is recreated enabled.
  *
  * Strictness is reproduced at the token level, over every occurrence of every root field
  * ({@link scanRootJsonEntries} + {@link hasDecodableFieldTokens}): `JSON.parse` collapses
@@ -387,12 +385,13 @@ export function readExistingState(text: string): PriorState | undefined {
 }
 
 export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState")(function* (
+  configDir: string,
   opts: { readonly now?: DateTime.Utc } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const crypto = yield* SecureRandom.SecureRandom;
-  const filePath = yield* telemetryPath(pathSvc);
+  const filePath = telemetryPath(pathSvc, configDir);
   const exists = yield* fs.exists(filePath);
   const existing = exists ? yield* fs.readFileString(filePath) : undefined;
   const prior = existing !== undefined ? readExistingState(existing) : undefined;
@@ -408,8 +407,11 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
     priorActiveMs === undefined ||
     DateTime.toEpochMillis(now) - priorActiveMs > SESSION_ROTATION_MS;
 
+  const heldUndecodableContent =
+    prior === undefined && existing !== undefined && existing.trim().length > 0;
+
   const state: State = {
-    enabled: prior?.enabled ?? true,
+    enabled: prior?.enabled ?? !heldUndecodableContent,
     device_id: prior?.device_id ?? (yield* crypto.uuidV4()),
     session_id:
       !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.uuidV4(),
@@ -425,23 +427,24 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
   };
 
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(state));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(state));
   return state;
 });
 
 export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
+  configDir: string,
   enabled: boolean,
   opts: { readonly now?: DateTime.Utc } = {},
 ) {
-  const state = yield* loadOrCreateTelemetryState(opts);
+  const state = yield* loadOrCreateTelemetryState(configDir, opts);
   if (state.enabled === enabled) return state;
 
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const nextState: State = { ...state, enabled };
-  const filePath = yield* telemetryPath(pathSvc);
+  const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
   return nextState;
 });
 
@@ -451,41 +454,43 @@ export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
  * `distinct_id` field set (`stitchLogin`) or removed (`clearDistinctId`).
  */
 const persistDistinctId = Effect.fn("telemetry.persistDistinctId")(function* (
+  configDir: string,
   distinctId: string | undefined,
 ) {
-  const base = yield* loadOrCreateTelemetryState();
+  const base = yield* loadOrCreateTelemetryState(configDir);
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State =
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
-  const filePath = yield* telemetryPath(pathSvc);
+  const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
 });
 
-const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(function* () {
-  const base = yield* loadOrCreateTelemetryState();
+const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(function* (
+  configDir: string,
+) {
+  const base = yield* loadOrCreateTelemetryState(configDir);
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const crypto = yield* SecureRandom.SecureRandom;
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State = { ...rest, device_id: yield* crypto.uuidV4() };
-  const filePath = yield* telemetryPath(pathSvc);
+  const filePath = telemetryPath(pathSvc, configDir);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
+  yield* publishTelemetryFile(filePath, serializeTelemetryState(nextState));
 });
 
 /**
- * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run:
+ * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` when a command runs:
  *
  *  - Reuses an existing `device_id` if the file is present.
  *  - Rotates `session_id` if `session_last_active` is older than 30 minutes.
- *  - Always sets `enabled: true` on a fresh state — the field is only flipped to `false` if the
- *    user has run `supabase telemetry disable`, in which case the prior value is preserved. The
- *    `SUPABASE_TELEMETRY_DISABLED`/`DO_NOT_TRACK` env vars suppress event delivery, not
- *    state-file writes.
- *  - Always writes, even when telemetry is disabled; only event delivery is suppressed.
+ *  - Sets `enabled: true` on a fresh state and `enabled: false` when the file holds content that
+ *    does not decode. A decoded value is preserved.
+ *  - While telemetry is disabled, updates an existing file but never creates one, so an opt-out
+ *    by env var leaves no enabled state behind.
  *
  * Best-effort: filesystem or JSON parse errors are swallowed.
  */
@@ -507,8 +512,23 @@ export const telemetryStateLayer = Layer.effect(
         Effect.provideService(SecureRandom.SecureRandom, crypto),
       );
 
+    const stateFileHoldsContent = Effect.gen(function* () {
+      const content = yield* fs
+        .readFileString(telemetryPath(pathSvc, runtime.configDir))
+        .pipe(Effect.orElseSucceed(() => ""));
+      return content.trim().length > 0;
+    });
+
+    const persist = <A, E>(
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | SecureRandom.SecureRandom>,
+    ) =>
+      Effect.gen(function* () {
+        if (runtime.consent !== "granted" && !(yield* stateFileHoldsContent)) return;
+        yield* provide(effect);
+      });
+
     return TelemetryState.of({
-      flush: provide(loadOrCreateTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
+      flush: persist(loadOrCreateTelemetryState(runtime.configDir)).pipe(Effect.ignore),
       stitchLogin: (distinctId: string) =>
         // The in-memory stamp always happens so subsequent captures in this process carry the
         // user's id; the alias (which merges pre-login history) and the `telemetry.json` write
@@ -525,14 +545,22 @@ export const telemetryStateLayer = Layer.effect(
           if (firstIdentity) {
             yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
           }
-          yield* provide(persistDistinctId(distinctId));
+          yield* persist(persistDistinctId(runtime.configDir, distinctId));
         }).pipe(Effect.ignore),
       clearDistinctId: Effect.sync(() => {
         runtime.identity.clear();
-      }).pipe(Effect.andThen(provide(persistDistinctId(undefined))), Effect.asVoid, Effect.ignore),
+      }).pipe(
+        Effect.andThen(persist(persistDistinctId(runtime.configDir, undefined))),
+        Effect.asVoid,
+        Effect.ignore,
+      ),
       resetIdentity: Effect.sync(() => {
         runtime.identity.clear();
-      }).pipe(Effect.andThen(provide(persistIdentityReset())), Effect.asVoid, Effect.ignore),
+      }).pipe(
+        Effect.andThen(persist(persistIdentityReset(runtime.configDir))),
+        Effect.asVoid,
+        Effect.ignore,
+      ),
     });
   }),
 );

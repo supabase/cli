@@ -32,6 +32,7 @@ import {
   PropSchemaVersion,
   PropSessionId,
 } from "../shared/telemetry/event-catalog.ts";
+import { telemetrySendsThisRun } from "../shared/telemetry/identity.ts";
 import { scopedPosthogClient } from "../shared/telemetry/posthog-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../shared/telemetry/posthog-config.ts";
@@ -199,7 +200,7 @@ export const analyticsLayerFor = (mode: ProjectStateMode) =>
       const runtimeInfo = yield* RuntimeInfo;
       const posthogConfig = yield* resolvePosthogConfig(configProvider);
 
-      if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
+      if (!telemetrySendsThisRun(runtime) || Option.isNone(posthogConfig.key)) {
         return Analytics.of({
           capture: () => Effect.void,
           identify: () => Effect.void,

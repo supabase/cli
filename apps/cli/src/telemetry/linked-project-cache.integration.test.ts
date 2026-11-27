@@ -105,7 +105,7 @@ describe("linkedProjectCacheLayer", () => {
           {
             groupType: "project",
             groupKey: VALID_REF,
-            properties: { name: "proj", organization_slug: "acme" },
+            properties: { organization_slug: "acme" },
           },
         ]);
       }).pipe(Effect.provide(layer));

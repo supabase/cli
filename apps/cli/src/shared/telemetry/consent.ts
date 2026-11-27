@@ -1,4 +1,5 @@
 import {
+  Clock,
   Duration,
   Effect,
   FileSystem,
@@ -60,7 +61,7 @@ function legacyConfigToTelemetryConfig(
 }
 
 const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) {
-  return yield* decodeCurrentTelemetryConfigFile(content).pipe(
+  const config = yield* decodeCurrentTelemetryConfigFile(content).pipe(
     Effect.catch(() =>
       Effect.gen(function* () {
         const legacyConfig = yield* decodeLegacyTelemetryConfigFile(content);
@@ -68,6 +69,20 @@ const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) 
       }),
     ),
   );
+  const hasIdentity = config.device_id !== "" && config.session_id !== "";
+  return yield* Effect.fromNullishOr(hasIdentity ? config : undefined);
+});
+
+// A file that cannot be read or decoded may hold an opt-out, so it reads as one.
+const optedOutTelemetryConfig = Effect.gen(function* () {
+  const crypto = yield* SecureRandom.SecureRandom;
+  const config: TelemetryConfig = {
+    consent: "denied",
+    device_id: yield* crypto.uuidV4(),
+    session_id: yield* crypto.uuidV4(),
+    session_last_active: yield* Clock.currentTimeMillis,
+  };
+  return config;
 });
 
 export const readTelemetryConfig = Effect.fnUntraced(
@@ -75,25 +90,34 @@ export const readTelemetryConfig = Effect.fnUntraced(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const configPath = path.join(configDir, "telemetry.json");
-    const exists = yield* fs.exists(configPath);
-    if (!exists) return Option.none<TelemetryConfig>();
-    const content = yield* fs.readFileString(configPath);
-    const config = yield* decodeTelemetryConfigFile(content);
+    const content = yield* fs.readFileString(configPath).pipe(
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
+      ),
+      Effect.option,
+    );
+    if (Option.isNone(content)) return Option.some(yield* optedOutTelemetryConfig);
+    if (content.value.trim().length === 0) return Option.none<TelemetryConfig>();
+    const config = yield* decodeTelemetryConfigFile(content.value).pipe(
+      Effect.catch(() => optedOutTelemetryConfig),
+    );
     return Option.some(config);
   },
   (effect) => Effect.orElseSucceed(effect, () => Option.none<TelemetryConfig>()),
 );
 
-export const writeTelemetryConfig = Effect.fnUntraced(function* (
-  config: TelemetryConfig,
-  configDir: string,
+/**
+ * Replaces `telemetry.json` through a temporary file and a rename. A write interrupted halfway
+ * leaves the previous content, where an in-place write would leave an empty file that reads as a
+ * first run.
+ */
+export const publishTelemetryFile = Effect.fnUntraced(function* (
+  configPath: string,
+  content: string,
   platform: NodeJS.Platform = process.platform,
 ) {
   const crypto = yield* SecureRandom.SecureRandom;
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
-  const configPath = path.join(configDir, "telemetry.json");
   // Random suffix, not a timestamp: concurrent writers (parallel test files,
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
@@ -114,8 +138,7 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
     Effect.succeed(tmpPath),
     (temporary) =>
       Effect.gen(function* () {
-        const encoded = yield* encodeTelemetryConfig(config);
-        yield* fs.writeFileString(temporary, encodePrettyJson(encoded), { mode: 0o600 });
+        yield* fs.writeFileString(temporary, content, { mode: 0o600 });
         yield* fs.rename(temporary, configPath).pipe(
           Effect.retry({
             schedule: retrySchedule,
@@ -126,6 +149,22 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
         );
       }),
     (temporary) => fs.remove(temporary, { force: true }).pipe(Effect.ignore),
+  );
+});
+
+export const writeTelemetryConfig = Effect.fnUntraced(function* (
+  config: TelemetryConfig,
+  configDir: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
+  const encoded = yield* encodeTelemetryConfig(config);
+  yield* publishTelemetryFile(
+    path.join(configDir, "telemetry.json"),
+    encodePrettyJson(encoded),
+    platform,
   );
 }, Effect.orDie);
 

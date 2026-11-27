@@ -5,7 +5,6 @@ import { GroupOrganization, GroupProject } from "./event-catalog.ts";
 
 interface IdentifiedProject {
   readonly ref: string;
-  readonly name: string;
   readonly organization_id: string;
   readonly organization_slug: string;
 }
@@ -22,7 +21,6 @@ export const identifyProjectGroups = Effect.fnUntraced(function* (
   }
   if (project.ref.length > 0) {
     yield* analytics.groupIdentify(GroupProject, project.ref, {
-      name: project.name,
       organization_slug: project.organization_slug,
     });
   }
