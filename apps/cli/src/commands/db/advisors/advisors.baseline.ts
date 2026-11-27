@@ -1,5 +1,9 @@
-import { applyConfigEdits, writeCliConfigDocumentText } from "@supabase/config/internal";
-import { MIGRATION_CHECK_RULES, type MigrationCheckRule } from "@supabase/config/internal";
+import {
+  applyConfigEdits,
+  MIGRATION_CHECK_RULES,
+  type MigrationCheckRule,
+  writeCliConfigDocumentText,
+} from "@supabase/config/internal";
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { getDocumentValue } from "../../../config/cli-config-document.ts";
@@ -24,6 +28,21 @@ export interface BaselineExclusion {
 
 const EXCLUDE_PATH = ["db", "migrations", "checks", "exclude"] as const;
 
+const quotedPart = (part: string): string => `"${part.replaceAll('"', '""')}"`;
+
+/**
+ * The `[db.migrations.checks.exclude]` entry for a finding's object, `schema.name`, with a part
+ * double-quoted when it holds a quote, edge whitespace, or (for the schema) a dot; `undefined`
+ * when no entry can name it.
+ */
+export const exclusionEntry = (schema: string, name: string): string | undefined => {
+  if (schema === "" || name === "" || [schema, name].some((part) => /\$sbcq?\$/u.test(part))) {
+    return undefined;
+  }
+  const plain = (part: string) => !part.includes('"') && part === part.trim();
+  return `${plain(schema) && !schema.includes(".") ? schema : quotedPart(schema)}.${plain(name) ? name : quotedPart(name)}`;
+};
+
 /** Rules `--baseline` records: every rule the policy does not turn off. */
 export const baselineRules = (policy: MigrationChecksPolicy): ReadonlyArray<MigrationCheckRule> =>
   MIGRATION_CHECK_RULES.filter((rule) => policy.severities[rule] !== "off");
@@ -36,22 +55,43 @@ export const loadBaselinePolicy = Effect.fn("db.advisors.baseline.policy")(funct
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
   const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
-  return { policy: toml.migrationChecks, exposedSchemas: toml.apiSchemas };
+  return {
+    policy: toml.migrationChecks,
+    exposedSchemas: toml.apiSchemas,
+    appliedRemote: toml.appliedRemote,
+  };
 });
 
-const fileEntries = (document: unknown, rule: MigrationCheckRule): ReadonlyArray<string> => {
-  const value = getDocumentValue(document, [...EXCLUDE_PATH, rule]);
+/**
+ * Where a rule's exclusions live for the target: a matched `[remotes.<name>]` block's own list
+ * replaces the root list, so it is the one to extend.
+ */
+const excludePath = (
+  document: unknown,
+  rule: MigrationCheckRule,
+  appliedRemote: string | undefined,
+): ReadonlyArray<string> => {
+  const remotePath = ["remotes", appliedRemote ?? "", ...EXCLUDE_PATH, rule];
+  return appliedRemote !== undefined && Array.isArray(getDocumentValue(document, remotePath))
+    ? remotePath
+    : [...EXCLUDE_PATH, rule];
+};
+
+const fileEntries = (document: unknown, path: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const value = getDocumentValue(document, path);
   return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
 };
 
 /**
- * Adds `findings` the policy does not already exclude to `[db.migrations.checks.exclude]` in the
- * project config file, keeping existing entries (sorted) and the rest of the file byte for
- * byte, and reports what it added.
+ * Appends `findings` the policy does not already exclude to the target's
+ * `[db.migrations.checks.exclude]` lists in the project config file, keeping existing entries and
+ * the rest of the file byte for byte, and reports what it added. Nothing is written when nothing
+ * is added.
  */
 export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
   policy: MigrationChecksPolicy,
   findings: ReadonlyArray<BaselineExclusion>,
+  appliedRemote: string | undefined,
 ) {
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
@@ -77,7 +117,8 @@ export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
   );
   const added: Array<BaselineExclusion> = [];
   const edits = MIGRATION_CHECK_RULES.flatMap((rule) => {
-    const existing = fileEntries(loaded.rawDocument, rule);
+    const path = excludePath(loaded.rawDocument, rule, appliedRemote);
+    const existing = fileEntries(loaded.rawDocument, path);
     const present = new Set(existing);
     const objects = [
       ...new Set(
@@ -92,10 +133,7 @@ export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
       ),
     ].toSorted();
     added.push(...objects.map((object) => ({ rule, object })));
-    const merged = [...new Set([...existing, ...objects])].toSorted();
-    const unchanged =
-      merged.length === existing.length && merged.every((entry, index) => entry === existing[index]);
-    return unchanged ? [] : [{ path: [...EXCLUDE_PATH, rule], value: merged }];
+    return objects.length === 0 ? [] : [{ path, value: [...existing, ...objects] }];
   });
   yield* Effect.annotateCurrentSpan({
     "advisor.baseline.finding_count": findings.length,
@@ -144,8 +182,6 @@ export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
     return;
   }
   yield* output.raw(
-    lines.length === 0
-      ? `${message}\n`
-      : `${message.replace(/\.$/u, ":")}\n${lines.join("\n")}\n`,
+    lines.length === 0 ? `${message}\n` : `${message.replace(/\.$/u, ":")}\n${lines.join("\n")}\n`,
   );
 });

@@ -43,6 +43,7 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   preparation: "on-demand" as const,
   frozen: false,
   eager: false,
+  skipChecks: false,
 });
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));

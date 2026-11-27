@@ -17,7 +17,7 @@ import { DbConnection } from "../../../command-internal/db-connection.service.ts
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import { readMigrationCheckFindings } from "../../../command-internal/migration-checks.ts";
 import { getDocumentValue } from "../../../config/cli-config-document.ts";
-import { MIGRATION_CHECK_RULES } from "@supabase/config/internal";
+import { MIGRATION_CHECK_RULES, type MigrationCheckRule } from "@supabase/config/internal";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
@@ -41,6 +41,7 @@ import { fetchPerformanceAdvisors, fetchSecurityAdvisors } from "./advisors.link
 import {
   type BaselineExclusion,
   baselineRules,
+  exclusionEntry,
   loadBaselinePolicy,
   writeBaseline,
 } from "./advisors.baseline.ts";
@@ -186,6 +187,15 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   );
 });
 
+const baselineEntry = (
+  rule: MigrationCheckRule,
+  schema: string,
+  name: string,
+): ReadonlyArray<BaselineExclusion> => {
+  const object = exclusionEntry(schema, name);
+  return object === undefined ? [] : [{ rule, object }];
+};
+
 /**
  * `--baseline`: reads every current finding for the `[db.migrations.checks]` rules that are not
  * off and records it in `[db.migrations.checks.exclude]`. A linked project's findings come from
@@ -210,7 +220,7 @@ const runBaseline = Effect.fn("db.advisors.baseline")(function* (
               typeof schema !== "string" ||
               typeof name !== "string"
               ? []
-              : [{ rule, object: `${schema}.${name}` }];
+              : baselineEntry(rule, schema, name);
           })
         : (yield* withLocalSession(target, dnsResolver, (session) =>
             readMigrationCheckFindings(session, checks).pipe(
@@ -223,9 +233,9 @@ const runBaseline = Effect.fn("db.advisors.baseline")(function* (
           )).flatMap((finding) =>
             finding.schema === null || finding.name === null
               ? []
-              : [{ rule: finding.rule, object: `${finding.schema}.${finding.name}` }],
+              : baselineEntry(finding.rule, finding.schema, finding.name),
           );
-  yield* writeBaseline(checks.policy, findings);
+  yield* writeBaseline(checks.policy, findings, checks.appliedRemote);
 });
 
 /** Prints the lints (or the empty-result message) and applies `--fail-on`. */

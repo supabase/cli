@@ -685,7 +685,7 @@ describe("db advisors — linked", () => {
   });
 
   it.effect(
-    "--baseline honours -o json with a message and sorts the existing exclude entries",
+    "--baseline honours -o json, appends to a commented list, and leaves the file alone when nothing is new",
     () => {
       const { layer, out } = setup({
         securityLints: [
@@ -702,15 +702,17 @@ describe("db advisors — linked", () => {
         yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           configPath,
-          '[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.z", "public.a"]\n',
+          '[db.migrations.checks.exclude]\nrls_disabled_in_public = [\n  "public.z", # owned by billing\n  "public.a",\n]\nrls_enabled_no_policy = ["public.y", "public.x"]\n',
         );
 
         yield* dbAdvisors(linkedFlags({ baseline: true }));
+        const afterFirst = yield* fs.readFileString(configPath);
         yield* dbAdvisors(linkedFlags({ baseline: true }));
 
-        expect(yield* fs.readFileString(configPath)).toContain(
-          'rls_disabled_in_public = ["public.a", "public.b", "public.z"]',
+        expect(afterFirst).toBe(
+          '[db.migrations.checks.exclude]\nrls_disabled_in_public = [\n  "public.z", # owned by billing\n  "public.a",\n  "public.b",\n]\nrls_enabled_no_policy = ["public.y", "public.x"]\n',
         );
+        expect(yield* fs.readFileString(configPath)).toBe(afterFirst);
         const messages = [...out.stdoutText.matchAll(/"message": "([^"]*)"/gu)].map((m) => m[1]);
         expect(messages).toHaveLength(2);
         expect(messages[0]).toContain("Added 1 object");
@@ -718,6 +720,62 @@ describe("db advisors — linked", () => {
       }).pipe(Effect.provideService(OutputFlag, Option.some("json")), Effect.provide(layer));
     },
   );
+
+  it.effect(
+    "--baseline extends a matched remote's own exclude list, which replaces the root one",
+    () => {
+      const { layer } = setup({
+        securityLints: [
+          {
+            ...securityLint,
+            name: "rls_disabled_in_public",
+            metadata: { schema: "public", name: "legacy", type: "table" },
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const configPath = `${tempRoot.current}/supabase/config.toml`;
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          configPath,
+          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.root"]\n\n[remotes.prod]\nproject_id = "${VALID_REF}"\n\n[remotes.prod.db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.kept"]\n`,
+        );
+
+        yield* dbAdvisors(linkedFlags({ baseline: true }));
+
+        expect(yield* fs.readFileString(configPath)).toBe(
+          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.root"]\n\n[remotes.prod]\nproject_id = "${VALID_REF}"\n\n[remotes.prod.db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.kept", "public.legacy"]\n`,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("--baseline quotes object names the config could not read unquoted", () => {
+    const lint = (schema: string, table: string) => ({
+      ...securityLint,
+      name: "rls_disabled_in_public",
+      metadata: { schema, name: table, type: "table" },
+    });
+    const { layer, out } = setup({
+      securityLints: [lint("public", "legacy "), lint("api.v2", "users"), lint("public", 'a"b')],
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const configPath = `${tempRoot.current}/supabase/config.toml`;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+      yield* fs.writeFileString(configPath, "[db.migrations.checks.exclude]\n");
+
+      yield* dbAdvisors(linkedFlags({ baseline: true }));
+      // The second run reloads the config, so it fails if the config rejects an entry.
+      yield* dbAdvisors(linkedFlags({ baseline: true }));
+
+      expect(yield* fs.readFileString(configPath)).toContain(
+        String.raw`rls_disabled_in_public = ["\"api.v2\".users", "public.\"a\"\"b\"", "public.\"legacy \""]`,
+      );
+      expect(out.stdoutText).toContain("No new findings");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("never resolves a database connection for linked advisors", () => {
     const { layer, resolver, api, cache } = setup({

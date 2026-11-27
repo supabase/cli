@@ -1,10 +1,14 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Ref } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
+} from "../../../command-internal/migration-checks.ts";
 import { DbStartFromBackupUnsupportedError } from "./start.errors.ts";
 import type { DbStartFlags } from "./start.command.ts";
 
@@ -21,6 +25,15 @@ import type { DbStartFlags } from "./start.command.ts";
 export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
   const output = yield* Output;
   const telemetryState = yield* TelemetryState;
+
+  const checksReport = yield* Ref.make(Option.none<MigrationChecksReport>());
+  const started = Effect.gen(function* () {
+    const report = yield* Ref.get(checksReport);
+    yield* output.success("Started local database.", {
+      status: "started",
+      ...(Option.isSome(report) ? { checks: report.value } : {}),
+    });
+  });
 
   const body = Effect.gen(function* () {
     const backend = yield* currentStackBackend;
@@ -48,9 +61,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
         }
         return;
       }
-      if (output.format !== "text") {
-        yield* output.success("Started local database.", { status: "started" });
-      }
+      if (output.format !== "text") yield* started;
       return;
     }
 
@@ -67,10 +78,8 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
       return;
     }
 
-    if (output.format !== "text") {
-      yield* output.success("Started local database.", { status: "started" });
-    }
-  });
+    if (output.format !== "text") yield* started;
+  }).pipe(Effect.provideService(MigrationChecksReplayReport, checksReport));
 
   // db start is local-only — no project ref, so no linked-project cache write.
   // Telemetry still flushes on success and failure.

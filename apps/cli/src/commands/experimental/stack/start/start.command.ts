@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
+import { MigrationChecksSkipped } from "../../../../command-internal/migration-checks.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { frozenFlag } from "../stack.flags.ts";
 import { stackStart } from "./start.handler.ts";
@@ -44,6 +45,12 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription(
+      "Skip the [db.migrations.checks] security checks when replaying local migrations.",
+    ),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -68,10 +75,20 @@ export const stackStartCommand = Command.make("start", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "frozen", "eager"],
+    noApiEffectFlags: [
+      "exclude",
+      "stack",
+      "stack-id",
+      "runtime",
+      "preparation",
+      "frozen",
+      "eager",
+      "skip-checks",
+    ],
   }),
   Command.withHandler((flags) =>
     stackStart(flags).pipe(
+      Effect.provideService(MigrationChecksSkipped, flags.skipChecks),
       withCommandTelemetry({ flags, config, aliases: { x: "exclude" } }),
       withJsonErrorHandling,
     ),

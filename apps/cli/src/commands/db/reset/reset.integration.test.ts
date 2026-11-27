@@ -128,6 +128,7 @@ import {
   type DbSession,
 } from "../../../command-internal/db-connection.service.ts";
 import { dbReset } from "./reset.handler.ts";
+import { MigrationChecksBlockedError } from "../../../command-internal/migration-checks.ts";
 import type { DbResetFlags } from "./reset.command.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
 import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
@@ -222,6 +223,8 @@ function mockConnection(
     replicationSlotQueryFails?: boolean;
     /** Fails one exact statement with the given SQLSTATE `code` (or no code, for a non-PgError failure). */
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
+    /** Splinter rows a security check read returns. */
+    findingRows?: ReadonlyArray<Record<string, unknown>>;
     /** When set, an `exec` whose SQL contains this substring fails instead of succeeding. */
     execFailsOn?: string;
     execFailsMessage?: string;
@@ -266,6 +269,7 @@ function mockConnection(
               );
             }
             if (sql === LIST_MIGRATIONS) return Effect.succeed([]);
+            if (sql.startsWith("select l.*")) return Effect.succeed(opts.findingRows ?? []);
             if (sql === COUNT_REPLICATION_SLOTS) {
               if (opts.replicationSlotQueryFails === true) {
                 return Effect.fail(new DbExecError({ message: "connection reset" }));
@@ -953,6 +957,7 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
+    findingRows?: ReadonlyArray<Record<string, unknown>>;
     // Simulates an unlinked workdir: the project-ref resolver fails with `ProjectRefNotLinkedError`
     // absent an explicit `--remote=<ref>`, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
@@ -1397,6 +1402,35 @@ describe("db reset", () => {
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
       });
     });
+
+    it.effect(
+      "a failed end-state security check restarts the stack services and keeps SB001",
+      () => {
+        const { layer, stackApi } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[db.migrations.checks]\nrls_disabled_in_public = "error"\n',
+          files: { "supabase/migrations/20261001000000_open.sql": "create table open_t(id int);" },
+          findingRows: [
+            {
+              name: "rls_disabled_in_public",
+              metadata: { schema: "public", name: "open_t", type: "table" },
+            },
+          ],
+          args: ["db", "reset"],
+          isLocal: true,
+          stackBackend: true,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+
+          const error = Exit.isFailure(exit)
+            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+            : undefined;
+          expect(error).toBeInstanceOf(MigrationChecksBlockedError);
+          expect(error instanceof MigrationChecksBlockedError && error.errorCode).toBe("SB001");
+          expect(stackApi.startCalls).toBe(2);
+        });
+      },
+    );
 
     it.effect("a stack reset never reads or writes supabase/.temp", () => {
       seedLegacyStateDecoys(tmp.current);
@@ -3557,7 +3591,10 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data).toEqual({ version: "" });
+        expect(success?.data).toEqual({
+          version: "",
+          checks: { outcome: "passed", findings: [], checkedAfterCommit: [] },
+        });
       });
     });
 

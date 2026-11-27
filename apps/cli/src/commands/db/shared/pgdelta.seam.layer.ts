@@ -102,7 +102,7 @@ export const declarativeSeamLayer = Layer.effect(
               (cause) =>
                 new DeclarativeShadowDbError({
                   message: cause.message,
-                  ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                  ...(hasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
                   ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
                 }),
             ),

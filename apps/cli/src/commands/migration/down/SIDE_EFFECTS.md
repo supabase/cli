@@ -90,9 +90,11 @@ Same structured result delivered as an NDJSON `result` event.
   findings are read once before the replay and once after the last migration, before seeding,
   with `begin`, `set_config(…, true)`, a splinter lint `SELECT` and `rollback`. New warnings and
   every error print to stderr; an error-level finding fails the command (`SB001`) with the
-  findings and how to proceed (fix, `db advisors --baseline`, or `--skip-checks`), and the
-  database is left with its migrations applied. `--skip-checks` skips the reads and
-  prints that checks were skipped.
+  findings and how to proceed (fix, `db advisors --baseline` with the same target flags, or
+  `--skip-checks`), and the database is left with its migrations applied. An `[api].schemas`
+  entry the checks cannot use fails before the schemas are dropped. Machine output adds the
+  report as `checks: { outcome, findings, checkedAfterCommit }`. `--skip-checks` skips the reads
+  and prints that checks were skipped.
 - Takes no positional arguments.
 - Performs no best-effort migrations-catalog cache optimization.
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config

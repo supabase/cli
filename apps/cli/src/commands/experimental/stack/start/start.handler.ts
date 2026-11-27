@@ -50,6 +50,10 @@ import {
   initializeStackDatabase,
   projectCatalogOverlay,
 } from "../../../../command-internal/stack-bootstrap.ts";
+import {
+  MigrationChecksBlockedError,
+  MigrationChecksDeferral,
+} from "../../../../command-internal/migration-checks.ts";
 import { stackStorageCredentialsFor } from "../../../../command-internal/stack-storage.ts";
 import {
   hasConfiguredBuckets,
@@ -143,9 +147,7 @@ const portConflictSuggestion = (
 };
 
 const stackError = (
-  cause: { readonly message: string; readonly suggestion?: string } & Partial<
-    Pick<StackError, "outcomes" | "conflict">
-  >,
+  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
   requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
   portSaved = false,
@@ -154,8 +156,7 @@ const stackError = (
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion =
-    portConflictSuggestion(cause.conflict, requested, portSaved) ?? cause.suggestion;
+  const suggestion = portConflictSuggestion(cause.conflict, requested, portSaved);
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,
@@ -1061,6 +1062,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         configIssue: "missing-credentials",
         message: "The stack has no saved credentials",
       });
+    // A failed end-state security check leaves the stack running: it is reported once the stack is up.
+    const deferredChecks = yield* Ref.make(Option.none<MigrationChecksBlockedError>());
     if (initialComposition || serviceKindsChanged) {
       yield* Effect.annotateCurrentSpan({ "stack.migrations_applied": true });
       const migrations = initialComposition
@@ -1080,8 +1083,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         overlay: projectCatalogOverlay(toml, target.projectRoot),
         ...(migrations === undefined ? {} : { migrations }),
       }).pipe(
+        Effect.provideService(MigrationChecksDeferral, deferredChecks),
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError(stackError),
+        Effect.mapError((error) =>
+          error instanceof MigrationChecksBlockedError ? error : stackError(error),
+        ),
       );
     }
     if (!initialComposition)
@@ -1136,7 +1142,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.tapError((error) => starting.fail(error.message)),
     );
     yield* starting.succeed("Stack is ready.");
-    yield* reportReady(report, "");
+    const checksFailure = yield* Ref.get(deferredChecks);
+    // Machine output carries one document: the check failure replaces the ready result.
+    if (Option.isNone(checksFailure) || output.format === "text") {
+      yield* reportReady(report, "");
+    }
+    if (Option.isSome(checksFailure)) return yield* checksFailure.value;
     return stack.id;
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

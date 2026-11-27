@@ -254,12 +254,16 @@ to those defaults (the usual outcome for an interactive terminal).
 
 ## Notes
 
-- **Migration security checks**: a remote reset checks each file like `db push`. A local reset
-  runs no per-file check; after the last migration and before seeding, one read reports new
-  warnings and every error. An error-level finding, or a failed read while a rule is at `error`,
-  fails the command (`SB001`) with the findings and how to proceed (fix, `db advisors --baseline`,
-  or `--skip-checks`); the database is left with its migrations applied.
-  `--skip-checks` skips the checks and prints that checks were skipped.
+- **Migration security checks**: neither a local nor a remote reset checks each file; after the
+  last migration and before seeding, one read reports new warnings and every error, so a later
+  migration may fix what an earlier one introduced. An error-level finding, or a failed read while
+  a rule is at `error`, fails the command (`SB001`) with the findings and how to proceed (fix,
+  `db advisors --baseline` with the same target flags, or `--skip-checks`); the database is left
+  with its migrations applied. A local reset restarts the stack services before it fails. An
+  `[api].schemas` entry the checks cannot use fails before any schema is dropped or the local
+  database is recreated. Machine output adds the report as `checks: { outcome, findings,
+checkedAfterCommit }` beside `version`. `--skip-checks` skips the checks and prints that checks
+  were skipped.
 
 - **Stack backend bucket seeding.** Storage's post-reset capability state gates bucket
   seeding on this path: `ready`/`dormant`/`starting`/`stopping` seed immediately (the

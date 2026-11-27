@@ -63,6 +63,14 @@ export const MigrationChecksDeferral = Context.Reference<
   Ref.Ref<Option.Option<MigrationChecksBlockedError>> | undefined
 >("supabase/migration-checks/MigrationChecksDeferral", { defaultValue: () => undefined });
 
+/**
+ * Receives a replay's end-state report, for callers that reach the replay through bootstrap
+ * layers and carry the report in their machine-readable result.
+ */
+export const MigrationChecksReplayReport = Context.Reference<
+  Ref.Ref<Option.Option<MigrationChecksReport>> | undefined
+>("supabase/migration-checks/MigrationChecksReplayReport", { defaultValue: () => undefined });
+
 /** Timeout, in milliseconds, of the in-transaction check statement. */
 export const MigrationChecksTimeoutMs = Context.Reference<number>(
   "supabase/migration-checks/MigrationChecksTimeoutMs",
@@ -250,21 +258,35 @@ const validateExposedSchemas = Effect.fnUntraced(function* (schemas: ReadonlyArr
   });
 });
 
+/**
+ * Fails before any destructive step when the checks would reject this run's settings; a skipped
+ * or all-off run passes.
+ */
+export const preflightMigrationChecks = Effect.fnUntraced(function* (
+  run: Pick<MigrationChecksRun, "policy" | "exposedSchemas" | "skip">,
+) {
+  if (run.skip) return;
+  if (rulesAt(run.policy, "error").length + rulesAt(run.policy, "warn").length === 0) return;
+  yield* validateExposedSchemas(run.exposedSchemas);
+});
+
 const readFindings = Effect.fn("MigrationChecks.read")(function* (
   session: DbSession,
   run: Pick<MigrationChecksRun, "policy" | "exposedSchemas">,
 ) {
   const read = buildAfterCommitRead(run.policy, { exposedSchemas: run.exposedSchemas });
+  const recover = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.tapError(() =>
+        read.onError === "" ? Effect.void : session.exec(read.onError).pipe(Effect.ignore),
+      ),
+    );
   let rows: ReadonlyArray<unknown> = [];
   for (const [index, sql] of read.statements.entries()) {
     if (index === read.resultIndex) {
-      rows = yield* session
-        .query(sql)
-        .pipe(Effect.tapError(() => session.exec("rollback").pipe(Effect.ignore)));
+      rows = yield* session.query(sql).pipe(recover);
     } else {
-      yield* session
-        .exec(sql)
-        .pipe(Effect.tapError(() => session.exec("rollback").pipe(Effect.ignore)));
+      yield* session.exec(sql).pipe(recover);
     }
   }
   const findings = cleanFindings(parseFindings(rows, run.policy));
@@ -295,7 +317,7 @@ interface MigrationChecksTracker {
   readonly afterCommit: (
     checkedAfterCommit: ReadonlyArray<string>,
   ) => Effect.Effect<MigrationChecksReport, MigrationChecksBlockedError, Output>;
-  /** Reads findings once after a local replay; an error-level finding fails the command. */
+  /** Reads findings once after a replay; an error-level finding fails the command. */
   readonly endState: Effect.Effect<MigrationChecksReport, MigrationChecksBlockedError, Output>;
 }
 
@@ -303,7 +325,7 @@ const skippedTracker = (outcome: "skipped" | "off"): MigrationChecksTracker => {
   const report: MigrationChecksReport = { outcome, findings: [], checkedAfterCommit: [] };
   return {
     inBatch: [],
-    inBatchFailure: (file, check) => inBatchCheckError(file, check, new Set(), ""),
+    inBatchFailure: (file, check) => inBatchCheckError(file, check, new Set(), new Set(), ""),
     afterCommit: () => Effect.succeed(report),
     endState: Effect.succeed(report),
   };
@@ -313,6 +335,7 @@ const inBatchCheckError = (
   file: string,
   check: CheckError,
   preexisting: ReadonlySet<string>,
+  beforeKeys: ReadonlySet<string>,
   targetFlags: string,
 ): MigrationChecksBlockedError => {
   if (check.kind === "timed_out") {
@@ -345,13 +368,23 @@ const inBatchCheckError = (
                 ...existing.map(renderFinding),
               ]),
         ];
+  const newWarnings = cleanFindings(check.warnings).filter(
+    (finding) => !beforeKeys.has(findingKey(finding)),
+  );
+  const unlisted = check.warningCount - check.warnings.length;
+  const unlistedNote =
+    unlisted > 0
+      ? ` ${plural(unlisted, "more warning")} ${unlisted === 1 ? "was" : "were"} not listed.`
+      : "";
   const warnings =
-    check.warnings.length === 0
-      ? []
-      : [
-          `Also found ${plural(check.warnings.length, "warning")}:`,
-          ...cleanFindings(check.warnings).map(renderFinding),
-        ];
+    newWarnings.length > 0
+      ? [
+          `Also found ${plural(newWarnings.length, "new warning")}:${unlistedNote}`,
+          ...newWarnings.map(renderFinding),
+        ]
+      : unlistedNote === ""
+        ? []
+        : [`Also found warnings:${unlistedNote}`];
   return blockedError(
     headline ?? "",
     joinSections([...sections, ...warnings]),
@@ -366,14 +399,12 @@ const joinSections = (lines: ReadonlyArray<string>): string =>
     .join("")
     .trimEnd();
 
-const reportFindings = Effect.fnUntraced(function* (
+/** New findings first, then the errors that predate the run with the `--baseline` hint. */
+const renderReport = (
   findings: ReadonlyArray<Finding>,
   preexisting: ReadonlySet<string>,
   targetFlags: string,
-) {
-  const output = yield* Output;
-  // Machine output carries the findings in its payload.
-  if (output.format !== "text") return;
+): string => {
   const isExisting = (finding: Finding) =>
     finding.severity === "error" && preexisting.has(objectKey(finding));
   const existing = findings.filter(isExisting);
@@ -400,7 +431,18 @@ const reportFindings = Effect.fnUntraced(function* (
           ...existing.map(renderFinding),
         ]),
   ];
-  yield* output.raw(`${joinSections(sections)}\n`, "stderr");
+  return joinSections(sections);
+};
+
+const reportFindings = Effect.fnUntraced(function* (
+  findings: ReadonlyArray<Finding>,
+  preexisting: ReadonlySet<string>,
+  targetFlags: string,
+) {
+  const output = yield* Output;
+  // Machine output carries the findings in its payload.
+  if (output.format !== "text") return;
+  yield* output.raw(`${renderReport(findings, preexisting, targetFlags)}\n`, "stderr");
 });
 
 /**
@@ -428,7 +470,7 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
     return skippedTracker("skipped");
   }
   if (errorRules + warnRules === 0) return skippedTracker("off");
-  yield* validateExposedSchemas(run.exposedSchemas);
+  yield* preflightMigrationChecks(run);
   const timeoutMs = yield* MigrationChecksTimeoutMs;
 
   const before = yield* readFindings(session, run).pipe(
@@ -444,6 +486,7 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
   );
   const beforeFindings = Option.getOrElse(before, () => []);
   const { targetFlags } = run;
+  const databaseKind = targetFlags === "" ? "local" : "remote";
   const preexisting = new Set(beforeFindings.map(objectKey));
   const beforeKeys = new Set(beforeFindings.map(findingKey));
 
@@ -482,11 +525,11 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
     if (findings.length > 0) {
       yield* reportFindings(findings, preexisting, targetFlags);
     }
-    return {
+    return yield* annotateReport({
       outcome: findings.length > 0 ? "applied_with_findings" : "passed",
       findings,
       checkedAfterCommit,
-    } as const;
+    });
   });
 
   const annotateReport = (report: MigrationChecksReport) =>
@@ -498,7 +541,8 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
 
   const tracker: MigrationChecksTracker = {
     inBatch: buildCheckStatements(run.policy, { exposedSchemas: run.exposedSchemas, timeoutMs }),
-    inBatchFailure: (file, check) => inBatchCheckError(file, check, preexisting, targetFlags),
+    inBatchFailure: (file, check) =>
+      inBatchCheckError(file, check, preexisting, beforeKeys, targetFlags),
     afterCommit: Effect.fn("MigrationChecks.afterCommit")(function* (
       checkedAfterCommit: ReadonlyArray<string>,
     ) {
@@ -515,22 +559,25 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
         }
         return { outcome: "read_failed", findings: [], checkedAfterCommit } as const;
       }
-      const report = yield* conclude(findings.value, checkedAfterCommit).pipe(
-        Effect.flatMap(annotateReport),
-      );
       const errors = findings.value.filter((finding) => finding.severity === "error");
       if (errors.length > 0) {
+        yield* annotateReport({
+          outcome: "applied_with_findings",
+          findings: findings.value,
+          checkedAfterCommit,
+        });
         const committed =
           checkedAfterCommit.length === 0
             ? "The migrations were already committed"
             : `${checkedAfterCommit.join(", ")} ${checkedAfterCommit.length === 1 ? "was" : "were"} already committed (${checkedAfterCommit.length === 1 ? "it cannot" : "they cannot"} run inside a single transaction)`;
         return yield* blockedError(
           `${committed}, and security checks found ${plural(errors.length, "error")} after commit. They were not rolled back.`,
-          "",
+          // The error carries the findings so machine output names them too.
+          renderReport(findings.value, preexisting, targetFlags),
           `Fix the findings in a new migration, run ${baselineCommand(targetFlags)} to exclude the current ones, or set the rule to "warn" or "off" in [db.migrations.checks].`,
         );
       }
-      return report;
+      return yield* conclude(findings.value, checkedAfterCommit);
     }),
     endState: Effect.gen(function* () {
       const findings = yield* readAfter();
@@ -538,7 +585,7 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
         yield* annotateReport({ outcome: "read_failed", findings: [], checkedAfterCommit: [] });
         if (errorRules > 0) {
           return yield* unchecked(
-            "Security checks could not read the database after applying local migrations, so error-level rules were not verified.",
+            `Security checks could not read the database after applying migrations to the ${databaseKind} database, so error-level rules were not verified.`,
           );
         }
         return { outcome: "read_failed", findings: [], checkedAfterCommit: [] } as const;
@@ -548,12 +595,12 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
         yield* Effect.annotateCurrentSpan("migration_checks.outcome", "blocked");
         const warnings = findings.value.filter((finding) => finding.severity === "warn");
         return yield* blockedError(
-          `Security checks found ${plural(errors.length, "error")} after applying local migrations. The database is left with every migration applied.`,
+          `Security checks found ${plural(errors.length, "error")} after applying migrations to the ${databaseKind} database. The database is left with every migration applied.`,
           joinSections([...errors, ...warnings].map(findingRenderer())),
           `To proceed, fix the findings in a new migration, run ${baselineCommand(targetFlags)} to exclude the current ones, or rerun with --skip-checks. ${allowSuggestion(errors)}`,
         );
       }
-      return yield* conclude(findings.value, []).pipe(Effect.flatMap(annotateReport));
+      return yield* conclude(findings.value, []);
     }).pipe(Effect.withSpan("MigrationChecks.endState")),
   };
   return tracker;

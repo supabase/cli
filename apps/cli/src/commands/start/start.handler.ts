@@ -1593,6 +1593,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // though every other container was never created — the status render shows them anyway,
     // purely from config, with no Docker query to contradict it.
     const statusExcluded = flags.exclude;
+    const checksFailure = yield* Ref.get(deferredChecks);
 
     if (output.format === "text") {
       yield* output.raw(startCompletedMessage(), "stderr");
@@ -1603,12 +1604,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(renderStatusPretty(statusValues, names));
       yield* output.raw(startSecurityNotice(), "stderr");
-    } else {
+    } else if (Option.isNone(checksFailure)) {
+      // Machine output carries one document, so a check failure replaces the status result.
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
       yield* output.success("", statusValues);
     }
 
-    const checksFailure = yield* Ref.get(deferredChecks);
     if (Option.isSome(checksFailure)) return yield* checksFailure.value;
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

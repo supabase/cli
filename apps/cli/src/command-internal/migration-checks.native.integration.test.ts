@@ -7,16 +7,25 @@ import { FetchHttpClient } from "effect/http";
 import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import {
   mockCommandCredentialsLayer,
+  mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApi,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
 } from "../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
-import { mockOutput, mockProcessControl, mockTty } from "../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+} from "../../tests/helpers/mocks.ts";
 import { selection } from "../../tests/helpers/pins.ts";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 import type { DbAdvisorsFlags } from "../commands/db/advisors/advisors.command.ts";
+import type { DbResetFlags } from "../commands/db/reset/reset.command.ts";
+import { dbReset } from "../commands/db/reset/reset.handler.ts";
 import { dbAdvisors } from "../commands/db/advisors/advisors.handler.ts";
 import type { MigrationDownFlags } from "../commands/migration/down/down.command.ts";
 import { migrationDown } from "../commands/migration/down/down.handler.ts";
@@ -29,7 +38,15 @@ import { parseConnectionString } from "./db-config.parse.ts";
 import { DbExecError } from "./db-connection.errors.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
-import { DnsResolverFlag, OutputFlag, YesFlag } from "./global-flags.ts";
+import { DockerRun } from "./docker-run.service.ts";
+import {
+  DebugFlag,
+  DnsResolverFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  OutputFlag,
+  YesFlag,
+} from "./global-flags.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
 import { MigrationApplyError, applyMigrations } from "./migration-apply.ts";
 import { MigrationChecksBlockedError, MigrationChecksTimeoutMs } from "./migration-checks.ts";
@@ -155,7 +172,12 @@ const makeProject = Effect.fnUntraced(function* (input: {
 const runCommand = Effect.fnUntraced(function* <A, E, R>(
   workdir: string,
   command: Effect.Effect<A, E, R>,
-  opts: { readonly format?: "text" | "json"; readonly timeoutMs?: number } = {},
+  opts: {
+    readonly format?: "text" | "json";
+    readonly timeoutMs?: number;
+    /** Resolves the test database as a hosted target, as `--remote=<db-url>` does. */
+    readonly remote?: boolean;
+  } = {},
 ) {
   const { conn } = yield* TestDatabase;
   const output = mockOutput({ format: opts.format ?? "text" });
@@ -173,15 +195,15 @@ const runCommand = Effect.fnUntraced(function* <A, E, R>(
         cliConfigValuesTestLayer,
         mockTty(),
         Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
-        Layer.succeed(YesFlag, false),
+        Layer.succeed(YesFlag, opts.remote === true),
         Layer.succeed(OutputFlag, Option.none()),
         Layer.succeed(DnsResolverFlag, "native"),
         Layer.succeed(CliArgs, { args: [] }),
         Layer.succeed(DbConfigResolver, {
           resolveConnection: (resolveInput) =>
             Effect.succeed({
-              conn,
-              isLocal: true,
+              conn: opts.remote === true ? { ...conn, sslmode: "disable" } : conn,
+              isLocal: opts.remote !== true,
               ref: Option.none(),
               target: resolveInput.target,
             }),
@@ -390,13 +412,17 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
           const { exit, stderr } = yield* runUp({
             config: RLS_ERROR,
             migrations: { "20261001000004_split.sql": content },
+            format: "json",
           });
 
           const error = blockedError(exit);
+          const message = stripAnsi(error.message);
           expect(error.errorCode).toBe("SB001");
-          expect(error.message).toContain("20261001000004_split.sql was already committed");
-          expect(stderr).toContain("Security checks found 1 error after this run");
-          expect(stderr).toContain("rls_disabled_in_public: public.split_t");
+          expect(unwrapped(message)).toContain("20261001000004_split.sql was already committed");
+          expect(message).toContain("Security checks found 1 error after this run");
+          expect(message).toContain("rls_disabled_in_public: public.split_t");
+          expect(message).toContain("Fix:");
+          expect(stderr).not.toContain("Security checks found");
           expect(stderr).not.toContain("WARNING");
           expect(yield* tableExists("split_t")).toBe(true);
           expect(yield* historyVersions).toEqual(["20261001000004"]);
@@ -415,9 +441,10 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
         });
         yield* sql("create table public.legacy_t(id int)");
 
-        const { exit, stderr } = yield* runCommand(workdir, migrationUp(upFlags()));
+        const { exit, stderr: runStderr } = yield* runCommand(workdir, migrationUp(upFlags()));
 
-        blockedError(exit);
+        const stderr = stripAnsi(blockedError(exit).message);
+        expect(runStderr).not.toContain("Security checks found");
         expect(stderr).toContain("Security checks found 1 error after this run:");
         expect(stderr).toContain(
           "Also 1 existing security finding at error that predates this run.",
@@ -429,6 +456,52 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
           "Fix: same as public.fresh_t above, applied to public.legacy_t.",
         );
         expectWrapped(stderr);
+      }),
+    );
+
+    it.effect(
+      "a file that commits a statement outside a transaction and then fails is still checked",
+      () =>
+        Effect.gen(function* () {
+          const { exit, stderr } = yield* runUp({
+            config: RLS_ERROR,
+            migrations: {
+              "20261001000019_partial.sql":
+                "-- pg-delta: transaction=false\ncreate table public.partial_t(id int);\nselect 1 / 0;\n",
+            },
+          });
+
+          const error = Exit.isFailure(exit)
+            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+            : undefined;
+          expect(error).toBeInstanceOf(MigrationApplyError);
+          expect(stderr).toContain("WARNING: SB001:");
+          expect(stderr).toContain("rls_disabled_in_public: public.partial_t");
+          expect(yield* tableExists("partial_t")).toBe(true);
+          expect(yield* historyVersions).toEqual([]);
+        }),
+    );
+
+    it.effect("a blocked file lists only the warnings its run introduced", () =>
+      Effect.gen(function* () {
+        const { workdir } = yield* makeProject({
+          config: RLS_ERROR,
+          migrations: {
+            "20261001000020_mixed.sql":
+              "create table public.new_w(id int);\nalter table public.new_w enable row level security;\ncreate table public.blocked_w(id int);\n",
+          },
+        });
+        yield* sql(
+          "create table public.old_w(id int); alter table public.old_w enable row level security",
+        );
+
+        const { exit } = yield* runCommand(workdir, migrationUp(upFlags()));
+
+        const message = unwrapped(blockedError(exit).message);
+        expect(message).toContain("rls_disabled_in_public: public.blocked_w");
+        expect(message).toContain("Also found 1 new warning:");
+        expect(message).toContain("rls_enabled_no_policy: public.new_w");
+        expect(message).not.toContain("public.old_w");
       }),
     );
 
@@ -570,6 +643,80 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
       }),
     );
 
+    /** `db reset`'s local-only services, which a remote reset never reaches. */
+    const remoteResetLayer = Layer.mergeAll(
+      Layer.succeed(DebugFlag, false),
+      Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(NetworkIdFlag, Option.none()),
+      Layer.mock(DockerRun, {}),
+      Layer.mock(StackApi, {}),
+      mockLocalDockerEngineUnavailableLayer,
+      mockRuntimeInfo({ platform: "linux" }),
+      mockStdin(false),
+    );
+
+    const remoteResetFlags = (url: string): DbResetFlags => ({
+      ...localTarget,
+      local: false,
+      remote: Option.some({ _tag: "DbUrl", url } as const),
+      noSeed: Option.some(true),
+      sqlPaths: Option.none(),
+      version: Option.none(),
+      last: Option.none(),
+      skipChecks: false,
+    });
+
+    it.effect(
+      "db reset --remote checks the replayed end state, so a later migration may fix an earlier one",
+      () =>
+        Effect.gen(function* () {
+          const { workdir } = yield* makeProject({
+            config: RLS_ERROR,
+            migrations: {
+              "20261001000021_create.sql": "create table public.later_rls_t(id int);\n",
+              "20261001000022_secure.sql":
+                "alter table public.later_rls_t enable row level security;\n",
+            },
+          });
+
+          const { exit, output } = yield* runCommand(
+            workdir,
+            dbReset(remoteResetFlags("postgresql://db.example.com:5432/postgres")).pipe(
+              Effect.provide(remoteResetLayer),
+            ),
+            { remote: true, format: "json" },
+          );
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(yield* historyVersions).toEqual(["20261001000021", "20261001000022"]);
+          expect(successChecks(output)).toMatchObject({
+            outcome: "applied_with_findings",
+            findings: [{ rule: "rls_enabled_no_policy", name: "later_rls_t" }],
+          });
+        }),
+    );
+
+    it.effect("db reset --remote rejects check settings before dropping any schema", () =>
+      Effect.gen(function* () {
+        const { workdir } = yield* makeProject({
+          config: `[api]\nschemas = ["public, extensions"]\n\n${RLS_ERROR}`,
+          migrations: { "20261001000023_kept.sql": "create table public.unused_t(id int);\n" },
+        });
+        yield* sql("create table public.survivor_t(id int)");
+
+        const { exit } = yield* runCommand(
+          workdir,
+          dbReset(remoteResetFlags("postgresql://db.example.com:5432/postgres")).pipe(
+            Effect.provide(remoteResetLayer),
+          ),
+          { remote: true },
+        );
+
+        expect(blockedError(exit).reason).toBe("invalid_config");
+        expect(yield* tableExists("survivor_t")).toBe(true);
+      }),
+    );
+
     it.effect("migration down checks the replayed end state", () =>
       Effect.gen(function* () {
         const { workdir } = yield* makeProject({
@@ -602,6 +749,40 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
         expect(Exit.isSuccess(skipped.exit)).toBe(true);
         expect(skipped.stderr).toContain("Skipping security checks (--skip-checks)");
         expect(yield* tableExists("reverted_t")).toBe(false);
+      }),
+    );
+
+    it.effect("migration down --remote points its --baseline suggestion at the same target", () =>
+      Effect.gen(function* () {
+        const { workdir } = yield* makeProject({
+          config: RLS_ERROR,
+          migrations: {
+            "20261001000024_kept.sql": "create table public.remote_down_t(id int);\n",
+            "20261001000025_reverted.sql": "select 1;\n",
+          },
+        });
+        const up = yield* runCommand(workdir, migrationUp(upFlags(true)));
+        expect(Exit.isSuccess(up.exit)).toBe(true);
+
+        const { exit } = yield* runCommand(
+          workdir,
+          migrationDown({
+            ...localTarget,
+            local: false,
+            remote: Option.some({ _tag: "DbUrl", url: "postgresql://db.example.com/postgres" }),
+            last: 1,
+            skipChecks: false,
+          }),
+          { remote: true },
+        );
+
+        const error = blockedError(exit);
+        expect(unwrapped(error.message)).toContain(
+          "after applying migrations to the remote database",
+        );
+        expect(unwrapped(error.suggestion ?? "")).toContain(
+          "supabase db advisors --baseline --remote=<db-url>",
+        );
       }),
     );
 

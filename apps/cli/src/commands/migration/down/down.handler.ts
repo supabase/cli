@@ -13,7 +13,11 @@ import {
   requireTargetMutationConsent,
 } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { migrateAndSeed } from "../../../command-internal/migrate-and-seed.ts";
-import { MigrationChecksSkipped } from "../../../command-internal/migration-checks.ts";
+import {
+  MigrationChecksSkipped,
+  migrationChecksRun,
+  preflightMigrationChecks,
+} from "../../../command-internal/migration-checks.ts";
 import {
   listRemoteMigrations,
   withTargetFlags,
@@ -53,6 +57,9 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags) {
 
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    const targetFlags = flagsForTarget(target);
+    // Before the schemas are dropped, so a setting the checks reject cannot leave them empty.
+    yield* preflightMigrationChecks(migrationChecksRun(toml, flags.skipChecks, targetFlags));
 
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -88,7 +95,7 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags) {
         });
         yield* dropUserSchemas(session);
         yield* upsertVaultSecrets(session, toml.vault);
-        yield* migrateAndSeed(session, fs, path, cliSettings.workdir, version, {
+        const checks = yield* migrateAndSeed(session, fs, path, cliSettings.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
           // `version` is always non-empty here, so `migrateAndSeed`'s empty-version
@@ -97,10 +104,15 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags) {
           pgDeltaEnabled: false,
           schemaPaths: [],
           checks: toml,
+          checksTargetFlags: targetFlags,
         }).pipe(Effect.provideService(MigrationChecksSkipped, flags.skipChecks));
 
         if (output.format !== "text") {
-          yield* output.success("Migrations reverted", { version, last: flags.last });
+          yield* output.success("Migrations reverted", {
+            version,
+            last: flags.last,
+            ...(Option.isSome(checks) ? { checks: checks.value } : {}),
+          });
         }
       }),
     );

@@ -32,7 +32,9 @@ const config = {
     ),
   ),
   skipChecks: Flag.Boolean("skip-checks").pipe(
-    Flag.withDescription("Skip the [db.migrations.checks] security checks when replaying local migrations."),
+    Flag.withDescription(
+      "Skip the [db.migrations.checks] security checks when replaying migrations.",
+    ),
     Flag.withDefault(false),
   ),
   ...targetFlags({ subject: "database", dbUrl: true }),

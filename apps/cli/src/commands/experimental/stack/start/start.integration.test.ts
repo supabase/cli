@@ -2,9 +2,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Cause,
   ConfigProvider,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -20,6 +22,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
+import { MigrationChecksBlockedError } from "../../../../command-internal/migration-checks.ts";
 import {
   artifactServiceKinds,
   orioledbVersions,
@@ -100,6 +103,7 @@ const flags = (exclude: ReadonlyArray<string> = []) => ({
   preparation: "background" as const,
   frozen: false,
   eager: false,
+  skipChecks: false,
 });
 
 const signingKey = () => ({
@@ -1279,6 +1283,58 @@ describe("experimental stack start", () => {
       expect(database.schemaCreations).toBe(1);
       expect(fixture.catalogApplied).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "a failed end-state security check on first start keeps the stack up and fails with SB001",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-checks-" });
+        yield* fs.makeDirectory(`${root}/supabase/migrations`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "checks"\n[db.migrations.checks]\nrls_disabled_in_public = "error"\n',
+        );
+        yield* fs.writeFileString(
+          `${root}/supabase/migrations/20261001000000_open.sql`,
+          "create table public.open_t(id int);\n",
+        );
+        const database: DbSession = {
+          ...session,
+          query: (sql) =>
+            Effect.succeed(
+              sql.startsWith("select l.*")
+                ? [
+                    {
+                      name: "rls_disabled_in_public",
+                      metadata: { schema: "public", name: "open_t", type: "table" },
+                    },
+                  ]
+                : [],
+            ),
+        };
+        const fixture = fakeStack();
+
+        const exit = yield* stackStart(flags()).pipe(
+          Effect.provide(
+            Layer.merge(
+              layers(root, fixture, mockOutput(), false),
+              Layer.succeed(DbConnection, {
+                connect: () => Effect.scoped(Effect.succeed(database)),
+              }),
+            ),
+          ),
+          Effect.exit,
+        );
+
+        const error = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        expect(error).toBeInstanceOf(MigrationChecksBlockedError);
+        expect(error instanceof MigrationChecksBlockedError && error.errorCode).toBe("SB001");
+        expect(fixture.stopped).toBe(0);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("skips invalid config while running and reports it after stop", () =>

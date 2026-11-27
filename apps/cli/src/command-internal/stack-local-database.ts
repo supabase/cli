@@ -1,4 +1,4 @@
-import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Cause, Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
@@ -15,6 +15,7 @@ import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
 import { lockedSelection } from "./stack-lock.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
+import { MigrationChecksBlockedError } from "./migration-checks.ts";
 import { catalogDatabaseServices } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
 import {
@@ -361,19 +362,29 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
       },
       overlay: projectCatalogOverlay(toml, settings.workdir),
       migrations: { workdir: settings.workdir, toml, experimental },
-    }).pipe(Effect.mapError(startFailed));
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof MigrationChecksBlockedError ? cause : startFailed(cause),
+      ),
+    );
     return "started" as const;
   }).pipe(
-    Effect.onError(() =>
-      database.destroy.pipe(
-        Effect.tapError((cause) =>
-          output.raw(
-            `Failed to destroy newly created database ${database.id}: ${cause.message}. Run supabase stack destroy to remove the incomplete stack before retrying.\n`,
-            "stderr",
+    // A failed end-state security check leaves the new database running with its migrations.
+    Effect.onError((cause) =>
+      Option.exists(
+        Cause.findErrorOption(cause),
+        (error) => error instanceof MigrationChecksBlockedError,
+      )
+        ? Effect.void
+        : database.destroy.pipe(
+            Effect.tapError((cause) =>
+              output.raw(
+                `Failed to destroy newly created database ${database.id}: ${cause.message}. Run supabase stack destroy to remove the incomplete stack before retrying.\n`,
+                "stderr",
+              ),
+            ),
+            Effect.ignore,
           ),
-        ),
-        Effect.ignore,
-      ),
     ),
   );
 });

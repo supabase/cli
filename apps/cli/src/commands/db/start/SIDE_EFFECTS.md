@@ -162,6 +162,7 @@ code is surfaced on failure.
 | `1`  | `backup volume already exists` (`--from-backup` against a non-fresh volume) |
 | `1`  | a health-check timeout with `--from-backup` unset                           |
 | `1`  | any other container-bootstrap failure (network/volume/create/start/setup)   |
+| `1`  | `MigrationChecksBlockedError` (`SB001`) — see Notes                         |
 
 ## Output
 
@@ -177,7 +178,8 @@ roles.sql...`, all on **stderr**. No stdout output, no `Finished` line.
 ### `--output-format json`
 
 Emits a single result object to stdout: `{ status: "already-running" }` or
-`{ status: "started" }`. Progress stays on stderr.
+`{ status: "started" }`, plus `checks: { outcome, findings, checkedAfterCommit }` when a fresh
+database replayed migrations with security checks. Progress stays on stderr.
 
 ### `--output-format stream-json`
 
@@ -192,7 +194,8 @@ applies webhooks only, first creating the `supabase_functions` schema when it is
 state lives under `$SUPABASE_HOME/stacks/<stackId>/`, including the selected runtime and
 service identities. Postgres-only first create skips analytics and
 pooler artifact downloads. If first initialization fails after the database is created, the
-new database is destroyed so the command can be retried after fixing the cause. If cleanup itself
+new database is destroyed so the command can be retried after fixing the cause, except for a
+failed migration security check, which keeps it (see Notes). If cleanup itself
 fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.
 Resuming a stopped database whose saved pin differs from the selected one in anything but a
 slim-services revision rebinds the same instance to the selected pin before starting; its id and
@@ -209,6 +212,13 @@ The resident owner process manages the database beyond the CLI invocation. Stack
 `--from-backup` with exit code 1.
 
 ## Notes
+
+- **Migration security checks** (fresh database): no per-file check; after the last migration
+  and before seeding, one read reports new warnings and every error. An error-level finding, or
+  a failed read while a rule is at `error`, fails the command (`SB001`) with the findings and how
+  to proceed (fix, `db advisors --baseline`, or `--skip-checks`); the database stays running with
+  its migrations applied on both backends. `--skip-checks` skips the read and prints that checks
+  were skipped.
 
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (shared
   `startDatabase` behavior — see `supabase start`'s SIDE_EFFECTS.md note): fresh volumes

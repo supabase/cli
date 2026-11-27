@@ -6,6 +6,7 @@ import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
 import type { DbTomlValues } from "./db-config.toml-read.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
+import { MigrationChecksBlockedError } from "./migration-checks.ts";
 import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-setup.ts";
 
 /**
@@ -15,8 +16,6 @@ import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-
 export class StackBootstrapError extends Data.TaggedError("StackBootstrapError")<{
   readonly reason: "unavailable" | "connect" | "apply";
   readonly message: string;
-  /** The failed step's own next steps, such as a blocked security check's `--skip-checks` hint. */
-  readonly suggestion?: string;
   readonly cause?: unknown;
 }> {}
 
@@ -29,12 +28,6 @@ const bootstrapError =
         typeof error === "object" && error !== null && "message" in error
           ? String(error.message)
           : String(error),
-      ...(typeof error === "object" &&
-      error !== null &&
-      "suggestion" in error &&
-      typeof error.suggestion === "string"
-        ? { suggestion: error.suggestion }
-        : {}),
       cause: error,
     });
 
@@ -68,7 +61,12 @@ const withDatabaseSession = <A, E, R>(
           dnsResolver: "native",
         })
         .pipe(Effect.mapError(bootstrapError("connect")));
-      return yield* body(session).pipe(Effect.mapError(bootstrapError("apply")));
+      // A blocked security check keeps its own code and suggestion.
+      return yield* body(session).pipe(
+        Effect.mapError((error) =>
+          error instanceof MigrationChecksBlockedError ? error : bootstrapError("apply")(error),
+        ),
+      );
     }),
   );
 
@@ -113,7 +111,7 @@ const applyStackMigrateAndSeed = (
   migrations: StackMigrations,
 ): Effect.Effect<
   void,
-  StackBootstrapError,
+  StackBootstrapError | MigrationChecksBlockedError,
   DbConnection | FileSystem.FileSystem | Path.Path | Output
 > =>
   withDatabaseSession(

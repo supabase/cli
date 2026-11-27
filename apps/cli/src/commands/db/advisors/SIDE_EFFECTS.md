@@ -108,10 +108,13 @@ the process exits non-zero (no error envelope is written over the payload).
 - `--level` (`warn` default) sets the minimum issue level to display.
 - `--fail-on` (`none` default) sets the level that forces a non-zero exit.
 - `--baseline` records every current finding for the `[db.migrations.checks]` rules not at `off`
-  as `"schema.name"` under its rule in `[db.migrations.checks.exclude]` of the base document (not a
-  `[remotes.*]` block), so migration checks stop blocking on objects that predate them. It writes
-  each rule's entries sorted (existing and new), skips objects the resolved policy already excludes,
-  and leaves every other byte of the file, comments included, unchanged; a second run with no new
+  as `"schema.name"` under its rule in `[db.migrations.checks.exclude]`, so migration checks stop
+  blocking on objects that predate them. A part holding a double quote or edge whitespace (or a
+  schema holding a dot) is written SQL-quoted, for example `"api.v2".users`. The entries go to a
+  matched `[remotes.<name>]` block's own list for that rule when it declares one, since that list
+  replaces the base one, and to the base document otherwise. It appends the new entries, sorted,
+  after the existing ones, skips objects the resolved policy already excludes, and leaves every
+  other byte of the file, comments inside the list included, unchanged; a run with no new
   findings writes nothing. Combining it with `--type`, `--level` or `--fail-on` exits 1 (`DbAdvisorsBaselineError`).
 - Not-logged-in suggestion: `Run supabase login first.`
 - Telemetry: only the standard `cli_command_executed` event (no custom events).

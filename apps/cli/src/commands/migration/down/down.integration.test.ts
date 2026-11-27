@@ -343,7 +343,11 @@ describe("migration down", () => {
         expect.objectContaining({
           type: "success",
           message: "Migrations reverted",
-          data: { version: "20240101000000", last: 1 },
+          data: {
+            version: "20240101000000",
+            last: 1,
+            checks: { outcome: "passed", findings: [], checkedAfterCommit: [] },
+          },
         }),
       );
     }).pipe(Effect.provide(layer));
