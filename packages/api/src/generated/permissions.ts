@@ -437,6 +437,11 @@ export const operationPermissions: Readonly<Record<string, OperationPermissions>
     oauthScope: "edge_functions:write",
   },
   "v2-deploy-a-compute-instance": { fga: [["workers_write"]], oauthScope: "edge_functions:write" },
+  "v2-projects-database-cloneable-backups": {
+    fga: [["backups_read"]],
+    oauthScope: "database:read",
+  },
+  "v2-projects-database-clone-status": { fga: [["backups_read"]], oauthScope: "database:read" },
   "v2-list-environment-variables": {
     fga: [["environment_variables_read"]],
     oauthScope: "environment:read",
