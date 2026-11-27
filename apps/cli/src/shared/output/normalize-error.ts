@@ -17,8 +17,14 @@ export type PlanGateEntitlement = {
 /** What clears a plan-gated denial, read from the dashboard page its `upgrade_url` points at. */
 export type UpgradeFixKind = "plan" | "addon";
 
+const PROJECT_ADDONS_PAGE = /^[^?#]*\/project\/([a-z]{20})\/settings\/addons\/?(?:[?#]|$)/;
+
+/** The project whose add-ons page an `upgrade_url` points at, when it points at one. */
+export const addonProjectRefFromUpgradeUrl = (upgradeUrl: string): string | undefined =>
+  PROJECT_ADDONS_PAGE.exec(upgradeUrl)?.[1];
+
 export const fixKindFromUpgradeUrl = (upgradeUrl: string): UpgradeFixKind =>
-  upgradeUrl.includes("/settings/addons") ? "addon" : "plan";
+  addonProjectRefFromUpgradeUrl(upgradeUrl) === undefined ? "plan" : "addon";
 
 const UPGRADE_HINT_LEAD: Record<UpgradeFixKind, string> = {
   plan: "Your organization's plan does not include this feature. Plans and add-ons:",

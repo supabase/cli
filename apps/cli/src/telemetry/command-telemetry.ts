@@ -6,7 +6,11 @@ import {
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
 import { failureBesideClosedStdout } from "../shared/output/errors.ts";
-import { fixKindFromUpgradeUrl, normalizeCause } from "../shared/output/normalize-error.ts";
+import {
+  addonProjectRefFromUpgradeUrl,
+  fixKindFromUpgradeUrl,
+  normalizeCause,
+} from "../shared/output/normalize-error.ts";
 import { Output } from "../shared/output/output.service.ts";
 import {
   CreateTicketFlag,
@@ -110,10 +114,6 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
 function orgSlugFromUpgradeUrl(upgradeUrl: string): string {
   const match = /\/org\/([^/]+)/.exec(upgradeUrl);
   return match?.[1] ?? "";
-}
-
-function projectRefFromUpgradeUrl(upgradeUrl: string): string | undefined {
-  return /\/project\/([a-z]{20})\//.exec(upgradeUrl)?.[1];
 }
 
 /**
@@ -580,7 +580,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           failureCause === undefined
             ? undefined
             : (failureProjectRef(failureCause) ??
-              (entitlement && projectRefFromUpgradeUrl(entitlement.upgrade_url)));
+              (entitlement && addonProjectRefFromUpgradeUrl(entitlement.upgrade_url)));
         const contextWithProject: AnalyticsContext =
           failedProjectRef === undefined
             ? analyticsContext
