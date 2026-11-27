@@ -42,7 +42,7 @@ describe("slim mode against the real catalog", () => {
   });
 
   it("has no slim entry for aliases with no slim build", () => {
-    for (const alias of ["kong", "pg14", "differ", "migra", "pgprove"]) {
+    for (const alias of ["kong", "differ", "migra", "pgprove"]) {
       const raw = dockerfileServiceImageRaw(alias);
       expect(toSlimImage(alias, raw)).toBeUndefined();
     }

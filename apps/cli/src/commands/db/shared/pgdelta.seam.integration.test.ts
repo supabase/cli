@@ -113,7 +113,7 @@ function fakeShadowDbConnection() {
   return { layer };
 }
 
-/** The shadow's own PG15+ one-shot platform-baseline job(s). */
+/** The shadow's own one-shot platform-baseline job(s). */
 function fakeShadowSetupDocker() {
   const layer = Layer.succeed(DockerRun, {
     run: () => Effect.die("run unused"),

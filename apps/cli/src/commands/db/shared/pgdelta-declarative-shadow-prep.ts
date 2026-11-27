@@ -54,13 +54,7 @@ const declaredImageExtensions = (
   return declared;
 };
 
-const parsePostgresMajorVersion = (serverVersion: string): number => {
-  const major = Number.parseInt(serverVersion, 10);
-  return Number.isInteger(major) ? major : 0;
-};
-
 const declarativeBaselinePrepStatements = (
-  majorVersion: number,
   declared: ReadonlySet<string>,
 ): ReadonlyArray<string> => {
   const dropPgcrypto = declared.has("pgcrypto");
@@ -68,9 +62,6 @@ const declarativeBaselinePrepStatements = (
   const dropPgjwt = declared.has("pgjwt") || dropPgcrypto;
   const dropUuidOssp = declared.has("uuid-ossp");
   const statements: string[] = [];
-  if (majorVersion === 14 && dropUuidOssp) {
-    statements.push("ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT");
-  }
   if (dropPgjwt) statements.push(DROP_IMAGE_DEFAULT_EXTENSION.pgjwt);
   if (dropPgcrypto) statements.push(DROP_IMAGE_DEFAULT_EXTENSION.pgcrypto);
   if (dropUuidOssp) statements.push(DROP_IMAGE_DEFAULT_EXTENSION["uuid-ossp"]);
@@ -105,13 +96,6 @@ const queryError = (sql: string, cause: unknown) =>
     suggestion: DECLARATIVE_SHADOW_PREP_FAILURE_SUGGESTION,
   });
 
-const readServerVersion = (rows: ReadonlyArray<unknown>): string => {
-  const row = rows[0];
-  if (row === undefined || typeof row !== "object" || row === null) return "";
-  const value = Reflect.get(row, "server_version");
-  return typeof value === "string" ? value : "";
-};
-
 const rowHasPgjwt = (rows: ReadonlyArray<unknown>): boolean =>
   rows.some((row) => {
     if (typeof row !== "object" || row === null) return false;
@@ -141,12 +125,7 @@ export const prepareDeclarativeShadow = Effect.fn("PgDeltaDeclarativeShadow.prep
     const installed = yield* queryShadow(client, INSTALLED_PGJWT_SQL);
     restorePgjwt = rowHasPgjwt(installed.rows);
   }
-  const versionRows = yield* queryShadow(client, "SHOW server_version");
-  const statements = declarativeBaselinePrepStatements(
-    parsePostgresMajorVersion(readServerVersion(versionRows.rows)),
-    declared,
-  );
-  for (const sql of statements) {
+  for (const sql of declarativeBaselinePrepStatements(declared)) {
     yield* queryShadow(client, sql);
   }
   return { restorePgjwt } satisfies DeclarativeShadowPrepResult;

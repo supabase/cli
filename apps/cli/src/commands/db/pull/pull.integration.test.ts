@@ -340,7 +340,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     runCapture: () => Effect.die("runCapture unused"),
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
-        // The shadow's own PG15+ one-shot jobs share this `runStream` but always set
+        // The shadow's own one-shot jobs share this `runStream` but always set
         // `skipImageResolve: true`; succeed them unconditionally so they're never
         // counted alongside the real `dumpCalls` this suite asserts on.
         if (runOpts.skipImageResolve === true) {
@@ -2050,8 +2050,7 @@ describe("db pull", () => {
     "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just toml",
     () => {
       // The remote's own container spec must reflect the `[remotes.<ref>]` override too,
-      // not just the config read for pg-delta/schema_paths; `major_version` is used as a
-      // probe since PG <= 14 is the only branch that emits `--tmpfs` on `docker create`.
+      // not just the config read for pg-delta/schema_paths; the image tag's major is the probe.
       const s = setup(tmp.current, {
         migrations: ["20240101000000"],
         files: {
@@ -2063,7 +2062,7 @@ describe("db pull", () => {
             'project_id = "abcdefghijklmnopqrst"',
             "",
             "[remotes.staging.db]",
-            "major_version = 14",
+            "major_version = 15",
             "",
           ].join("\n"),
         },
@@ -2075,7 +2074,7 @@ describe("db pull", () => {
       return Effect.gen(function* () {
         yield* dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
-        expect(createArgs).toContain("--tmpfs");
+        expect(createArgs.some((arg) => /postgres:15\./.test(arg))).toBe(true);
       }).pipe(Effect.provide(s.layer));
     },
   );

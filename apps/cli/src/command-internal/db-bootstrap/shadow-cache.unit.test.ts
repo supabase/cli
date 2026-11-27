@@ -82,7 +82,7 @@ describe("shadowCacheKey", () => {
       { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
       {
-        label: "storage migration pin (storage enabled, majorVersion >= 15)",
+        label: "storage migration pin (storage enabled)",
         inputs: { ...base, storageTargetMigration: "20250607080910" },
       },
       {
@@ -90,7 +90,7 @@ describe("shadowCacheKey", () => {
         inputs: { ...base, storageTargetMigration: "" },
       },
       {
-        label: "jwks (realtime enabled, majorVersion >= 15)",
+        label: "jwks (realtime enabled)",
         inputs: { ...base, jwks: '{"keys":["rotated"]}' },
       },
       {
@@ -199,14 +199,6 @@ describe("shadowCacheKey", () => {
     expect(shadowCacheKey(withJwksA)).toBe(shadowCacheKey(withJwksB));
   });
 
-  it("excludes the resolved jwks when majorVersion is below 15, even with realtime enabled", () => {
-    const base = baseKeyInputs();
-    const pre15: ShadowCacheKeyInputs = { ...base, majorVersion: 14 };
-    const withJwksA: ShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["a"]}' };
-    const withJwksB: ShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["b"]}' };
-    expect(shadowCacheKey(withJwksA)).toBe(shadowCacheKey(withJwksB));
-  });
-
   it("excludes the storage migration pin when storage is disabled", () => {
     const base = baseKeyInputs();
     const disabledStorage: ShadowCacheKeyInputs = {
@@ -224,14 +216,6 @@ describe("shadowCacheKey", () => {
       ...disabledStorage,
       storageTargetMigration: "20250607080910",
     };
-    expect(shadowCacheKey(withPinA)).toBe(shadowCacheKey(withPinB));
-  });
-
-  it("excludes the storage migration pin when majorVersion is below 15, even with storage enabled", () => {
-    const base = baseKeyInputs();
-    const pre15: ShadowCacheKeyInputs = { ...base, majorVersion: 14 };
-    const withPinA: ShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "a" };
-    const withPinB: ShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "b" };
     expect(shadowCacheKey(withPinA)).toBe(shadowCacheKey(withPinB));
   });
 

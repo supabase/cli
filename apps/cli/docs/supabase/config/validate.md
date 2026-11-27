@@ -33,7 +33,7 @@ With `--resolve-env` the command reads the shell and the `.env*` files (`supabas
 ```text
   ✗ db.major_version  unsupported Postgres version
     supabase/config.toml:9:17
-    help: use one of 14, 15, 17
+    help: use one of 15, 17
 
 ✗ 1 error in supabase/config.toml
 ```
@@ -55,7 +55,7 @@ With `--resolve-env` the command reads the shell and the `.env*` files (`supabas
       "key": "db.major_version",
       "path": "db.major_version",
       "reason": "unsupported Postgres version",
-      "help": "use one of 14, 15, 17",
+      "help": "use one of 15, 17",
       "line": 9,
       "column": 17,
       "end_line": 9,

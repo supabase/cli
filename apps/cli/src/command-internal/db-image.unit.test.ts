@@ -14,11 +14,10 @@ import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
 const currentPostgresTag = imageTag(currentPostgres) ?? "";
-// PG15 and PG14 now come from the Dockerfile's generated `pg15`/hand-pinned `pg14` stages
-// (the single version table), not hardcoded fallback constants.
+// PG15 comes from the Dockerfile's generated `pg15` stage (the single version table), not a
+// hardcoded fallback constant.
 const pg15Image = dockerfileServiceImageRaw("pg15");
 const pg15Tag = imageTag(pg15Image) ?? "";
-const pg14Image = dockerfileServiceImageRaw("pg14");
 
 const withTemp = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -52,10 +51,6 @@ describe("resolveDbImage", () => {
   it.effect("resolves the default Postgres image per major version", () =>
     Effect.gen(function* () {
       const dir = yield* withTemp;
-      expect(yield* resolve(dir, 14)).toEqual({
-        image: pg14Image,
-        configImage: pg14Image,
-      });
       expect(yield* resolve(dir, 15)).toEqual({
         image: pg15Image,
         configImage: pg15Image,
@@ -87,28 +82,7 @@ describe("resolveDbImage", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("ignores orioledb_version on a non-15/17 project", () =>
-    Effect.gen(function* () {
-      const dir = yield* withTemp;
-      expect(yield* resolve(dir, 14, "16.0.0.1")).toEqual({
-        image: pg14Image,
-        configImage: pg14Image,
-      });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
-
   describe("pinned version with the slim-images flag on", () => {
-    it.effect("keeps a 14 fallback on docker.io, not the slim registry", () => {
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-      return Effect.gen(function* () {
-        const dir = yield* withTemp;
-        expect(yield* resolve(dir, 14)).toEqual({
-          image: pg14Image,
-          configImage: pg14Image,
-        });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-    });
-
     it.effect("slims a pinned OrioleDB tag and keeps an unpinned one on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const [orioledb = ""] = orioledbVersions();

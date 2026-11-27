@@ -95,7 +95,7 @@ function mockDockerRun() {
       runs.push(runOpts);
       return Effect.succeed({ exitCode: 0, stdout: new Uint8Array(), stderr: "" });
     },
-    // The shadow's own PG15+ one-shot platform-baseline jobs (`runStartMigrateJob`)
+    // The shadow's own one-shot platform-baseline jobs (`runStartMigrateJob`)
     // go through `runStream`, not `runCapture` — see `db-setup.ts`'s own doc comment.
     runStream: (runOpts) => {
       runs.push(runOpts);
@@ -617,61 +617,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     },
   );
 
-  it.effect(
-    "supports the extension-free declarative baseline on PG14 without resolving JWKS",
-    () => {
-      const { session, calls } = fakeSession();
-      const workdir = tempRoot.current;
-      const mock = mockSpawner();
-      let jwksEvaluated = false;
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* setupShadowDatabase(
-          mock.spawner,
-          {
-            fs,
-            path,
-            workdir,
-            projectId: "proj",
-            container: "shadow-container-id-0123456789abcdef",
-            networkId: "supabase_network_proj",
-            connConfig: {
-              host: "127.0.0.1",
-              port: 54320,
-              user: "postgres",
-              password: "postgres",
-              database: "postgres",
-            },
-            setup: baseShadowSetup({
-              majorVersion: 14,
-              realtimeEnabledForSetup: true,
-              jwks: Effect.sync(() => {
-                jwksEvaluated = true;
-                return '{"keys":[]}';
-              }),
-            }),
-          },
-          { webhooks: "disabled" },
-        );
-        expect(jwksEvaluated).toBe(false);
-        expect(calls.some((call) => call.sql === "drop extension if exists pg_net")).toBe(true);
-        expect(calls.some((call) => call.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            BunServices.layer,
-            mockOutput().layer,
-            mockDockerRun(),
-            mockRuntimeInfo(),
-            mockDbConnection(session),
-          ),
-        ),
-      );
-    },
-  );
-
-  it.effect("resolves JWKS on PG15+ when realtime is enabled", () => {
+  it.effect("resolves JWKS when realtime is enabled", () => {
     const { session } = fakeSession();
     const workdir = tempRoot.current;
     const mock = mockSpawner();

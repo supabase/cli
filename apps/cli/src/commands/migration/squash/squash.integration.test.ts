@@ -759,32 +759,29 @@ describe("migration squash", () => {
       },
     );
 
-    it.effect(
-      "dials the shadow's PG15+ setup jobs at the container's 12-char short id (DB_HOST)",
-      () => {
-        const s = setupHappyPath();
-        return Effect.gen(function* () {
-          yield* seedHappyPathMigrations(tmp.current);
-          yield* migrationSquash(flags());
-          const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
-          expect(s.setupJobCalls.length).toBeGreaterThan(0);
-          let sawHost = false;
-          for (const call of s.setupJobCalls) {
-            if (call.env["DB_HOST"] !== undefined) {
-              expect(call.env["DB_HOST"]).toBe(expectedHost);
+    it.effect("dials the shadow's setup jobs at the container's 12-char short id (DB_HOST)", () => {
+      const s = setupHappyPath();
+      return Effect.gen(function* () {
+        yield* seedHappyPathMigrations(tmp.current);
+        yield* migrationSquash(flags());
+        const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+        expect(s.setupJobCalls.length).toBeGreaterThan(0);
+        let sawHost = false;
+        for (const call of s.setupJobCalls) {
+          if (call.env["DB_HOST"] !== undefined) {
+            expect(call.env["DB_HOST"]).toBe(expectedHost);
+            sawHost = true;
+          }
+          for (const value of Object.values(call.env)) {
+            if (value.includes("@") && value.includes(":")) {
+              expect(value).toContain(`@${expectedHost}:`);
               sawHost = true;
             }
-            for (const value of Object.values(call.env)) {
-              if (value.includes("@") && value.includes(":")) {
-                expect(value).toContain(`@${expectedHost}:`);
-                sawHost = true;
-              }
-            }
           }
-          expect(sawHost).toBe(true);
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
+        }
+        expect(sawHost).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    });
 
     it.effect(
       "forwards --network-id to every dump container as a named network instead of host",

@@ -28,12 +28,11 @@ export class InvalidServiceVersionTagError extends Data.TaggedError(
 /**
  * `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` pin
  * files, written by `supabase link` for a linked/bootstrap project and read before any
- * command that pulls or starts these services to override their image tag. `gotrue`/
- * `postgrest` are additionally gated on `majorVersion > 14`.
+ * command that pulls or starts these services to override their image tag.
  */
 const VERSION_FILES = [
-  ["auth", "gotrueVersion", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
-  ["postgrest", "restVersion", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
+  ["auth", "gotrueVersion"],
+  ["postgrest", "restVersion"],
   ["storage", "storageVersion"],
   ["realtime", "realtimeVersion"],
   ["studio", "studioVersion"],
@@ -44,7 +43,6 @@ const VERSION_FILES = [
   readonly [
     "auth" | "postgrest" | "storage" | "realtime" | "studio" | "pgmeta" | "analytics" | "pooler",
     LegacyStateFile,
-    ((majorVersion: number | undefined) => boolean)?,
   ]
 >;
 
@@ -58,17 +56,12 @@ export const readServiceVersionOverrides = Effect.fn("ServiceVersionOverrides.re
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  majorVersion: number | undefined,
 ) {
   const versions: LocalServiceVersionOverrides = {};
   if (yield* usesStackState) return versions;
   const paths = legacyProjectStatePaths(path, workdir);
 
-  for (const [service, file, shouldRead] of VERSION_FILES) {
-    if (shouldRead !== undefined && !shouldRead(majorVersion)) {
-      continue;
-    }
-
+  for (const [service, file] of VERSION_FILES) {
     const version = yield* fs.readFileString(paths[file]).pipe(
       Effect.map((content) => content.trim()),
       Effect.orElseSucceed(() => ""),

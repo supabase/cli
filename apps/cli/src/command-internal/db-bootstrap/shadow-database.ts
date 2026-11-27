@@ -225,8 +225,8 @@ export const createShadowDatabase = (
       ...(input.autoRemove === undefined ? {} : { autoRemove: input.autoRemove }),
       ...(input.restoreArchive === undefined ? {} : { preStartArchives: [input.restoreArchive] }),
     };
-    // No name or network alias — see this module's own header. The pgsodium root key (PG15+
-    // only) is delivered straight into the container via `docker cp`
+    // No name or network alias — see this module's own header. The pgsodium root key is
+    // delivered straight into the container via `docker cp`
     // ({@link StartContainerSpec.secretFiles}), same as every other container's secrets.
     const containerOpts: ContainerOpts = {
       projectId: input.projectId,
@@ -506,7 +506,7 @@ interface ShadowSetupRunInput<E> {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly workdir: string;
-  /** Labels the shadow's own PG15+ one-shot migrate job containers, same as the real local `db` container's. */
+  /** Labels the shadow's own one-shot migrate job containers, same as the real local `db` container's. */
   readonly projectId: string;
   readonly container: string;
   readonly networkId: string;

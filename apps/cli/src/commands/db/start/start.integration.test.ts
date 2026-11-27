@@ -76,7 +76,6 @@ import { database15, selection } from "../../../../tests/helpers/pins.ts";
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
-const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 
 function flags(fromBackup?: string): DbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
@@ -171,7 +170,7 @@ function bindsFromCreateArgs(args: ReadonlyArray<string>): ReadonlyArray<string>
   return binds;
 }
 
-/** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
+/** The three one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls). */
 function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
@@ -403,7 +402,7 @@ function alwaysReadyHttpClient() {
   return { layer, calls };
 }
 
-/** PG15+ (this suite's default) never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
+/** Setup never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: DbSession = {
@@ -860,24 +859,6 @@ describe("db start", () => {
   });
 
   it.effect(
-    "PG <= 14 on a fresh volume: execs schema/globals SQL directly instead of the PG15+ one-shot migrate jobs",
-    () => {
-      const { layer, out, child, dbSession } = setup({
-        configContents: 'project_id = "test"\n[db]\nmajor_version = 14\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
-      return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Postgres 14 reached end of life");
-        expect(out.stderrText).toContain("Initialising schema...");
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-        expect(dbSession.calls.length).toBeGreaterThan(0);
-        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
-      });
-    },
-  );
-
-  it.effect(
     "a fresh volume with realtime disabled skips the realtime migrate job AND never attempts JWKS resolution",
     () => {
       // globalThis.fetch is stubbed to fail so any JWKS resolution attempt would blow up the
@@ -951,7 +932,6 @@ describe("db start", () => {
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(
           false,
         );
-        expect(dbSession.calls.some((call) => call.sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
           true,
         );

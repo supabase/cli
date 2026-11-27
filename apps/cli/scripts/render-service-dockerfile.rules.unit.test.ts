@@ -43,11 +43,11 @@ vi.mock("@supabase/stack/internal/artifacts", (importOriginal) => {
   }));
 });
 
-/** A minimal Dockerfile with every slim-capable alias, plus kong and pg14 (hand-managed). */
+/** A minimal Dockerfile with every slim-capable alias, plus kong (hand-managed). */
 function baseDockerfile(overrides: Readonly<Record<string, string>> = {}): string {
   const lines: Readonly<Record<string, string>> = {
     pg: "FROM supabase/postgres:16.9.9 AS pg",
-    pg15: "FROM supabase/postgres:14.9.9 AS pg15",
+    pg15: "FROM supabase/postgres:15.9.9 AS pg15",
     mailpit: "FROM axllent/mailpit:v0.9.9 AS mailpit",
     postgrest: "FROM postgrest/postgrest:v0.9.9 AS postgrest",
     pgmeta: "FROM supabase/postgres-meta:v0.9.9 AS pgmeta",
@@ -104,7 +104,7 @@ describe("renderDockerfile: repository rule", () => {
 
 describe("renderDockerfile: line preservation", () => {
   test("never inserts a line for a missing slim-capable alias", () => {
-    const withoutPg15 = baseDockerfile().replace(/FROM supabase\/postgres:14\.9\.9 AS pg15\n/, "");
+    const withoutPg15 = baseDockerfile().replace(/FROM supabase\/postgres:15\.9\.9 AS pg15\n/, "");
     expect(() => renderDockerfile(withoutPg15)).toThrow(/pg15/);
   });
 

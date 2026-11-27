@@ -44,8 +44,6 @@ import { ensureImagesCached, type ImagePrepullError } from "./image-prepull.ts";
 import { resolvePinnedImage } from "./pinned-image.ts";
 import { COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { REALTIME_TENANT_ID, buildRealtimeEnv } from "./realtime-env.ts";
-import { START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
-import { START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import { STACK_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { startInternalDbPassword, startInternalDbUrl } from "./internal-db-connection.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
@@ -69,8 +67,6 @@ alter default privileges for role postgres in schema public
 export const START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
-// The PG14 dump installs pg_net for its later grant statements; remove it after the dump so the
-// baseline still follows the user's webhooks setting. Enabled projects recreate it afterward.
 const START_REMOVE_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_net;";
 
 /**
@@ -131,7 +127,7 @@ export type StartSetupLocalDatabaseError =
   | MigrationSeedError
   | ImagePrepullError;
 
-/** Already-resolved Docker images for the three PG15+ one-shot migrate jobs. */
+/** Already-resolved Docker images for the three one-shot migrate jobs. */
 export interface StartDbSetupImages {
   /** Resolved by the caller; not part of the decoded `CliConfig` schema. */
   readonly realtime: string;
@@ -140,7 +136,7 @@ export interface StartDbSetupImages {
 }
 
 /**
- * Computes the three PG15+ one-shot setup jobs' pinned image names via {@link resolvePinnedImage},
+ * Computes the three one-shot setup jobs' pinned image names via {@link resolvePinnedImage},
  * so a linked project's version pins apply here too.
  *
  * Does not resolve these against the registry as a batch: {@link runStartMigrateJob} resolves
@@ -159,19 +155,17 @@ function resolveDbSetupImages(
 }
 
 /**
- * Prints the setup banner, then lazily resolves JWKS (only when `majorVersion >= 15` and
- * `realtimeEnabledForSetup`) and the PG15+ one-shot job images — the shared prelude both
+ * Prints the setup banner, then lazily resolves JWKS (only when `realtimeEnabledForSetup`) and
+ * the one-shot job images — the shared prelude both
  * {@link runFreshDbSetup} and the shadow-database setup path need before calling
  * {@link setupDatabase}. Structurally typed against just the fields it needs so both
  * {@link FreshDbSetupInput} and `shadow-database.ts`'s derived `ShadowDbSetupInput` satisfy this
  * signature without a cast.
  *
  * The banner prints before `jwks` resolves, so a JWKS failure (an unreachable `third_party`
- * provider) surfaces after the banner instead of before it. The `majorVersion >= 15` gate means
- * JWKS's potential live HTTP request never runs at all on PG14, even with realtime enabled.
+ * provider) surfaces after the banner instead of before it.
  */
 export const resolveDbSetupPrelude = <E>(setup: {
-  readonly majorVersion: number;
   readonly realtimeEnabledForSetup: boolean;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;
   readonly jwks: Effect.Effect<string, E>;
@@ -179,7 +173,7 @@ export const resolveDbSetupPrelude = <E>(setup: {
   Effect.gen(function* () {
     const output = yield* Output;
     yield* output.raw("Initialising schema...\n", "stderr");
-    const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
+    const jwks = setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
     const images = resolveDbSetupImages(setup.serviceVersionOverrides, yield* slimImagesEnabled);
     return { jwks, images };
   });
@@ -194,7 +188,7 @@ export const resolveDbSetupPrelude = <E>(setup: {
 export interface SetupDatabaseInput {
   /**
    * An already-open session to the local Postgres database, dialed via the host-facing address —
-   * not the internal Docker-network address the PG15+ one-shot jobs below connect through (see
+   * not the internal Docker-network address the one-shot jobs below connect through (see
    * `networkId`/`dbHost`).
    */
   readonly session: DbSession;
@@ -206,21 +200,21 @@ export interface SetupDatabaseInput {
   readonly config: CliConfig;
   /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
   readonly webhooksEnabled: boolean;
-  /** `db.major_version` (14-17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
+  /** `db.major_version` (15 or 17), resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
-   * The internal Docker-network address the PG15+ one-shot jobs connect through. The real local
+   * The internal Docker-network address the one-shot jobs connect through. The real local
    * `db` container's caller passes its service container name; the shadow-database variant
    * passes the shadow container's own short id instead, which resolves via Docker's embedded DNS
    * even though that container has no name or alias.
    */
   readonly dbHost: string;
   /**
-   * Labels the PG15+ one-shot job containers. Independent of {@link dbHost}: this labels the
+   * Labels the one-shot job containers. Independent of {@link dbHost}: this labels the
    * job containers themselves, not the (possibly different) container `dbHost` addresses.
    */
   readonly projectId: string;
-  /** The `start` run's Docker network id; every PG15+ one-shot job joins it. */
+  /** The `start` run's Docker network id; every one-shot job joins it. */
   readonly networkId: string;
   /** Reused (not recomputed) to derive the internal DB password via `startInternalDbPassword`. */
   readonly dbUrl: string;
@@ -285,7 +279,7 @@ export interface StartSetupLocalDatabaseInput extends Omit<
   readonly experimental: boolean;
   /**
    * The migration version to reapply. `db start` always passes `""` (every pending migration);
-   * `db reset`'s PG15 recreate passes its own resolved reset version instead.
+   * `db reset`'s recreate passes its own resolved reset version instead.
    */
   readonly version: string;
 }
@@ -327,44 +321,7 @@ const execSqlConstant = Effect.fnUntraced(function* (
 });
 
 /**
- * Execs only the major-version-appropriate initial-schema SQL, without
- * {@link START_DB_GLOBALS_SQL}. {@link startInitSchemaPre15} execs globals.sql itself before
- * calling this; `db reset`'s PG14 path calls this directly instead, skipping globals.sql.
- * Exported so `recreate-local-database.ts` can reproduce that same asymmetry.
- */
-export const initSchema14 = Effect.fnUntraced(function* (
-  session: DbSession,
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  tmpDir: string,
-) {
-  yield* execSqlConstant(
-    session,
-    fs,
-    path,
-    tmpDir,
-    "initial-schema.sql",
-    START_DB_INITIAL_SCHEMA_14_SQL,
-  );
-});
-
-/**
- * Execs {@link START_DB_GLOBALS_SQL} then {@link initSchema14}, for `majorVersion <= 14`. Used
- * by `db start`'s fresh-volume setup only; `db reset`'s PG14 path calls {@link initSchema14}
- * directly instead.
- */
-const startInitSchemaPre15 = Effect.fnUntraced(function* (
-  session: DbSession,
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  tmpDir: string,
-) {
-  yield* execSqlConstant(session, fs, path, tmpDir, "globals.sql", START_DB_GLOBALS_SQL);
-  yield* initSchema14(session, fs, path, tmpDir);
-});
-
-/**
- * Runs one PG15+ one-shot service-migration job to completion: foreground, on the same Docker
+ * Runs one one-shot service-migration job to completion: foreground, on the same Docker
  * network as `db`, labeled with `opts.projectId` so an interrupted run's orphaned container stays
  * discoverable by `supabase stop`. Stdout is discarded; stderr is teed to the parent's own stderr
  * only under `--debug`.
@@ -488,12 +445,14 @@ function startAuthMigrateEnv(input: {
 
 /**
  * Runs up to three one-shot migrate jobs, each gated on its own service's `enabled` flag, in
- * order: realtime, storage, auth.
+ * order: realtime, storage, auth. The setup banner prints from {@link resolveDbSetupPrelude}, the
+ * caller-side step that runs immediately before this one, not from here.
  */
-const startInitSchema15 = Effect.fnUntraced(function* (
+const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
   spawner: Spawner,
   input: SetupDatabaseInput,
 ) {
+  yield* Effect.annotateCurrentSpan("db.major_version", input.majorVersion);
   const dbHost = input.dbHost;
   const dbPassword = startInternalDbPassword(input.dbUrl);
 
@@ -573,32 +532,12 @@ const startInitSchema15 = Effect.fnUntraced(function* (
 });
 
 /**
- * Branches on `majorVersion`. The setup banner prints from {@link resolveDbSetupPrelude}, the
- * caller-side step that runs immediately before this one, not from here.
- */
-const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
-  spawner: Spawner,
-  input: SetupDatabaseInput,
-  tmpDir: string,
-) {
-  yield* Effect.annotateCurrentSpan("db.major_version", input.majorVersion);
-  if (input.majorVersion <= 14) {
-    yield* startInitSchemaPre15(input.session, input.fs, input.path, tmpDir);
-    return;
-  }
-  yield* startInitSchema15(spawner, input);
-});
-
-/**
  * Applies the `api.auto_expose_new_tables` tri-state: unset and `true` are both a no-op (keeps
  * the bundled initial-schema grants); an explicit `false` execs
- * {@link START_REVOKE_API_PRIVILEGES_SQL}. Always execs over `session` directly, regardless of PG
- * major version — never part of the PG15+ one-shot Docker jobs.
- *
- * Takes `session`/`fs`/`path` directly rather than the whole {@link StartSetupLocalDatabaseInput}
- * because `db reset`'s PG14 path calls it too, without any of `setupDatabase`'s other steps.
+ * {@link START_REVOKE_API_PRIVILEGES_SQL}. Always execs over `session` directly, never as part of
+ * the one-shot Docker jobs.
  */
-export const applyApiPrivileges = Effect.fnUntraced(function* (
+const applyApiPrivileges = Effect.fnUntraced(function* (
   session: DbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -638,7 +577,7 @@ export const applyDatabaseWebhooks = Effect.fnUntraced(function* (
 const WEBHOOK_SCHEMA_LOCK_ID_SQL = "hashtext('supabase_internal.supabase_functions')";
 
 /**
- * Creates the `supabase_functions` schema on stack databases, which never run the PG15+ entrypoint
+ * Creates the `supabase_functions` schema on stack databases, which never run the entrypoint
  * that creates it. Runs under an advisory lock and skips when the schema exists, since the template
  * is not re-runnable.
  */
@@ -667,11 +606,8 @@ export const ensureStackWebhookSchema = Effect.fn("DbSetup.ensureStackWebhookSch
   );
 });
 
-/**
- * Drops pg_net; shared by the fresh-setup PG14 dump cleanup, `db reset`'s PG14 path, and the
- * existing-volume webhooks convergence, so all three run the identical statement.
- */
-export const removeDatabaseWebhooks = Effect.fnUntraced(function* (
+/** Drops pg_net; run by the existing-volume webhooks convergence when webhooks are disabled. */
+const removeDatabaseWebhooks = Effect.fnUntraced(function* (
   session: DbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -806,26 +742,7 @@ export const setupDatabase = (
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const tmpDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "supabase-start-db-setup-" })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new DbSetupError({
-                  message: `failed to create temp directory: ${errMessage(error)}`,
-                  reason: "filesystem",
-                }),
-            ),
-          );
-        const requiresPg14WebhooksCleanup = input.majorVersion === 14;
-        yield* startInitSchema(spawner, input, tmpDir);
-        if (requiresPg14WebhooksCleanup) {
-          yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
-        }
-      }),
-    );
+    yield* startInitSchema(spawner, input);
 
     yield* applyDatabaseOverlay(session, fs, path, workdir, {
       webhooksEnabled: input.webhooksEnabled,
@@ -881,7 +798,7 @@ export const startSetupLocalDatabase = (
   });
 
 /**
- * The `setup` shape shared by `db start`'s fresh-volume branch and `db reset`'s PG15 recreate:
+ * The `setup` shape shared by `db start`'s fresh-volume branch and `db reset`'s recreate:
  * everything {@link startSetupLocalDatabase} needs, minus what {@link runFreshDbSetup} itself
  * already resolves and threads through (`session`, `images`).
  */
@@ -893,7 +810,7 @@ export interface FreshDbSetupInput<E> {
   readonly experimental: boolean;
   readonly dbUrl: string;
   readonly jwtSecret: string;
-  /** Lazy; evaluated only when `majorVersion >= 15` and `realtimeEnabledForSetup` (see {@link resolveDbSetupPrelude}). Caller-supplied rather than resolved here unconditionally. */
+  /** Lazy; evaluated only when `realtimeEnabledForSetup` (see {@link resolveDbSetupPrelude}). Caller-supplied rather than resolved here unconditionally. */
   readonly jwks: Effect.Effect<string, E>;
   readonly apiUrl: string;
   readonly authExternalUrl: string | undefined;

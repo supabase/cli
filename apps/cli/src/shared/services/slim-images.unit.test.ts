@@ -143,7 +143,7 @@ describe("slimCatalogPin", () => {
   });
 
   it("is absent for aliases with no slim build", () => {
-    for (const alias of ["kong", "pg14", "differ", "migra", "pgprove"]) {
+    for (const alias of ["kong", "differ", "migra", "pgprove"]) {
       expect(slimCatalogPin(alias, dockerfileServiceImageRaw(alias))).toBeUndefined();
     }
   });

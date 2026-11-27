@@ -3450,30 +3450,6 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("ignores rest-version v9 marker on databases older than 15", () =>
-      Effect.gen(function* () {
-        const workdir = yield* makeWorkdir("supabase-gen-types-local-pg14-");
-        yield* writeConfig(
-          workdir,
-          [
-            'project_id = "demo"',
-            "",
-            "[api]",
-            'schemas = ["public"]',
-            "",
-            "[db]",
-            "major_version = 14",
-            "port = 54321",
-          ].join("\n"),
-        );
-        yield* writeTempFile(workdir, "rest-version", "v9.0.1\n");
-        const { layer, generator } = yield* setup({ workdir });
-        yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
     it.effect("prefers explicit --schema over config schemas for local generation", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-local-schema-");

@@ -1,9 +1,9 @@
 /**
- * Post-recreate satellite-container restart + Kong reload, shared by both PG14's and PG15's
- * `db reset` paths. Neither `db start` nor `supabase start` calls this: it exists purely to
- * bring the satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
- * container that was just recreated or force-restarted out from under them, and to reload Kong's
- * nginx so its cached upstream addresses (which may have changed) stop 502ing. PG15's path also
+ * Post-recreate satellite-container restart + Kong reload for `db reset`. Neither `db start` nor
+ * `supabase start` calls this: it exists purely to bring the satellite containers
+ * (storage/auth/realtime/pooler) back in sync with a `db` container that was just recreated out
+ * from under them, and to reload Kong's nginx so its cached upstream addresses (which may have
+ * changed) stop 502ing. `db reset` also
  * stops those satellites before it removes the `db` container ({@link stopSatelliteServices}).
  */
 
@@ -38,8 +38,7 @@ export class ContainerRestartError extends Data.TaggedError("ContainerRestartErr
 }
 
 /**
- * Restarts one container (PG14's `db` after `pg_terminate_backend`, since pg_cron must restart;
- * PostgREST after a local reset). Unlike the satellite restarts below, this does not tolerate
+ * Restarts one container (PostgREST after a local reset). Unlike the satellite restarts below, this does not tolerate
  * "not found" — any failure is a hard error.
  */
 export function restartContainer(

@@ -3,37 +3,24 @@
  * {@link startDatabase}, since the shared `StartDatabase`-equivalent primitive is never called
  * from a reset either. Reuses the same underlying primitives (`ensureNetwork`,
  * `buildPostgresStartContainerSpec`, `createContainer`, `waitForPostgresReady`,
- * `startSetupLocalDatabase`) with a distinct sequence per major version: PG >= 15 recreates the
- * container/volume/network and re-runs setup; PG <= 14 recreates the two databases in place and
- * reinitializes the schema. Neither path probes for an existing volume, supports
- * `--from-backup`, or rolls back the database on failure; PG15 stops storage/auth/realtime/pooler
- * first and restarts them (+ Kong reload) once at the end, or after a failure unless Docker
- * reports the db container missing or stopped.
+ * `startSetupLocalDatabase`): it recreates the container/volume/network and re-runs setup. It
+ * does not probe for an existing volume, support `--from-backup`, or roll back the database on
+ * failure; it stops storage/auth/realtime/pooler first and restarts them (+ Kong reload) once at
+ * the end, or after a failure unless Docker reports the db container missing or stopped.
  */
 
-import { Data, Effect, Exit, Result, Schedule, type FileSystem, type Path } from "effect";
+import { Effect, Exit, Result, type FileSystem, type Path } from "effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import {
-  actionability,
-  type CliErrorActionabilityDeclaration,
-  ErrorActionabilityId,
-} from "../../shared/telemetry/error-actionability.ts";
-import { isSqlState } from "../connect-errors.ts";
+import type { DbConnection } from "../db-connection.service.ts";
+import type { DbConnectError } from "../db-connection.errors.ts";
 import { dockerSupportsHealthStartInterval, isContainerNotFoundMessage } from "../container-cli.ts";
-import { checkDbConfig } from "../db-config.read.ts";
-import { DbConnection, type DbSession } from "../db-connection.service.ts";
-import { DbExecError, type DbConnectError } from "../db-connection.errors.ts";
 import { CLI_PROJECT_LABEL } from "../docker-ids.ts";
 import { inspectContainerState } from "../docker-lifecycle.ts";
 import type { DockerRun } from "../docker-run.service.ts";
-import { migrateAndSeed } from "../migrate-and-seed.ts";
-import { formatExecBatchError, type MigrationApplyError } from "../migration-apply.ts";
-import { errorMessage } from "../error-message.ts";
-import type { MigrationSeedError } from "../seed.ts";
 import {
   ensureNetwork,
   removeContainer,
@@ -48,11 +35,6 @@ import {
 } from "./container-lifecycle.ts";
 import {
   runFreshDbSetup,
-  applyApiPrivileges,
-  applyDatabaseWebhooks,
-  initSchema14,
-  removeDatabaseWebhooks,
-  DbSetupError,
   type FreshDbSetupInput,
   type StartSetupLocalDatabaseError,
 } from "./db-setup.ts";
@@ -68,10 +50,8 @@ import {
   type PostgresStartServiceInput,
 } from "./postgres.service.ts";
 import {
-  restartContainer,
   restartServicesAndReloadKong,
   stopSatelliteServices,
-  type ContainerRestartError,
   type KongReloadError,
   type RestartServicesError,
 } from "./restart-services.ts";
@@ -79,29 +59,8 @@ import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-const errMessage = (e: unknown): string =>
-  typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
-    ? e.message
-    : String(e);
-
-/**
- * One or more replication slots are still active (retryable — the WAL sender that owns the
- * slot may still be tearing down), or counting them failed outright (permanent).
- */
-export class ResetReplicationSlotsError extends Data.TaggedError("ResetReplicationSlotsError")<{
-  readonly message: string;
-  readonly retryable: boolean;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.retryable
-      ? { ...actionability.dbFinding, fingerprint_suffix: "replication_slots_active" }
-      : { ...actionability.dbConnection, fingerprint_suffix: "replication_slots_query" };
-  }
-}
-
-/** Every failure the PG14/PG15 `db reset` recreate composition can produce. */
+/** Every failure the `db reset` recreate composition can produce. */
 export type RecreateLocalDatabaseError =
-  // PG15
   | NetworkCreateError
   | ContainerRemoveError
   | VolumeRemoveError
@@ -109,15 +68,7 @@ export type RecreateLocalDatabaseError =
   | ImagePrepullError
   | HealthCheckTimeoutError
   | StartSetupLocalDatabaseError
-  // PG14
   | DbConnectError
-  | DbExecError
-  | ResetReplicationSlotsError
-  | DbSetupError
-  | ContainerRestartError
-  | MigrationApplyError
-  | MigrationSeedError
-  // Shared post-recreate step (both branches)
   | RestartServicesError
   | KongReloadError;
 
@@ -134,7 +85,7 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly containerOpts: ContainerOpts;
   /** Fed straight to `buildPostgresStartContainerSpec` — reset has no `fromBackup` concept. */
   readonly postgresSpec: Omit<PostgresStartServiceInput, "image" | "fromBackup">;
-  /** Lazy: only resolved on the PG15 path. */
+  /** Lazy: resolved after the old container and volume are removed. */
   readonly resolvePostgresImage: Effect.Effect<string, ImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
   /** The resolved reset migration version (`""` for every pending migration). */
@@ -143,122 +94,13 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly setup: FreshDbSetupInput<E>;
 }
 
-/** Postgres SQLSTATE for "database doesn't exist yet", expected on a first-ever reset. */
-const PG_INVALID_CATALOG_NAME = "3D000";
-
-/**
- * Disables new connections to `postgres`/`_supabase`, terminates existing backends, then waits
- * for WAL senders to drop their replication slots (1-second backoff, 10 retries max).
- */
-export const resetDisconnectClients = Effect.fn("DbBootstrap.disconnectClients")(function* (
-  session: DbSession,
-) {
-  // Must run sequentially, unwrapped: looping these in a transaction is unsupported, and
-  // Effect's short-circuit-on-failure stops at the first bad statement.
-  const disconnectResult = yield* Effect.forEach(
-    [
-      "ALTER DATABASE postgres ALLOW_CONNECTIONS false",
-      "ALTER DATABASE _supabase ALLOW_CONNECTIONS false",
-      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('postgres', '_supabase')",
-    ],
-    (sql) => session.exec(sql),
-    { discard: true },
-  ).pipe(Effect.result);
-  if (Result.isFailure(disconnectResult)) {
-    const failure = disconnectResult.failure;
-    // `failure.code` isn't reliably PgError-only: the driver's exec-error mapping can also set
-    // `code` to a bare OS errno (`ECONNRESET`, `ETIMEDOUT`, ...), so `isSqlState` must gate
-    // treating it as a real Postgres code. A non-PgError failure and a 3D000 PgError are both
-    // silently swallowed.
-    if (
-      failure.code !== undefined &&
-      isSqlState(failure.code) &&
-      failure.code !== PG_INVALID_CATALOG_NAME
-    ) {
-      return yield* new DbSetupError({
-        message: `failed to disconnect clients: ${failure.message}`,
-        reason: "database",
-      });
-    }
-  }
-
-  const countReplicationSlots = session
-    .query("SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')")
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new ResetReplicationSlotsError({
-            message: `failed to count replication slots: ${cause.message}`,
-            retryable: false,
-          }),
-      ),
-      Effect.flatMap((rows) => {
-        const count = Number(rows[0]?.["count"] ?? 0);
-        return count > 0
-          ? Effect.fail(
-              new ResetReplicationSlotsError({
-                message: `replication slots still active: ${count}`,
-                retryable: true,
-              }),
-            )
-          : Effect.void;
-      }),
-    );
-  let slotChecks = 0;
-  yield* Effect.suspend(() => {
-    slotChecks += 1;
-    return countReplicationSlots;
-  }).pipe(
-    Effect.withTracerEnabled(false),
-    Effect.retry({
-      schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-      while: (error) => error.retryable,
-    }),
-    Effect.ensuring(
-      Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", slotChecks)),
-    ),
-  );
-});
-
-// `DROP`/`CREATE DATABASE` cannot run inside a `BEGIN`/`COMMIT` block, so these run as bare,
-// sequential statements rather than the batch primitive (which would wrap them in a
-// transaction). Each statement's index matches its position in this list, used for error
-// formatting.
-const RESET_RECREATE_DATABASES_STATEMENTS = [
-  "DROP DATABASE IF EXISTS postgres WITH (FORCE)",
-  "CREATE DATABASE postgres WITH OWNER postgres",
-  "DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
-  "CREATE DATABASE _supabase WITH OWNER postgres",
-] as const;
-
-/**
- * Connects as `supabase_admin` to `template1`, disconnects clients, then runs four sequential
- * statements. Roles are not dropped here since they are cluster-level entities — use stop then
- * start instead.
- */
-const resetRecreateDatabases = Effect.fn("DbBootstrap.recreateDatabases")(function* (
-  session: DbSession,
-) {
-  yield* resetDisconnectClients(session);
-  for (const [index, statement] of RESET_RECREATE_DATABASES_STATEMENTS.entries()) {
-    yield* session.exec(statement).pipe(
-      Effect.mapError(
-        (error) =>
-          new DbExecError({
-            message: errorMessage(formatExecBatchError(error, index, statement)),
-            code: error.code,
-            detail: error.detail,
-            position: error.position,
-          }),
-      ),
-    );
-  }
-});
-
 const STACK_RECOVERY_HINT = "Run supabase stop && supabase start to bring the local stack back.";
 
-/** PG >= 15 recreate path — see this module's own header for the full sequence. */
-const recreateLocalDatabase15 = <E>(
+/**
+ * Runs the recreate sequence — see this module's header for the full call order. The caller has
+ * already printed `Resetting local database…`.
+ */
+export const recreateLocalDatabase = <E>(
   spawner: Spawner,
   input: RecreateLocalDatabaseInput<E>,
 ): Effect.Effect<
@@ -352,133 +194,6 @@ const recreateLocalDatabase15 = <E>(
             );
           }),
     ),
-  );
-
-/**
- * Loads `config.toml` once, ahead of `initDatabase` (needs `api.auto_expose_new_tables`) and the
- * final `MigrateAndSeed` (needs `db.migrations.enabled`/`[db.seed]`/pg-delta gate).
- */
-const recreateLocalDatabase14 = <E>(
-  spawner: Spawner,
-  input: RecreateLocalDatabaseInput<E>,
-): Effect.Effect<
-  void,
-  RecreateLocalDatabaseError | E,
-  | Output
-  | DbConnection
-  | DockerRun
-  | RuntimeInfo
-  | HttpClient.HttpClient
-  | FileSystem.FileSystem
-  | Path.Path
-  | CliConfigValues
-> =>
-  Effect.gen(function* () {
-    const { setup, fs, path, workdir } = input;
-    const dbPassword = startInternalDbPassword(setup.dbUrl);
-    const toml = yield* checkDbConfig(fs, path, workdir);
-    const dbConnection = yield* DbConnection;
-    const output = yield* Output;
-
-    const connectAs = (user: string, database: string) =>
-      dbConnection.connect(
-        { host: input.hostname, port: input.dbPort, user, password: dbPassword, database },
-        { isLocal: true, dnsResolver: "native" },
-      );
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* connectAs("supabase_admin", "template1");
-        yield* resetRecreateDatabases(session);
-      }),
-    );
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* connectAs("supabase_admin", "postgres");
-        const tmpDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "supabase-reset-db-setup-" })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new DbSetupError({
-                  message: `failed to create temp directory: ${errMessage(error)}`,
-                  reason: "filesystem",
-                }),
-            ),
-          );
-        yield* initSchema14(session, fs, path, tmpDir);
-        // Same drop-then-conditionally-recreate sequence fresh setup runs
-        // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs pg_net
-        // unconditionally, so without this drop a reset with webhooks disabled would leave
-        // pg_net installed, causing drift against a fresh `supabase start`. `MigrateAndSeed`
-        // re-applies every migration below, so a user migration that creates pg_net still gets
-        // it back.
-        yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
-        yield* applyApiPrivileges(session, fs, path, tmpDir, toml.baseline.apiAutoExposeNewTables);
-        yield* applyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
-      }),
-    ).pipe(Effect.withSpan("DbBootstrap.initSchema14"));
-
-    // "Restarting containers..." first, then an actual restart of the `db` container itself
-    // (pg_cron must restart after `pg_terminate_backend`); not tolerant of "not found", unlike
-    // the satellite restarts inside `restartServicesAndReloadKong`.
-    yield* output.raw("Restarting containers...\n", "stderr");
-    yield* restartContainer(spawner, input.dbContainerId);
-    yield* waitForPostgresReady(
-      spawner,
-      input.dbContainerId,
-      {
-        host: input.hostname,
-        port: input.dbPort,
-        user: "postgres",
-        password: dbPassword,
-        database: "postgres",
-      },
-      { timeoutSeconds: input.dbHealthTimeoutSeconds },
-    );
-    yield* restartServicesAndReloadKong(spawner, input.projectId);
-
-    // Final connect as `postgres`/`postgres` to migrate and seed.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* connectAs("postgres", "postgres");
-        yield* migrateAndSeed(session, fs, path, workdir, input.version, {
-          migrationsEnabled: toml.migrationsEnabled,
-          seed: toml.seed,
-          experimental: setup.experimental,
-          pgDeltaEnabled: toml.pgDelta.enabled,
-          schemaPaths: toml.schemaPaths,
-          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
-          configFile: toml.configFile,
-        });
-      }),
-    );
-  });
-
-/**
- * Runs the PG14/PG15 recreate sequence — see this module's header for the full call order. The
- * caller has already printed `Resetting local database…`.
- */
-export const recreateLocalDatabase = <E>(
-  spawner: Spawner,
-  input: RecreateLocalDatabaseInput<E>,
-): Effect.Effect<
-  void,
-  RecreateLocalDatabaseError | E,
-  | Output
-  | DbConnection
-  | DockerRun
-  | RuntimeInfo
-  | HttpClient.HttpClient
-  | FileSystem.FileSystem
-  | Path.Path
-  | CliConfigValues
-> =>
-  (input.setup.majorVersion <= 14
-    ? recreateLocalDatabase14(spawner, input)
-    : recreateLocalDatabase15(spawner, input)
-  ).pipe(
     Effect.tap(() => awaitDockerHealthSettled(spawner, input.dbContainerId)),
     Effect.withSpan("DbBootstrap.recreateLocalDatabase", {
       attributes: { "db.major_version": input.setup.majorVersion },

@@ -67,6 +67,11 @@ const cases: ReadonlyArray<Case> = [
     message: "Postgres version 12.x is unsupported.",
   },
   {
+    name: "major_version 14",
+    overrides: { db: { major_version: 14 } },
+    message: "Postgres version 14.x is unsupported.",
+  },
+  {
     name: "major_version 16",
     overrides: { db: { major_version: 16 } },
     message: "Failed reading config: Invalid db.major_version: 16.",

@@ -1562,7 +1562,7 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
-        yield* writeConfig("[db]\nmajor_version = 14\n");
+        yield* writeConfig("[db]\nmajor_version = 17\n");
         yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
 
@@ -1571,7 +1571,7 @@ describe("pull integration", () => {
         expect(createCalls.length).toBeGreaterThan(0);
         const createArgs = createCalls.flatMap((call) => call.args);
         expect(createArgs.some((arg) => /supabase\/postgres:15\./.test(arg))).toBe(true);
-        expect(createArgs.some((arg) => /supabase\/postgres:14\./.test(arg))).toBe(false);
+        expect(createArgs.some((arg) => /supabase\/postgres:17\./.test(arg))).toBe(false);
       }).pipe(Effect.provide(layer));
     },
   );
