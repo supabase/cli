@@ -99,7 +99,7 @@ const runWarehouse = (
       ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
       env: {
         SUPABASE_ACCESS_TOKEN: ACCESS_TOKEN,
-        SUPABASE_EXPERIMENTAL_WAREHOUSE: "1",
+        SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "1",
         SUPABASE_NO_KEYRING: "1",
         SUPABASE_PROFILE: profilePath,
         SUPABASE_TELEMETRY_DISABLED: "1",

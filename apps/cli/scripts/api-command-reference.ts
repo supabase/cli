@@ -7,6 +7,7 @@ import type {
   ApiPollTarget,
 } from "../src/commands/api/api-command.model.ts";
 import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
+import { experimentalFeatureSources } from "../src/shared/config/experimental-feature.ts";
 
 export interface ApiCommandReferenceInput {
   readonly entries: ReadonlyArray<ApiCommandEntry>;
@@ -133,11 +134,11 @@ const experimentalLine = (
   input: ApiCommandReferenceInput,
 ): ReadonlyArray<string> => {
   const flag = input.nouns[entry.command[0] ?? ""]?.experimental;
-  return flag === undefined
-    ? []
-    : [
-        `- Experimental: enable with ${code(`experimental.${flag}`)} or ${code(`SUPABASE_EXPERIMENTAL_${flag.toUpperCase()}=1`)}.`,
-      ];
+  if (flag === undefined) return [];
+  const sources = experimentalFeatureSources(flag);
+  return [
+    `- Experimental: enable with ${code(sources.configPath)} or ${code(`${sources.envName}=1`)}.`,
+  ];
 };
 
 const commandSection = (

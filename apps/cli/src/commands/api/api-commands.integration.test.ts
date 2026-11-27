@@ -2981,11 +2981,11 @@ describe("generated warehouse commands", () => {
       }),
     );
 
-    it.effect("is on with SUPABASE_EXPERIMENTAL_WAREHOUSE", () =>
+    it.effect("is on with SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED", () =>
       Effect.gen(function* () {
-        expect(yield* resolve({ SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" }, tempRoot.current)).toEqual([
-          "warehouse",
-        ]);
+        expect(
+          yield* resolve({ SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "1" }, tempRoot.current),
+        ).toEqual(["warehouse"]);
         const root = rootCommandForFeatures({ apiFeatures: ["warehouse"] });
         const completion = respondToComplete(root, ["__complete", "ware"]);
         expect(completion?.candidates).toContainEqual(
@@ -3000,7 +3000,7 @@ describe("generated warehouse commands", () => {
 
     it.effect("completes the group and its subcommands after help", () =>
       Effect.gen(function* () {
-        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" };
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "1" };
         const names = (args: ReadonlyArray<string>) =>
           Effect.gen(function* () {
             const apiFeatures = yield* resolve(env, tempRoot.current, args);
@@ -3012,9 +3012,9 @@ describe("generated warehouse commands", () => {
       }),
     );
 
-    it.effect("is on with experimental.warehouse in the project config", () =>
+    it.effect("is on with experimental.warehouse.enabled in the project config", () =>
       Effect.gen(function* () {
-        yield* withConfig("[experimental]\nwarehouse = true\n");
+        yield* withConfig("[experimental.warehouse]\nenabled = true\n");
         expect(yield* resolve({}, tempRoot.current)).toEqual(["warehouse"]);
       }),
     );
@@ -3060,14 +3060,14 @@ describe("generated warehouse commands", () => {
       { name: "the root version flag", args: ["--version"], features: [] },
     ])("resolves $name by whether it can reach the group", ({ args, features }) =>
       Effect.gen(function* () {
-        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "1" };
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "1" };
         expect(yield* resolve(env, tempRoot.current, args)).toEqual(features);
       }),
     );
 
     it.effect("ignores an invalid value when the invocation cannot reach the group", () =>
       Effect.gen(function* () {
-        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" };
+        const env = { SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "maybe" };
         expect(yield* resolve(env, tempRoot.current, ["projects", "list"])).toEqual([]);
         expect(yield* resolve(env, tempRoot.current, ["inspect"])).toEqual([]);
         expect(yield* resolve(env, tempRoot.current, ["inspect", "db", "table-stats"])).toEqual([]);
@@ -3078,10 +3078,13 @@ describe("generated warehouse commands", () => {
     it.effect("fails with a typed error for an invalid environment value", () =>
       Effect.gen(function* () {
         const error = yield* resolve(
-          { SUPABASE_EXPERIMENTAL_WAREHOUSE: "maybe" },
+          { SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED: "maybe" },
           tempRoot.current,
         ).pipe(Effect.flip);
         expect(error).toBeInstanceOf(ExperimentalFeatureFlagError);
+        expect(error.message).toBe(
+          'Invalid SUPABASE_EXPERIMENTAL_WAREHOUSE_ENABLED="maybe" (sets experimental.warehouse.enabled): expected true or false.',
+        );
       }),
     );
   });

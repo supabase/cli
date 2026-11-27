@@ -1,6 +1,6 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { cliConfigFormatForPath, parseCliConfigDocument } from "@supabase/config/internal";
-import { Config, Data, Effect, FileSystem, Option, Path, Result, Schema } from "effect";
+import { Config, Data, Effect, FileSystem, Option, Path, Predicate, Result, Schema } from "effect";
 import { pickCliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { resolveWorkdir } from "../../config/command-settings.layer.ts";
@@ -71,17 +71,29 @@ export const readExperimentalFeatureConfig = (input: {
       ),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return decoded.experimental?.[input.feature];
+    const value = featureKeys[input.feature].segments.reduce<unknown>(
+      (node, segment) => (Predicate.isObject(node) ? node[segment] : undefined),
+      decoded,
+    );
+    return Schema.is(Schema.Boolean)(value) ? value : undefined;
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 const featureKeys = {
   stack: CliConfigKeys.experimental.stack,
   compute: CliConfigKeys.experimental.compute,
-  warehouse: CliConfigKeys.experimental.warehouse,
+  warehouse: CliConfigKeys.experimental.warehouse.enabled,
 } as const;
 
-/** Name of an `experimental.<feature>` config key. */
+/** Name of an experimental command family; its gate key lives under `experimental.<feature>`. */
 export type ExperimentalFeature = keyof typeof featureKeys;
+
+/** Config path and env name that switch one experimental feature. */
+export const experimentalFeatureSources = (
+  feature: ExperimentalFeature,
+): { readonly configPath: string; readonly envName: string } => {
+  const { path, env } = featureKeys[feature];
+  return { configPath: path, envName: env[0] ?? "" };
+};
 
 /**
  * Resolves one experimental boolean: a shell boolean override, else the project
@@ -93,7 +105,7 @@ export const resolveExperimentalFeature = <E, R>(input: {
 }): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R | Path.Path> =>
   Effect.gen(function* () {
     const key = featureKeys[input.feature];
-    const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
+    const { envName } = experimentalFeatureSources(input.feature);
     const path = yield* Path.Path;
     const shell = yield* readEnv(envName);
     const configValue = shell === undefined || shell === "" ? yield* input.configValue : undefined;
