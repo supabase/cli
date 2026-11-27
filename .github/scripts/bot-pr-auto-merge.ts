@@ -27,7 +27,8 @@ export const BOT_FAMILIES: readonly BotFamily[] = [
   { bot: "dependabot[bot]", matches: (ref) => ref.startsWith("dependabot/") },
   {
     bot: "supabase-cli-releaser[bot]",
-    matches: (ref) => ref === ALLOWED_SYNC_HEAD || ref.startsWith("slim-bump/"),
+    matches: (ref) =>
+      ref === ALLOWED_SYNC_HEAD || ref.startsWith("slim-bump/") || ref.startsWith("slim-hotfix/"),
   },
 ];
 
@@ -127,7 +128,7 @@ export function assertApprovable(
 
 /** The bot that owns the PR's head branch family, or undefined when the PR is not eligible. */
 export function eligibleBot(pr: BotPr, repository: string): string | undefined {
-  if (pr.draft || pr.baseRef !== BASE_BRANCH || pr.headRepo !== repository) {
+  if (pr.baseRef !== BASE_BRANCH || pr.headRepo !== repository) {
     return undefined;
   }
   const family = BOT_FAMILIES.find((candidate) => candidate.matches(pr.headRef));
@@ -199,23 +200,32 @@ function holdReason(state: BotPrState, approval: PrReview | undefined): string |
   return undefined;
 }
 
-async function handlePr(
-  io: BotPrIo,
-  pr: BotPr,
-  bot: string,
-  dryRun: boolean,
-  actions: string[],
-): Promise<string> {
-  const provenance = assessProvenance(await io.listBranchActivity(pr.headRef), bot, pr.headSha);
-  const state = await io.refresh(pr);
-  if (provenance.verdict === "pending") {
-    return `pending (${provenance.reason})`;
-  }
-  if (!state.open || state.headSha !== pr.headSha) {
-    return "pending (head moved)";
-  }
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
-  const live: BotPr = {
+/** Reviewers other than the approver whose latest verdict is an approval. */
+function otherApprovers(reviews: readonly PrReview[]): string[] {
+  const latest = new Map<string, string>();
+  for (const review of reviews) {
+    const user = review.user?.toLowerCase();
+    if (
+      user &&
+      user !== APPROVER_LOGIN &&
+      ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)
+    ) {
+      latest.set(user, review.state);
+    }
+  }
+  return [...latest].filter(([, state]) => state === "APPROVED").map(([user]) => user);
+}
+
+function hasHoldLabel(labels: readonly string[]): boolean {
+  return labels.some((label) => label.toLowerCase() === DO_NOT_MERGE_LABEL);
+}
+
+function toLive(pr: BotPr, state: BotPrState): BotPr {
+  return {
     ...pr,
     draft: state.draft,
     baseRef: state.baseRef,
@@ -224,6 +234,27 @@ async function handlePr(
     labels: state.labels,
     autoMergeEnabled: state.autoMergeEnabled,
   };
+}
+
+async function handlePr(
+  io: BotPrIo,
+  pr: BotPr,
+  bot: string,
+  dryRun: boolean,
+  actions: string[],
+): Promise<string> {
+  let provenance: Provenance;
+  try {
+    provenance = assessProvenance(await io.listBranchActivity(pr.headRef), bot, pr.headSha);
+  } catch (error) {
+    provenance = { verdict: "pending", reason: `activity unavailable: ${errorMessage(error)}` };
+  }
+  const state = await io.refresh(pr);
+  if (!state.open) {
+    return "pending (closed)";
+  }
+
+  const live = toLive(pr, state);
   const failures: string[] = [];
   const act = async (label: string, run: () => Promise<void>): Promise<void> => {
     if (dryRun) {
@@ -238,58 +269,103 @@ async function handlePr(
     try {
       await act(label, run);
     } catch (error) {
-      failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      failures.push(`${label}: ${errorMessage(error)}`);
     }
   };
 
-  let approval: PrReview | undefined;
+  let reviews: PrReview[] = [];
   let reviewsError: unknown;
   try {
-    approval = latestApproverReview(await io.listReviews(pr.number));
+    reviews = await io.listReviews(pr.number);
   } catch (error) {
     reviewsError = error;
   }
-  const hold = holdReason(state, approval);
-  if (provenance.verdict === "trusted" && !hold) {
-    if (reviewsError) {
-      throw reviewsError;
-    }
-    assertApprovable(live);
-    if (!pr.assignees.includes(APPROVER_LOGIN)) {
-      await act("assign approver", () => io.assignApprover(live));
-    }
-    if (approval?.state !== "APPROVED") {
-      await act("approve", () => io.approve(live));
-    }
-    if (!state.inMergeQueue && !state.autoMergeEnabled) {
-      await act("queue", () => io.queue(live));
-    }
-    return "trusted";
-  }
+  const latest = latestApproverReview(reviews);
+  const hold = holdReason(state, latest);
 
-  const message =
-    provenance.verdict === "tainted"
-      ? `${provenance.actor} pushed to this branch, so the automatic approval no longer applies. A maintainer needs to review this pull request.`
-      : "This pull request is on hold, so the automatic approval no longer applies. A maintainer needs to approve it.";
-  if (state.inMergeQueue) {
-    await attempt("dequeue", () => io.dequeue(live));
+  const revoke = async (message: string): Promise<void> => {
+    const botApprovals = reviews.filter(
+      (review) => review.user?.toLowerCase() === APPROVER_LOGIN && review.state === "APPROVED",
+    );
+    // Without the review list the bot's approval may still be live, so fail closed.
+    const withdrawMerge =
+      reviewsError !== undefined ||
+      (botApprovals.length > 0 && otherApprovers(reviews).length === 0);
+    if (withdrawMerge && state.inMergeQueue) {
+      await attempt("dequeue", () => io.dequeue(live));
+    }
+    if (withdrawMerge && state.autoMergeEnabled) {
+      await attempt("disable auto-merge", () => io.disableAutoMerge(live));
+    }
+    if (reviewsError) {
+      failures.push(`list reviews: ${errorMessage(reviewsError)}`);
+    }
+    for (const approval of botApprovals) {
+      await attempt("dismiss approval", () => io.dismissReview(live, approval.id, message));
+    }
+    if (failures.length > 0) {
+      throw new Error(`Revocation incomplete for PR #${pr.number}: ${failures.join("; ")}`);
+    }
+  };
+
+  if (hold) {
+    await revoke(
+      "This pull request is on hold, so the automatic approval no longer applies. A maintainer needs to approve it.",
+    );
+    return `held (${hold})`;
   }
-  if (state.autoMergeEnabled) {
-    await attempt("disable auto-merge", () => io.disableAutoMerge(live));
+  if (provenance.verdict === "tainted") {
+    await revoke(
+      `${provenance.actor} pushed to this branch, so the automatic approval no longer applies. A maintainer needs to review this pull request.`,
+    );
+    return `tainted (push by ${provenance.actor})`;
+  }
+  if (provenance.verdict === "pending") {
+    return `pending (${provenance.reason})`;
+  }
+  if (state.headSha !== pr.headSha) {
+    return "pending (head moved)";
   }
   if (reviewsError) {
-    failures.push(
-      `list reviews: ${reviewsError instanceof Error ? reviewsError.message : String(reviewsError)}`,
-    );
-  } else if (approval?.state === "APPROVED") {
-    await attempt("dismiss approval", () => io.dismissReview(live, approval.id, message));
+    throw reviewsError;
   }
-  if (failures.length > 0) {
-    throw new Error(`Revocation incomplete for PR #${pr.number}: ${failures.join("; ")}`);
+
+  const recheck = async (): Promise<BotPr | undefined> => {
+    const fresh = await io.refresh(pr);
+    if (
+      !fresh.open ||
+      fresh.headSha !== state.headSha ||
+      fresh.baseRef !== BASE_BRANCH ||
+      fresh.draft ||
+      hasHoldLabel(fresh.labels)
+    ) {
+      return undefined;
+    }
+    const freshPr = toLive(pr, fresh);
+    assertApprovable(freshPr);
+    return freshPr;
+  };
+  const changed = "pending (changed during sweep)";
+
+  assertApprovable(live);
+  if (!pr.assignees.includes(APPROVER_LOGIN)) {
+    await act("assign approver", () => io.assignApprover(live));
   }
-  return provenance.verdict === "tainted"
-    ? `tainted (push by ${provenance.actor})`
-    : `held (${hold})`;
+  if (latest?.state !== "APPROVED") {
+    const fresh = await recheck();
+    if (!fresh) {
+      return changed;
+    }
+    await act("approve", () => io.approve(fresh));
+  }
+  if (!state.inMergeQueue && !state.autoMergeEnabled) {
+    const fresh = await recheck();
+    if (!fresh) {
+      return changed;
+    }
+    await act("queue", () => io.queue(fresh));
+  }
+  return "trusted";
 }
 
 /**

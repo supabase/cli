@@ -216,7 +216,7 @@ by `apps/cli/scripts/render-service-dockerfile.ts` — the release itself is alr
 then, so a failure here means "open the pull request by hand", not "republish".
 
 Each opened or rewritten PR is approved by `supabase-oss` and set to auto-merge by the hourly
-`bot-pr-auto-merge.yml` sweep, which handles routine Dependabot and release-app PRs against `develop`, so a green PR
+`bot-pr-auto-merge.yml` sweep, which handles routine Dependabot and release-app PRs (`slim-bump/*`, `slim-hotfix/*`) against `develop`, so a green PR
 enters the merge queue without a human review. A push by anyone other than the bot removes the approval and auto-merge. To hold a bot PR, add the `do not merge` label, mark it draft, or dismiss `supabase-oss`'s approval: the sweep then withdraws its approval, auto-merge and queue entry and never re-approves (turning off auto-merge alone is not a hold). `supabase-oss` co-owns the bot-updated files in
 `.github/CODEOWNERS` because the app cannot approve its own PR. The approval token lives in the
 `auto-approve` environment, which only deploys from the default branch, so a workflow on any other

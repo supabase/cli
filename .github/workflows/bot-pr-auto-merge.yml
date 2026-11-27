@@ -29,6 +29,8 @@ jobs:
       github.event.repository.default_branch))
     # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
     environment: auto-approve
+    permissions:
+      contents: read
     steps:
       - name: Generate token
         id: app-token
