@@ -343,6 +343,7 @@ const fakeStack = (
   let stopped = 0;
   let hostStopped = 0;
   let hostDestroyed = 0;
+  let created = 0;
   let composed = 0;
   let catalogApplied = 0;
   const catalogOverlays: Array<boolean> = [];
@@ -489,6 +490,14 @@ const fakeStack = (
     get hostDestroyed() {
       return hostDestroyed;
     },
+    /** Records a new stack the fake StackApi hands out. */
+    create() {
+      created += 1;
+      return this.stack;
+    },
+    get created() {
+      return created;
+    },
     get composed() {
       return composed;
     },
@@ -628,7 +637,7 @@ const layers = (
       }),
   });
   const api = Layer.succeed(StackApi, {
-    create: () => Effect.succeed(fixture.stack),
+    create: () => Effect.sync(() => fixture.create()),
     open: (options) => {
       if (options.requestedCreations !== undefined)
         fixture.applyStartupReplan(options.requestedCreations);
@@ -821,6 +830,46 @@ describe("experimental stack start", () => {
       });
       expect(fixture.composed).toBe(0);
     }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
+  );
+
+  it.effect(
+    "rejects a bucket file_size_limit above storage.file_size_limit before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-bucket-limit-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          [
+            'project_id = "bucket-limit"',
+            "",
+            "[storage.buckets.videos]",
+            'file_size_limit = "100MiB"',
+            "",
+            "[storage.buckets.avatars]",
+            'file_size_limit = "1MiB"',
+            "",
+          ].join("\n"),
+        );
+        const fixture = fakeStack();
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({
+          _tag: "ExperimentalStackStartError",
+          reason: "invalid-config",
+        });
+        expect(error.message).toBe(
+          [
+            "storage.buckets.videos.file_size_limit (100MiB) exceeds storage.file_size_limit (50MiB).",
+            "Raise storage.file_size_limit or lower the bucket limit.",
+          ].join("\n"),
+        );
+        expect(error.message).not.toContain("avatars");
+        expect(fixture.created).toBe(0);
+      }).pipe(Effect.provide([BunServices.layer, BunCrypto.layer])),
   );
 
   it.effect("refuses an unreadable Auth email template before creating a stack", () =>
