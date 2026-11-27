@@ -323,12 +323,6 @@ Every push to `next` first runs the full `test.yml` suite (the `Test next` job i
 
 The nightly live e2e run covers `main`, `develop`, and `next`.
 
-### Manual Review of Bot PRs
-
-A CLI maintainer reviews the current revision of ordinary Dependabot and release-app PRs into `develop`, including `sync/api-package` and `sync/api-types`, and merges after required checks pass. After a human push, obtain a fresh human review. Branch promotions and release-notes PRs follow their separate approval procedures.
-
-When retiring bot auto-approval on `develop`, cancel outstanding runs of the retired workflow. Check open PRs it handled: remove queued entries, disable existing auto-merge requests, and dismiss approvals from the retired workflow before manual review. Repeat the check after the deletion lands so a run during rollout cannot leave an approval behind.
-
 ### Sync and fast-forward
 
 `[sync-branches.yml](../../../.github/workflows/sync-branches.yml)` (`Sync branches`) keeps the branches ordered. It replaces the former `Sync main to develop` workflow.
@@ -338,7 +332,7 @@ When retiring bot auto-approval on `develop`, cancel outstanding runs of the ret
 | `main-into-develop` | a successful `Release` run on `main` (and manual dispatch) |
 | `develop-into-next` | every push to `develop` (and manual dispatch)              |
 
-Only these two pairs exist. A sync PR is accepted only from the release App bot, only from `sync/main-into-develop` into `develop` or `sync/develop-into-next` into `next`; any other `sync/*` head (including the [manually reviewed API sync PRs](#manual-review-of-bot-prs)) is not a fast-forward PR. A hand-made PR from one of those two branches is refused with a comment: close it and run `gh workflow run sync-branches.yml -f pair=<pair>`.
+Only these two pairs exist. A sync PR is accepted only from the release App bot, only from `sync/main-into-develop` into `develop` or `sync/develop-into-next` into `next`; any other `sync/*` head (including the `sync/api-package` and `sync/api-types` bot PRs, which keep auto-merging) is not a fast-forward PR. A hand-made PR from one of those two branches is refused with a comment: close it and run `gh workflow run sync-branches.yml -f pair=<pair>`.
 
 A clean merge is pushed straight to the target with the release GitHub App token. If the target branch does not exist (for example `next` before it is created), the run skips cleanly.
 
@@ -366,7 +360,7 @@ A `develop-into-next` conflict PR is resolved by Claude (the `claude.opus` model
 
 Workflows on the sync branch run with repository secrets, so Claude never pushes a change under `.github/`. Claude resolves and fixes workflow files like any other, but those edits are posted as a review of suggestions, with a diff for file additions and deletions; a conflicted workflow keeps `develop`'s side until then. A maintainer reviews them and uses **Commit suggestions**, so the workflow change runs only once a person commits it, and repair waits for that. The publish job refuses to push when the merge's `.github/` differs from git's own merge (with `develop`'s side on conflicts) or a later commit touches `.github/`, and the repair token has no `workflows` permission. Claude's other edits run in the sync PR's CI before anyone reviews them, and land through a maintainer's approval or `Sync repair`'s approval under the conditions above.
 
-The sync PR is authored by the release App, so the person who resolved it can approve it. This is an accepted decision: sync resolvers are trusted maintainers with write access, and the resolution content is not independently reviewed. Only `Sync repair` automates approval for sync PRs, under the conditions above. This is an accepted decision: Claude's resolution and its own judgement of which findings the merge introduced reach `next` without a person reviewing them. **Approving the PR fast-forwards the target to the PR head** and deletes the sync branch; do not use the merge button (the repo is squash-only and squashing destroys the merge ancestry the sync relies on). The `Require fast-forward` check fails on these PRs to enforce that.
+The PR is authored by the release App, so the person who resolved it can approve it. This is an accepted decision: sync resolvers are trusted maintainers with write access, and the resolution content is not independently reviewed. `bot-pr-auto-merge.yml` excludes both sync heads so the bot never approves or auto-merges them; only `Sync repair` approves, on the conditions above. This is an accepted decision: Claude's resolution and its own judgement of which findings the merge introduced reach `next` without a person reviewing them. **Approving the PR fast-forwards the target to the PR head** and deletes the sync branch; do not use the merge button (the repo is squash-only and squashing destroys the merge ancestry the sync relies on). The `Require fast-forward` check fails on these PRs to enforce that.
 
 #### Fast-forward on approval
 
