@@ -798,23 +798,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   pooler: definition(
     "pooler",
     {
-      upstreamVersion: "v2.10.2",
+      upstreamVersion: "v2.10.3",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/pooler:v2.10.2-r0@sha256:37bf0f9d92f180ec140004c027cce95c22d16c65d6ca9c7f6e490dfcb96eb42d",
-      upstreamImage: "supabase/supavisor:2.10.2",
+        "ghcr.io/supabase/cli/pooler:v2.10.3-r0@sha256:f5be9672596bdeb4a328826d28bbc243bef319fdc293ec5d01a57230e2c07f2f",
+      upstreamImage: "supabase/supavisor:2.10.3",
       natives: {
         "darwin-arm64": {
-          archive: "b86c1fc5a6248d9a20b7bab3b8705fc94fbd29ff0434e2b1e619dbcb7941a2cd",
-          manifest: "d4b582f2dc1b4d139e5045f98abda535f2ff52f81e402a2ec96bf0145a771bd1",
+          archive: "a0151ddcf8abd0d395150d4ee2d498a54689cc2fc42f2d86a330106ff3e72caf",
+          manifest: "190102f2d4bb843651504a5f3a5e2e7b48dc27bef77420679dada14b3f715b71",
         },
         "linux-amd64": {
-          archive: "7b3d1a06ec5cceb29db85341e2044e6cfbe313e79253f65b251e3759855eb404",
-          manifest: "0bfd11803a46fc2d36e660a4e23d4d3984ef5e2cd4c17b47bf975c63e2b01c23",
+          archive: "239b399bc751190ba1b9d787ae54db1519cbe8342f71590ca3822983a1d065fa",
+          manifest: "bba69e0c3a4f5235b2ce5025163b2904770c127d8475619696c15b15761d8402",
         },
         "linux-arm64": {
-          archive: "64a896c02f0494efef739c020eae0b0f030b278505a13246a5925696c473a97c",
-          manifest: "b17c9264963bc53737edbaf15c3acc5d5ffd68eef4b6460db1aa2e39814298fa",
+          archive: "cee5a73d91fd9255aa4b5c07b19efabd79a1ffbe0cdada97ecc3f164d6a950d7",
+          manifest: "3c3c947a6af4623c993c6d59b0940cd39a87e2dfb9552e9de59c7be21ce77970",
         },
       },
     },
