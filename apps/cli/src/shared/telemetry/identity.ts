@@ -1,7 +1,7 @@
 import { Clock, Effect, Option } from "effect";
 import { SecureRandom } from "effect/crypto";
 import { readTelemetryConfig, writeTelemetryConfig } from "./consent.ts";
-import type { TelemetryConfig } from "./types.ts";
+import type { ConsentState, TelemetryConfig } from "./types.ts";
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -55,6 +55,16 @@ export function isEphemeralIdentityRuntime(runtime: {
   readonly isTty: boolean;
 }): boolean {
   return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
+}
+
+/** False on the run that prints the first-run notice: sending starts with the next one. */
+export function telemetrySendsThisRun(runtime: {
+  readonly consent: ConsentState;
+  readonly isFirstRun: boolean;
+  readonly isTty: boolean;
+}): boolean {
+  const noticeShownThisRun = runtime.isFirstRun && runtime.isTty;
+  return runtime.consent === "granted" && !noticeShownThisRun;
 }
 
 /**

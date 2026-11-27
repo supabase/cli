@@ -293,7 +293,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       if (linkMode === "stack") {
         yield* identifyProjectGroups(analytics, {
           ref: projectRef,
-          name: created.name,
           organization_id: created.organizationId,
           organization_slug: created.organizationSlug,
         });

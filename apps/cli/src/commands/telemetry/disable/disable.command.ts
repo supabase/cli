@@ -15,10 +15,12 @@ export const telemetryDisableCommand = Command.make("disable", config).pipe(
   Command.withShortDescription("Disable telemetry"),
   withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
-    // `cli_command_executed` fires based on the consent value read at layer-construction
-    // time, before this handler mutates it — so `disable` still fires when telemetry was
-    // enabled going into the call, and stays silent when it was already disabled.
-    telemetryDisable(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
+    // Consent is read at layer construction, before this handler writes the opt-out, so the
+    // command event has to be switched off here or the opt-out itself would be reported.
+    telemetryDisable(flags).pipe(
+      withCommandTelemetry({ flags, analytics: false }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "disable"])),
   withTargetPolicy({

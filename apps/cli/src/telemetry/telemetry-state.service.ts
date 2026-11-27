@@ -5,9 +5,10 @@ interface TelemetryStateShape {
   /** Persists the telemetry state to disk. Best-effort: any filesystem error is swallowed. */
   readonly flush: Effect.Effect<void>;
   /**
-   * Aliases the device id to the resolved gotrue id and persists it as the telemetry
+   * Aliases the device id to the resolved gotrue id and stamps it as the in-memory telemetry
    * `distinct_id`. The alias is sent through the Analytics layer (which gates delivery on
-   * consent), and `distinct_id` is always written to `telemetry.json`, replacing any stale value.
+   * consent). Persistent runtimes also write `distinct_id` to `telemetry.json`, replacing any
+   * stale value; while the user is opted out, only an existing file is updated.
    * Best-effort: filesystem/analytics errors are swallowed.
    */
   readonly stitchLogin: (distinctId: string) => Effect.Effect<void>;

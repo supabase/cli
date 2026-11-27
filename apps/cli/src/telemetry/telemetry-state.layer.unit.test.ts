@@ -7,6 +7,7 @@ import { mockAnalytics } from "../../tests/helpers/mocks.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../shared/telemetry/identity.ts";
+import type { ConsentState } from "../shared/telemetry/types.ts";
 import {
   telemetryStateLayer,
   loadOrCreateTelemetryState,
@@ -22,11 +23,13 @@ const tempHome = useTempWorkdir("supabase-telemetry-");
 const withTempHome = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   withEnvVar("SUPABASE_HOME", tempHome.current, body);
 
-function makeRuntime(opts: { isCi?: boolean; isFirstRun?: boolean; isTty?: boolean } = {}) {
+function makeRuntime(
+  opts: { consent?: ConsentState; isCi?: boolean; isFirstRun?: boolean; isTty?: boolean } = {},
+) {
   const identity = makeTelemetryIdentity(undefined);
   const layer = Layer.succeed(TelemetryRuntime, {
-    configDir: "/tmp",
-    consent: "granted",
+    configDir: tempHome.current,
+    consent: opts.consent ?? "granted",
     deviceId: "device-xyz",
     sessionId: "session-1",
     identity,
@@ -188,19 +191,66 @@ describe("telemetryStateLayer.stitchLogin / clearDistinctId", () => {
   );
 });
 
+describe("telemetryStateLayer while consent is denied", () => {
+  it.effect("creates no state file from flush, login or logout", () => {
+    const analytics = mockAnalytics();
+    const runtime = makeRuntime({ consent: "denied" });
+    return Effect.gen(function* () {
+      const state = yield* TelemetryState;
+      yield* state.flush;
+      yield* state.stitchLogin("gotrue-1");
+      yield* state.clearDistinctId;
+      yield* state.resetIdentity;
+      expect(yield* telemetryFileExists).toBe(false);
+    }).pipe(Effect.provide(makeLayer(analytics, runtime)), withTempHome);
+  });
+
+  it.effect("resetIdentity still forgets the user in an existing opted-out file", () => {
+    const analytics = mockAnalytics();
+    const runtime = makeRuntime({ consent: "denied" });
+    return Effect.gen(function* () {
+      yield* seedJson({
+        enabled: false,
+        device_id: "device-xyz",
+        session_id: "session-1",
+        session_last_active: yield* nowIso,
+        distinct_id: "user-a",
+      });
+      const state = yield* TelemetryState;
+      yield* state.resetIdentity;
+      const next = yield* readState;
+      expect(next.enabled).toBe(false);
+      expect(next.distinct_id).toBeUndefined();
+      expect(next.device_id).not.toBe("device-xyz");
+    }).pipe(Effect.provide(makeLayer(analytics, runtime)), withTempHome);
+  });
+});
+
 describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current).pipe(Effect.provide(platformLayer), withTempHome);
   const runLoadAt = (now: DateTime.Utc) =>
-    loadOrCreateTelemetryState({ now }).pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current, { now }).pipe(
+      Effect.provide(platformLayer),
+      withTempHome,
+    );
+
+  it.effect("an empty file holds no opt-out and is recreated enabled", () =>
+    Effect.gen(function* () {
+      yield* writeTelemetryFile("");
+      const state = yield* runLoad();
+      expect(state.enabled).toBe(true);
+      expect(state.device_id).toMatch(UUID_RE);
+    }),
+  );
 
   it.effect("a bool-only file missing device_id/session_id is wholly regenerated", () =>
     Effect.gen(function* () {
       yield* seedJson({ enabled: false });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).toMatch(UUID_RE);
       expect(state.session_id).toMatch(UUID_RE);
     }),
@@ -216,7 +266,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         schema_version: 2,
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).toMatch(UUID_RE);
       expect(state.session_id).not.toBe("session-1");
     }),
@@ -265,7 +315,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         session_last_active: yield* nowIso,
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -296,7 +346,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         session_last_active: yield* nowIso,
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -313,7 +363,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
           session_last_active: "2025-02-29T00:00:00Z",
         });
         const state = yield* runLoad();
-        expect(state.enabled).toBe(true);
+        expect(state.enabled).toBe(false);
         expect(state.device_id).toMatch(UUID_RE);
         expect(state.session_id).toMatch(UUID_RE);
       }),
@@ -342,7 +392,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         session_last_active: "2025-01-01T24:00:00Z",
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
     }),
   );
@@ -386,7 +436,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         session_last_active: "2025-01-01T00:00:00,Z",
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
     }),
   );
@@ -484,7 +534,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         session_last_active: 1e100,
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -527,7 +577,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1e3}',
       );
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -539,7 +589,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":1750000000000.0}',
       );
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -553,7 +603,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         '{"consent":"denied","device_id":"d","session_id":"s","session_last_active":9223372036854775808}',
       );
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -581,7 +631,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         '{"enabled":false,"device_id":"d","session_id":"s","session_last_active":"2026-01-01T00:00:00Z","schema_version":1.0}',
       );
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -597,7 +647,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
         schema_version: 1e100,
       });
       const state = yield* runLoad();
-      expect(state.enabled).toBe(true);
+      expect(state.enabled).toBe(false);
       expect(state.device_id).not.toBe("d");
       expect(state.session_id).not.toBe("s");
     }),
@@ -610,7 +660,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
           '{"consent":false,"consent":"denied","session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
         );
         const state = yield* runLoad();
-        expect(state.enabled).toBe(true);
+        expect(state.enabled).toBe(false);
         expect(state.device_id).not.toBe("d");
       }),
     );
@@ -621,7 +671,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
           '{"consent":"denied","consent":false,"session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
         );
         const state = yield* runLoad();
-        expect(state.enabled).toBe(true);
+        expect(state.enabled).toBe(false);
         expect(state.device_id).not.toBe("d");
       }),
     );
@@ -670,7 +720,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
           `{"enabled":false,"device_id":0,"device_id":"d","session_id":"s","session_last_active":"${yield* nowIso}"}`,
         );
         const state = yield* runLoad();
-        expect(state.enabled).toBe(true);
+        expect(state.enabled).toBe(false);
         expect(state.device_id).not.toBe("d");
       }),
     );
@@ -735,7 +785,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
           '{"\\u0063onsent":false,"consent":"denied","session_last_active":1750000000000,"device_id":"d","session_id":"s"}',
         );
         const state = yield* runLoad();
-        expect(state.enabled).toBe(true);
+        expect(state.enabled).toBe(false);
         expect(state.device_id).not.toBe("d");
       }),
     );
@@ -744,7 +794,7 @@ describe("loadOrCreateTelemetryState (all-or-nothing recovery)", () => {
 
 describe("exact int64 schema_version round-trip", () => {
   const runLoad = () =>
-    loadOrCreateTelemetryState().pipe(Effect.provide(platformLayer), withTempHome);
+    loadOrCreateTelemetryState(tempHome.current).pipe(Effect.provide(platformLayer), withTempHome);
 
   // File contents are hand-built strings: `JSON.stringify(9007199254740993)`
   // would round inside the test itself, hiding exactly the bug under test.
@@ -778,7 +828,10 @@ describe("exact int64 schema_version round-trip", () => {
   it.effect("setTelemetryEnabled's rewrite also preserves the exact token", () =>
     Effect.gen(function* () {
       yield* writeTelemetryFile(yield* fileWith("9007199254740993"));
-      yield* setTelemetryEnabled(true).pipe(Effect.provide(platformLayer), withTempHome);
+      yield* setTelemetryEnabled(tempHome.current, true).pipe(
+        Effect.provide(platformLayer),
+        withTempHome,
+      );
       const written = yield* readTelemetryFile;
       expect(written).toContain('"enabled":true');
       expect(written).toContain('"schema_version":9007199254740993');

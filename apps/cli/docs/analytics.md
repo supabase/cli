@@ -165,9 +165,10 @@ Identity is resolved from `SUPABASE_HOME/telemetry.json`:
 
 At login time, if the auth response includes a `user_id`, the CLI can:
 
-- `alias(device_id -> user_id)`
-- `identify(user_id, ...)`
+- `alias(device_id -> user_id)`, for the first identity a device sees
 - persist `distinct_id`
+
+The CLI does not call `identify()`.
 
 That stitching is intentionally best-effort. The current token format is opaque, so the CLI does
 not derive the user ID locally from the stored token.
@@ -179,14 +180,15 @@ When a project is linked, the CLI can also attach PostHog groups for:
 - `organization`
 - `project`
 
-The linked project snapshot cached in repo-local `.supabase/project.json` includes organization and
-project metadata used for this purpose, while the user-level telemetry state remains in
-`SUPABASE_HOME/telemetry.json`.
+The linked project snapshot cached in `supabase/.temp/linked-project.json` includes organization
+and project metadata used for this purpose (stack-mode projects read `supabase/.link.json`
+instead), while the user-level telemetry state remains in `SUPABASE_HOME/telemetry.json`.
 
 During `supabase link`, the CLI:
 
 - refreshes linked project metadata
-- calls `groupIdentify()` for organization and project
+- calls `groupIdentify()` for organization and project, with the organization slug as the only
+  group property. The project name is user-chosen and is never sent.
 - emits `cli_project_linked`
 - uses scoped analytics context so later captures in the same invocation can reuse those groups
 
@@ -212,6 +214,12 @@ The telemetry commands:
 - `supabase telemetry status`
 
 read and update that same `telemetry.json` file.
+
+A `telemetry.json` that cannot be read or decoded is treated as an opt-out, and
+`supabase telemetry disable` sends no event of its own.
+
+On the first interactive run the CLI prints the telemetry notice and sends nothing in that
+invocation, so `is_first_run` is only true on events from non-interactive first runs.
 
 ## Comparison: Vercel CLI
 
