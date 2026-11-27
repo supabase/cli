@@ -259,7 +259,9 @@ Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on 
 `executeRaw` caller that builds its own status error attaches it with `planGateFromResponse`. The
 json and stream-json error object carries it, the text layer's `fail` prints the upgrade hint from
 it, and `withCommandTelemetry` fires `cli_upgrade_suggested` from it, so a handler that rebuilds a
-mapped status error must forward it.
+mapped status error must forward it. Where `upgrade_url` points names the fix: a project add-ons
+page is an add-on, anything else is a plan change. The hint wording and the event's `fix_kind`
+follow it, and an add-on denial's events join the project group of the ref in that URL.
 
 ## Targets and hosted consent
 

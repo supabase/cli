@@ -8,6 +8,7 @@ export const EventUpgradeSuggested = "cli_upgrade_suggested";
 
 export const PropFeatureKey = "feature_key";
 export const PropOrgSlug = "org_slug";
+export const PropFixKind = "fix_kind";
 
 // `link` also accepts a branch name/UUID in addition to a project ref; these two properties
 // distinguish a branch-name link from a plain ref link.

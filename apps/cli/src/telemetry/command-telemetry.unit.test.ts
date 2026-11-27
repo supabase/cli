@@ -1499,9 +1499,9 @@ describe("withCommandTelemetry", () => {
         upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
       },
     });
-    const runGated = () => {
+    const runGated = (failure = gatedFailure) => {
       const analytics = mockContextualAnalytics();
-      return Effect.fail(gatedFailure).pipe(
+      return Effect.fail(failure).pipe(
         withCommandTelemetry(),
         Effect.provide(
           Layer.mergeAll(
@@ -1528,10 +1528,37 @@ describe("withCommandTelemetry", () => {
             expect(captured[0]?.properties).toMatchObject({
               feature_key: "branching_limit",
               org_slug: "env-org",
+              fix_kind: "plan",
             });
             expect(captured[1]?.properties).toMatchObject({
               exit_code: 1,
               error_category: "plan_limit",
+            });
+          }),
+        ),
+      ),
+    );
+
+    it.live("records an add-on denial as an add-on fix on the project its upgrade URL names", () =>
+      runGated(
+        new BranchesCreateUnexpectedStatusError({
+          status: 400,
+          body: "{}",
+          message: "unexpected create branch status 400",
+          entitlement: {
+            feature: "custom_domain",
+            upgrade_url:
+              "https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/addons?panel=customDomain",
+          },
+        }),
+      ).pipe(
+        Effect.tap((captured) =>
+          Effect.sync(() => {
+            expect(captured[0]?.properties).toMatchObject({
+              feature_key: "custom_domain",
+              org_slug: "",
+              fix_kind: "addon",
+              groups: { project: "abcdefghijklmnopqrst" },
             });
           }),
         ),

@@ -14,9 +14,20 @@ export type PlanGateEntitlement = {
   readonly upgrade_url: string;
 };
 
-/** The text-mode stderr line that points the user at the billing page for a plan-gated feature. */
+/** What clears a plan-gated denial, read from the dashboard page its `upgrade_url` points at. */
+export type UpgradeFixKind = "plan" | "addon";
+
+export const fixKindFromUpgradeUrl = (upgradeUrl: string): UpgradeFixKind =>
+  upgradeUrl.includes("/settings/addons") ? "addon" : "plan";
+
+const UPGRADE_HINT_LEAD: Record<UpgradeFixKind, string> = {
+  plan: "Your organization's plan does not include this feature. Plans and add-ons:",
+  addon: "This feature needs a project add-on. Add-ons:",
+};
+
+/** The text-mode stderr line that points the user at the page that clears a plan-gated denial. */
 export const upgradeHint = (upgradeUrl: string): string =>
-  `Your organization's plan does not include this feature. Plans and add-ons: ${styleText("bold", upgradeUrl)}`;
+  `${UPGRADE_HINT_LEAD[fixKindFromUpgradeUrl(upgradeUrl)]} ${styleText("bold", upgradeUrl)}`;
 
 type NormalizedCliError = {
   readonly code: string;
