@@ -57,6 +57,7 @@ import {
   initializeStackDatabase,
   projectCatalogOverlay,
 } from "../../../../command-internal/stack-bootstrap.ts";
+import { checkBucketFileSizeLimits } from "../../../../command-internal/storage-bucket-limits.ts";
 import { stackStorageCredentialsFor } from "../../../../command-internal/stack-storage.ts";
 import {
   hasConfiguredBuckets,
@@ -232,6 +233,7 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
     path: Path.Path,
     selection: ReturnType<typeof lockedSelection>,
     frozen: boolean,
+    exclusions: ReadonlyArray<string>,
   ) {
     const config = yield* loadStackConfig(projectRoot, {
       selection,
@@ -242,6 +244,8 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
     const toml = yield* readDbConfig(fs, path, projectRoot);
     /* The pair is read and checked here, before a stack or owner exists. */
     const apiTls = yield* config.apiTls;
+    if (config.source.storage.enabled && !exclusions.includes("storage"))
+      yield* checkBucketFileSizeLimits({ config: config.source, document: config.document });
     return { config, keys, toml, apiTls };
   },
   Effect.mapError(
@@ -630,6 +634,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         path,
         lockedSelection({ frozen: flags.frozen, output }),
         flags.frozen,
+        exclusions,
       ),
     );
     if (target.id === undefined || !target.hostRunning) yield* startConfig;

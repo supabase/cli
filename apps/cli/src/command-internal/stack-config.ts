@@ -95,6 +95,8 @@ interface StackStartConfig {
     stackId: string,
   ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
   readonly source: CliConfig;
+  /** The raw (post-`env()`) config document, for keys the decoded config cannot show as set. */
+  readonly document: Record<string, unknown> | undefined;
   /** Reads the PEM pair the API listener serves HTTPS with, when `[api.tls]` is enabled. */
   readonly apiTls: Effect.Effect<
     { readonly cert: string; readonly key: string } | undefined,
@@ -866,6 +868,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         selection,
         creations: createCreations,
         source: validatedConfig,
+        document,
         apiTls,
         projectEnvValues,
         originAt,
