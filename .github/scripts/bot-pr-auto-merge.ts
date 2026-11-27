@@ -207,22 +207,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Reviewers other than the approver whose latest verdict is an approval. */
-function otherApprovers(reviews: readonly PrReview[]): string[] {
-  const latest = new Map<string, string>();
-  for (const review of reviews) {
-    const user = review.user?.toLowerCase();
-    if (
-      user &&
-      user !== APPROVER_LOGIN &&
-      ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state)
-    ) {
-      latest.set(user, review.state);
-    }
-  }
-  return [...latest].filter(([, state]) => state === "APPROVED").map(([user]) => user);
-}
-
 function hasHoldLabel(labels: readonly string[]): boolean {
   return labels.some((label) => label.toLowerCase() === DO_NOT_MERGE_LABEL);
 }
@@ -290,12 +274,11 @@ async function handlePr(
     const botApprovals = reviews.filter(
       (review) => review.user?.toLowerCase() === APPROVER_LOGIN && review.state === "APPROVED",
     );
-    // Only the sweep's own automation is withdrawn; without the review list, fail closed.
-    const withdrawMerge = reviewsError !== undefined || otherApprovers(reviews).length === 0;
-    if (withdrawMerge && state.inMergeQueue && state.queuedByBot) {
+    // Only automation the sweep's own app created is withdrawn, even when the review list failed.
+    if (state.inMergeQueue && state.queuedByBot) {
       await attempt("dequeue", () => io.dequeue(live));
     }
-    if (withdrawMerge && state.autoMergeEnabled && state.autoMergeByBot) {
+    if (state.autoMergeEnabled && state.autoMergeByBot) {
       await attempt("disable auto-merge", () => io.disableAutoMerge(live));
     }
     if (reviewsError) {
@@ -331,7 +314,7 @@ async function handlePr(
     throw reviewsError;
   }
 
-  const recheck = async (): Promise<BotPr | undefined> => {
+  const recheck = async (): Promise<{ pr: BotPr; state: BotPrState } | undefined> => {
     const fresh = await io.refresh(pr);
     if (
       !fresh.open ||
@@ -344,7 +327,7 @@ async function handlePr(
     }
     const freshPr = toLive(pr, fresh);
     assertApprovable(freshPr);
-    return freshPr;
+    return { pr: freshPr, state: fresh };
   };
   const changed = "pending (changed during sweep)";
 
@@ -357,14 +340,14 @@ async function handlePr(
     if (!fresh) {
       return changed;
     }
-    await act("approve", () => io.approve(fresh));
+    await act("approve", () => io.approve(fresh.pr));
   }
-  if (!state.inMergeQueue && !state.autoMergeEnabled) {
-    const fresh = await recheck();
-    if (!fresh) {
-      return changed;
-    }
-    await act("queue", () => io.queue(fresh));
+  const beforeQueue = await recheck();
+  if (!beforeQueue) {
+    return changed;
+  }
+  if (!beforeQueue.state.inMergeQueue && !beforeQueue.state.autoMergeEnabled) {
+    await act("queue", () => io.queue(beforeQueue.pr));
   }
   return "trusted";
 }
@@ -401,6 +384,10 @@ export async function sweepBotPrs(
   return entries;
 }
 
+function cell(text: string): string {
+  return text.replace(/\r?\n/g, " ").replaceAll("|", "\\|");
+}
+
 export function renderSummary(entries: readonly BotPrSweepEntry[], dryRun: boolean): string {
   const lines = [`## Bot PR auto-merge${dryRun ? " (dry run)" : ""}`, ""];
   if (entries.length === 0) {
@@ -408,9 +395,11 @@ export function renderSummary(entries: readonly BotPrSweepEntry[], dryRun: boole
   }
   lines.push("| PR | Branch | Verdict | Actions |", "| --- | --- | --- | --- |");
   for (const entry of entries) {
-    const outcome = entry.error ? `error: ${entry.error}` : entry.verdict;
+    const outcome = entry.error
+      ? `${entry.guardViolation ? "guard violation" : "error"}: ${entry.error}`
+      : entry.verdict;
     lines.push(
-      `| #${entry.number} | \`${entry.headRef}\` | ${outcome.replaceAll("|", "\\|")} | ${entry.actions.join(", ") || "none"} |`,
+      `| #${entry.number} | \`${cell(entry.headRef)}\` | ${cell(outcome)} | ${entry.actions.join(", ") || "none"} |`,
     );
   }
   return lines.join("\n");
