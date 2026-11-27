@@ -951,3 +951,83 @@ describe("runFastForward sync", () => {
     expect(comments).toEqual([]);
   });
 });
+
+describe("runFastForward with the auto approver", () => {
+  const approvedBy = (login: string) => async () => [{ user: { login }, state: "APPROVED" }];
+
+  test("refuses to fast-forward main on a deploy approved by the auto approver", async () => {
+    const { repo, head, io, comments } = deployScenario();
+    const mainBefore = repo.remoteTip("main");
+
+    const outcome = await runFastForward(
+      { ...io, listReviews: approvedBy(AUTO_APPROVER_LOGIN) },
+      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+    );
+
+    expect(outcome).toEqual({
+      status: "refused",
+      reason: `${AUTO_APPROVER_LOGIN} cannot approve a deploy promotion`,
+    });
+    expect(repo.remoteTip("main")).toBe(mainBefore);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("A maintainer must approve it");
+  });
+
+  test("fast-forwards main on a deploy approved by a maintainer", async () => {
+    const { repo, head, io } = deployScenario();
+
+    const outcome = await runFastForward(
+      { ...io, listReviews: approvedBy("colum") },
+      { reviewCommitId: head, approver: "colum" },
+    );
+
+    expect(outcome).toEqual({ status: "fast-forwarded", sha: head });
+    expect(repo.remoteTip("main")).toBe(head);
+  });
+
+  test("refuses to fast-forward develop on a cut approved by the auto approver", async () => {
+    const repo = setup();
+    tagMain(repo, "v1.0.0");
+    git(repo.seed, "switch", "-c", "develop");
+    git(repo.seed, "push", "origin", "develop");
+    git(repo.seed, "switch", "-c", "next");
+    const head = repo.commit(repo.seed, "v3.txt", "v3\n", "feat(cli)!: v3");
+    git(repo.seed, "push", "origin", "next");
+    publish(repo, 11);
+    const developBefore = repo.remoteTip("develop");
+    const pullRequest: PullRequest = {
+      number: 11,
+      state: "open",
+      draft: false,
+      user: maintainer,
+      head: { sha: head, ref: "next" },
+      base: { ref: "develop" },
+      labels: [],
+    };
+    const { io, comments } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
+
+    const outcome = await runFastForward(
+      { ...io, listReviews: approvedBy(AUTO_APPROVER_LOGIN) },
+      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+    );
+
+    expect(outcome).toEqual({
+      status: "refused",
+      reason: `${AUTO_APPROVER_LOGIN} cannot approve a cut promotion`,
+    });
+    expect(repo.remoteTip("develop")).toBe(developBefore);
+    expect(comments).toHaveLength(1);
+  });
+
+  test("fast-forwards a sync pull request approved by the auto approver", async () => {
+    const { repo, head, io } = resolvedSyncScenario();
+
+    const outcome = await runFastForward(
+      { ...io, listReviews: approvedBy(AUTO_APPROVER_LOGIN) },
+      { reviewCommitId: head, approver: AUTO_APPROVER_LOGIN },
+    );
+
+    expect(outcome.status).toBe("fast-forwarded");
+    expect(repo.remoteTip("develop")).toBe(head);
+  });
+});
