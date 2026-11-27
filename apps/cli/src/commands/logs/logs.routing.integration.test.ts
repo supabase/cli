@@ -29,10 +29,10 @@ it.effect.each([
       yield* fs.makeDirectory(`${home}/supabase`);
       yield* fs.writeFileString(
         `${home}/supabase/config.toml`,
-        `[experimental]\ncompute = ${configured}\n`,
+        `[experimental.compute]\nenabled = ${configured}\n`,
       );
       const env: Readonly<Record<string, string>> =
-        override === undefined ? {} : { SUPABASE_EXPERIMENTAL_COMPUTE: override };
+        override === undefined ? {} : { SUPABASE_EXPERIMENTAL_COMPUTE_ENABLED: override };
       const args = [
         "logs",
         "sources",

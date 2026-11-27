@@ -1297,7 +1297,7 @@ describe("tryComplete", () => {
           routingFailure: Cause.fail(
             new StackRoutingError({
               message:
-                'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+                'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.',
             }),
           ),
         });
@@ -1305,10 +1305,10 @@ describe("tryComplete", () => {
         expect(stdoutWrites).toEqual([]);
         expect(stderrWrites).toHaveLength(1);
         expect(stderrWrites[0]).toContain(
-          'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+          'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.',
         );
         expect(stderrWrites[0]).toContain(
-          "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
+          "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 to enable stack commands, or 0 to use legacy start/stop/status.",
         );
         expect(exits).toEqual([1]);
       }),

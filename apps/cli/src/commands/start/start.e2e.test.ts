@@ -16,8 +16,8 @@ const CLEANUP_TIMEOUT_MS = 60_000;
 
 const projectConfig = (siteUrl: string) => `project_id = "start-config-restart-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [auth]
 site_url = "${siteUrl}"
@@ -91,12 +91,12 @@ describe("supabase start", () => {
           const configPath = path.join(project.dir, "supabase", "config.toml");
           yield* fs.makeDirectory(path.dirname(configPath), { recursive: true });
           yield* fs.writeFileString(configPath, projectConfig("http://127.0.0.1:3001"));
-          /* Clears an ambient backend switch so `[experimental] stack` in the project routes `start`. */
+          /* Clears an ambient backend switch so `[experimental.stack] enabled` in the project routes `start`. */
           const cli = (args: Array<string>, exitTimeoutMs = CLEANUP_TIMEOUT_MS) =>
             runSupabaseEffect(args, {
               cwd: project.dir,
               home: home.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: undefined },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: undefined },
               exitTimeoutMs,
             });
           yield* Effect.addFinalizer(() =>

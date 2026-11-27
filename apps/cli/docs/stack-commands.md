@@ -2,7 +2,7 @@
 
 `supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
 command interface may change, and it is excluded from the CLI compatibility promise. It is
-available when the `experimental.stack` feature flag is enabled and supports Docker, Podman, and
+available when the `experimental.stack.enabled` feature flag is enabled and supports Docker, Podman, and
 native runtimes.
 
 Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
@@ -202,17 +202,20 @@ claimed by every stack of the project.
 
 The top-level `supabase start`, `supabase stop`, and `supabase status` commands use the legacy
 backend by default. To make them aliases of the corresponding `supabase stack` commands, set
-`experimental.stack` to `true` in `supabase/config.jsonc`:
+`experimental.stack.enabled` to `true` in `supabase/config.jsonc`:
 
 ```jsonc
 {
   "experimental": {
-    "stack": true,
+    "stack": { "enabled": true },
   },
 }
 ```
 
-In a project that uses `supabase/config.toml`, add `stack = true` under `[experimental]` instead.
+In a project that uses `supabase/config.toml`, set `enabled = true` under `[experimental.stack]`
+instead. The older forms, `SUPABASE_EXPERIMENTAL_STACK=1|0` and `stack = true` directly under
+`[experimental]`, still work but are deprecated and print a warning on stderr. The new form wins
+when both are set.
 
 The selected backend determines accepted flags, help, and completion before the command is parsed.
 Set the flag to `false`, or remove it, to restore the legacy top-level commands. The explicit
@@ -221,13 +224,13 @@ the same way as `supabase start` and `supabase stop`.
 
 Root help and root completion resolve the same feature flag from the environment or project
 configuration. Help and completion for `start`, `status`, and `stop` resolve the same backend as the
-command itself. If the project configuration cannot be read or parsed, or if `experimental.stack`
+command itself. If the project configuration cannot be read or parsed, or if `experimental.stack.enabled`
 has an invalid value, routing falls back to the legacy backend and the stack namespace remains
-unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
+unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK_ENABLED` value is still an error.
 
-For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
-`SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
-precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
+For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1` to select the new backend or
+`SUPABASE_EXPERIMENTAL_STACK_ENABLED=0` to select the legacy backend. This environment variable takes
+precedence over `experimental.stack.enabled`; an unset or empty value falls back to the file setting.
 Non-boolean values are rejected, including by `supabase link`, `supabase unlink` and `supabase
 projects delete`, which read or write the project link. The override is applied before reading the
 project configuration.
@@ -245,7 +248,7 @@ pins and slim-image overrides do not apply in stack mode. Linked versions remain
 a mismatch warning recommends `supabase link`, which updates services set to `linked` (the
 default) in the lock, while services pinned in `[local.services]` keep their version.
 
-`SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `"stack": true` under `experimental` in the new
+`SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 supabase init` writes `"enabled": true` under `experimental.stack` in the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.
 Without the environment variable, `init` still writes the established template with those ports
 and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
@@ -287,7 +290,7 @@ values in these files are skipped with a warning because the runtime supplies th
 `--output-format stream-json`, readiness emits a result containing the instance ID and URL,
 followed by live log events.
 
-`storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
+`storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset`) also consult `experimental.stack.enabled`, with the same `SUPABASE_EXPERIMENTAL_STACK_ENABLED`
 env-precedence rule as `start`/`stop`/`status`. See
 [Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--remote`
 targeting for these commands is unaffected by the flag either way.
@@ -477,7 +480,7 @@ with `destroy`.
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and
 starts the same stack identity, preserving its data. Normal startup may still download missing
 artifacts using its current preparation policy. Select a stack with `--stack <name or id>`. The
-restart handler does not reload project configuration. Set `SUPABASE_EXPERIMENTAL_STACK=1` when
+restart handler does not reload project configuration. Set `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1` when
 restarting by ID outside the project or with invalid project configuration, so feature routing does
 not depend on that configuration. Start selection and activation flags such as `--exclude` and
 `--eager` remain in the saved stack configuration; `--preparation` applies only to that invocation.
@@ -508,7 +511,7 @@ them. A directory on an unmounted drive counts as missing, so check with `--dry-
 
 ## Storage and bucket seeding
 
-The `experimental.stack` flag (with the usual `SUPABASE_EXPERIMENTAL_STACK=1|0` env
+The `experimental.stack.enabled` flag (with the usual `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1|0` env
 precedence) routes several command families at once: the top-level `start`/`stop`/`status`
 aliases, the `stack` namespace itself, `db`/`migration`/`test`'s local targets (above), and
 now `storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including the bucket seeding step inside `db

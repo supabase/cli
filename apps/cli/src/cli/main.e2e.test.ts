@@ -11,7 +11,7 @@ describe("CLI feature routing", () => {
             cwd: project.dir,
             home: home.dir,
             env: {
-              SUPABASE_EXPERIMENTAL_STACK: "yes",
+              SUPABASE_EXPERIMENTAL_STACK_ENABLED: "yes",
               SUPABASE_WORKDIR: undefined,
             },
           });
@@ -19,7 +19,7 @@ describe("CLI feature routing", () => {
           expect(result.exitCode).toBe(1);
           expect(result.stdout).toBe("");
           expect(result.stderr).toContain(
-            'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+            'Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="yes" (sets experimental.stack.enabled): expected true or false.',
           );
         }),
       ),
@@ -33,10 +33,10 @@ describe("CLI feature routing", () => {
           const options = {
             cwd: project.dir,
             home: home.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: undefined, SUPABASE_WORKDIR: undefined },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: undefined, SUPABASE_WORKDIR: undefined },
           };
           const hint =
-            "Hint: --runtime needs the stack backend. Set SUPABASE_EXPERIMENTAL_STACK=1, or set stack = true under [experimental] in your project config and leave SUPABASE_EXPERIMENTAL_STACK unset.";
+            "Hint: --runtime needs the stack backend. Set SUPABASE_EXPERIMENTAL_STACK_ENABLED=1, or set enabled = true under [experimental.stack] in your project config and leave SUPABASE_EXPERIMENTAL_STACK_ENABLED unset.";
 
           const text = yield* runSupabaseEffect(["start", "--runtime", "native"], options);
           expect(text.exitCode).toBe(1);

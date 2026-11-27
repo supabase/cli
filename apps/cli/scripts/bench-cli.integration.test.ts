@@ -51,7 +51,7 @@ fi
 // `slow`, and reports one container call per launch when traced.
 const LOGGING_CLI = `#!/bin/sh
 LOG="$(dirname "$0")/calls.log"
-echo "$(basename "$0") $* stack=\${SUPABASE_EXPERIMENTAL_STACK:-} dnt=\${DO_NOT_TRACK:-} tel=\${SUPABASE_TELEMETRY_DISABLED:-} home=\${SUPABASE_HOME:-} cwd=$PWD" >> "$LOG"
+echo "$(basename "$0") $* stack=\${SUPABASE_EXPERIMENTAL_STACK_ENABLED:-} dnt=\${DO_NOT_TRACK:-} tel=\${SUPABASE_TELEMETRY_DISABLED:-} home=\${SUPABASE_HOME:-} cwd=$PWD" >> "$LOG"
 case "$1" in
   slow) exec /bin/sleep 30 ;;
   fail) exit 3 ;;

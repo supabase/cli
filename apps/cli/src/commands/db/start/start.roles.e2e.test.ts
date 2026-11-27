@@ -32,8 +32,8 @@ describe("supabase db start (e2e, role alignment)", () => {
             configPath,
             `project_id = "db-start-roles-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 [experimental.pgdelta]
 enabled = true
 [db]
@@ -66,7 +66,7 @@ enabled = false
             runSupabaseEffect(["stack", "destroy", "--yes"], {
               cwd: root,
               home,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs: AUX_TIMEOUT_MS,
             }).pipe(
               Effect.flatMap((result) =>

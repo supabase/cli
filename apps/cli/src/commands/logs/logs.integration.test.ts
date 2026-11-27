@@ -560,7 +560,7 @@ describe("unified logs", () => {
   it.effect("renders source summaries and full selected-service details in text", () =>
     Effect.gen(function* () {
       const repo = yield* makeComputeProject({
-        "supabase/config.toml": "[experimental]\ncompute = true\n",
+        "supabase/config.toml": "[experimental.compute]\nenabled = true\n",
       });
       const overview = yield* prepare({ workdir: repo.dir, format: "text", routes: {} });
       yield* logsSources({ ...tailFlags(), service: Option.none() }).pipe(

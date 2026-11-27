@@ -88,6 +88,14 @@ function leafExpectedType(ast: SchemaAST.AST): ExpectedType {
       }
       return "unknown";
     }
+    case "Objects": {
+      // A table that also decodes from a bare boolean (`experimental.stack = true`) takes a boolean.
+      if (node.encoding === undefined) return "unknown";
+      const encoded = SchemaAST.toEncoded(node);
+      return encoded._tag === "Union" && encoded.types.some((variant) => variant._tag === "Boolean")
+        ? "boolean"
+        : "unknown";
+    }
     default:
       return "unknown";
   }

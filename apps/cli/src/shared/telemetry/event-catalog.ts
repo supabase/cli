@@ -39,7 +39,7 @@ export const PropErrorFingerprint = "error_fingerprint";
 export const PropHasSuggestion = "has_suggestion";
 export const PropSuggestionType = "suggestion_type";
 export const PropSuggestedCommand = "suggested_command";
-// Set only for commands routed by `experimental.stack`.
+// Set only for commands routed by `experimental.stack.enabled`.
 export const PropStackBackend = "stack_backend";
 // Set only once a command resolves local database config.
 export const PropOrioleDb = "orioledb";
@@ -125,4 +125,7 @@ export const EnvSignalValueKeys: ReadonlyArray<string> = [
 ];
 
 // Env vars recorded as "true", "false" or "invalid", parsed the way config booleans are.
-export const EnvSignalBooleanKeys: ReadonlyArray<string> = ["SUPABASE_EXPERIMENTAL_STACK"];
+export const EnvSignalBooleanKeys: ReadonlyArray<string> = [
+  "SUPABASE_EXPERIMENTAL_STACK_ENABLED",
+  "SUPABASE_EXPERIMENTAL_STACK",
+];

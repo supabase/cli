@@ -616,7 +616,7 @@ function createRealEnvironment(): CleanupEnvironment {
       runSupabase(["stack", "destroy", "--yes"], {
         cwd: projectDir,
         home: homeDir,
-        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
         exitTimeoutMs: 15_000,
       }).then((result) => ({ exitCode: result.exitCode })),
     captureSnapshot: (projectDir, homeDir) => runHost(captureSnapshot(projectDir, homeDir)),

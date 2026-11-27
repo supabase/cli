@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaTransformation } from "effect";
 import { secret } from "./lib/env.ts";
 
 const tags = ["experimental"];
@@ -31,19 +31,37 @@ const inspectRule = Schema.Struct({
   ),
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
+/**
+ * A feature gate written as `[experimental.<feature>] enabled = <bool>`. The bare boolean form
+ * still decodes, to the same `{ enabled }` table.
+ */
+const featureGate = (enabledDescription: string) => {
+  const table = Schema.Struct({
+    enabled: Schema.optionalKey(Schema.Boolean.annotate({ description: enabledDescription, tags })),
+  });
+  return Schema.Union([
+    Schema.Boolean.annotate({
+      description: "Deprecated: set `enabled` in the table form instead.",
+      tags,
+    }),
+    table,
+  ]).pipe(
+    Schema.decodeTo(
+      table,
+      SchemaTransformation.transform<typeof table.Encoded, boolean | typeof table.Type>({
+        decode: (value) => (typeof value === "boolean" ? { enabled: value } : value),
+        encode: (value) => value,
+      }),
+    ),
+  );
+};
+
 export const experimental = Schema.Struct({
-  compute: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description: "Enable the experimental compute command family.",
-      tags,
-    }),
-  ),
+  compute: Schema.optionalKey(featureGate("Enable the experimental compute command family.")),
   stack: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description:
-        "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families.",
-      tags,
-    }),
+    featureGate(
+      "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families.",
+    ),
   ),
   orioledb_version: Schema.optionalKey(
     Schema.Literal("").annotate({

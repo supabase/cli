@@ -97,8 +97,8 @@ const StartResultSchema = Schema.Struct({ id: Schema.String });
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [api]
 enabled = true
@@ -134,7 +134,7 @@ const inspectStackState = (home: string, stackId: string) => {
       ["stack", "status", "--stack", stackId, "--output-format", "json"],
       {
         home,
-        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
       },
     );
@@ -153,7 +153,7 @@ const destroyStack = (home: string, stackId: string) =>
   Effect.flatMap(
     runSupabaseEffect(["stack", "destroy", "--stack", stackId, "--yes"], {
       home,
-      env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+      env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
       exitTimeoutMs: CLEANUP_TIMEOUT_MS,
     }),
     (result) =>
@@ -303,7 +303,7 @@ describe("stack start (compiled e2e)", () => {
             {
               cwd: projectRoot,
               home: homeDir.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs: CLEANUP_TIMEOUT_MS,
             },
           );
@@ -357,7 +357,7 @@ describe("stack start (compiled e2e)", () => {
                 {
                   cwd: projectRoot,
                   home: homeDir.dir,
-                  env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                  env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
                   exitTimeoutMs: CLEANUP_TIMEOUT_MS,
                 },
               ).pipe(
@@ -375,7 +375,7 @@ describe("stack start (compiled e2e)", () => {
               const restarted = yield* runSupabaseEffect(["stack", "restart", "--stack", idText], {
                 cwd: projectRoot,
                 home: homeDir.dir,
-                env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
                 exitTimeoutMs: START_TIMEOUT_MS,
               });
               expect(
@@ -427,7 +427,7 @@ describe("stack start (compiled e2e)", () => {
           const topLevelStatus = yield* runSupabaseEffect(["status", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           });
           expect(
@@ -471,7 +471,7 @@ describe("stack start (compiled e2e)", () => {
           const stop = yield* runSupabaseEffect(["stack", "stop", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           });
           expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
@@ -488,7 +488,7 @@ describe("stack start (compiled e2e)", () => {
           const stoppedStatus = yield* runSupabaseEffect(["stack", "status", "--stack", idText], {
             cwd: projectRoot,
             home: homeDir.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           });
           expect(
@@ -503,7 +503,7 @@ describe("stack start (compiled e2e)", () => {
             {
               cwd: projectRoot,
               home: homeDir.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs: CLEANUP_TIMEOUT_MS,
             },
           );
@@ -528,7 +528,7 @@ describe("stack start (compiled e2e)", () => {
           const stoppedOptions = {
             cwd: projectRoot,
             home: homeDir.dir,
-            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           };
           const stoppedHistory = yield* runSupabaseEffect(stoppedLogsArgs, stoppedOptions);

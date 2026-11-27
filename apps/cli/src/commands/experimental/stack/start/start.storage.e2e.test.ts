@@ -17,8 +17,8 @@ const nativeSupported =
 
 const projectConfig = `project_id = "stack-storage-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [api]
 enabled = true
@@ -105,7 +105,7 @@ describe("stack start Storage behind the API gateway (compiled e2e)", () => {
             runSupabaseEffect(args, {
               cwd: project.dir,
               home: home.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs,
             });
 

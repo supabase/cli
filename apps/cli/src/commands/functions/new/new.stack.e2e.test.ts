@@ -22,8 +22,8 @@ const SETUP_MARGIN_MS = 60_000;
 
 const minimalConfig = `project_id = "functions-new-stack-e2e"
 
-[experimental]
-stack = true
+[experimental.stack]
+enabled = true
 
 [api]
 enabled = true
@@ -98,7 +98,7 @@ describe("functions new (stack e2e)", () => {
               : runSupabaseEffect(["stack", "destroy", "--stack", stackId, "--yes"], {
                   cwd: projectDir,
                   home: home.dir,
-                  env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+                  env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
                   exitTimeoutMs: CLEANUP_TIMEOUT_MS,
                 }).pipe(
                   Effect.orDie,
@@ -117,7 +117,7 @@ describe("functions new (stack e2e)", () => {
             {
               cwd: projectDir,
               home: home.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs: START_TIMEOUT_MS,
             },
           );
@@ -134,7 +134,7 @@ describe("functions new (stack e2e)", () => {
             {
               cwd: projectDir,
               home: home.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+              env: { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
               exitTimeoutMs: CLEANUP_TIMEOUT_MS,
             },
           );

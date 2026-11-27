@@ -176,7 +176,7 @@ const requireSuccess = (
         }),
       );
 
-const stackEnv = { SUPABASE_EXPERIMENTAL_STACK: "1" };
+const stackEnv = { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" };
 
 function startStack(cliEffect: LiveFixtures["cliEffect"]) {
   return Effect.acquireRelease(

@@ -36,7 +36,7 @@ describe("CLI agent output", () => {
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
           ["functions", "serve", "--bogus"],
           {
-            env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: "1" },
+            env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
           },
         );
 
@@ -59,7 +59,7 @@ describe("CLI agent output", () => {
       const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
         ["functions", "serve", "--inspect-main"],
         {
-          env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: "0" },
+          env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK_ENABLED: "0" },
         },
       );
 
@@ -79,12 +79,12 @@ describe("CLI agent output", () => {
   it.live("defaults functions serve to stream-json for detected coding agents", () =>
     Effect.gen(function* () {
       const { exitCode, stdout, stderr } = yield* runSupabaseEffect(["functions", "serve"], {
-        env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: "1" },
+        env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
       });
       const explicitJson = yield* runSupabaseEffect(
         ["functions", "serve", "--output-format", "json"],
         {
-          env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: "1" },
+          env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK_ENABLED: "1" },
         },
       );
 

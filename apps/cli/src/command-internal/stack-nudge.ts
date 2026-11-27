@@ -13,7 +13,7 @@ const DOCS_URL =
 
 const startStackNudgeMessage = (configFile: ConfigFileRef): string =>
   `Try the new local stack: faster, lighter, and one project per worktree in parallel.
-To switch: run \`supabase stop\`, remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental", "stack", "true")}.
+To switch: run \`supabase stop\`, remove the fixed ports from ${configFile.path}, then set ${configSetting(configFile.format, "experimental.stack", "enabled", "true")}.
 Steps and limitations: ${DOCS_URL}`;
 
 interface InitStackNoteInput {
@@ -34,8 +34,8 @@ const initStackRerunCommand = (input: InitStackNoteInput): string => {
     .map((argument) => shellQuoteArgument(argument, input.platform))
     .join(" ");
   return input.platform === "windows"
-    ? `$env:SUPABASE_EXPERIMENTAL_STACK=1; supabase ${args}`
-    : `SUPABASE_EXPERIMENTAL_STACK=1 supabase ${args}`;
+    ? `$env:SUPABASE_EXPERIMENTAL_STACK_ENABLED=1; supabase ${args}`
+    : `SUPABASE_EXPERIMENTAL_STACK_ENABLED=1 supabase ${args}`;
 };
 
 const initStackNudgeMessage = (command: string): string =>
@@ -58,7 +58,7 @@ const INIT_AGENT_ASK_LINE =
 /** Who to nudge: a coding agent, a human at a terminal, or nobody. */
 const nudgeAudience = Effect.gen(function* () {
   const output = yield* Output;
-  // With the config side pinned to true, only an explicit shell `SUPABASE_EXPERIMENTAL_STACK=0`
+  // With the config side pinned to true, only an explicit shell `SUPABASE_EXPERIMENTAL_STACK_ENABLED=0`
   // resolves to false; that user opted out, so the nudge stays quiet.
   const optedOut = !(yield* resolveExperimentalFeature({
     feature: "stack",

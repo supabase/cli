@@ -68,8 +68,8 @@ export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
  * Schema leaves whose env names derive from other paths, `[0]` canonical; an empty list means no
  * env override. The preferred provider switch claims the name so it beats the legacy one.
  */
-export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<string>>> =
-  Object.fromEntries(
+export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  ...Object.fromEntries(
     PROVIDER_SIGNUP_ALIASES.flatMap(
       ({ path, preferred, legacy }): ReadonlyArray<readonly [string, ReadonlyArray<string>]> => {
         const preferredPath = [...path, preferred].join(".");
@@ -80,7 +80,11 @@ export const CLI_CONFIG_ENV_NAME_PATHS: Readonly<Record<string, ReadonlyArray<st
         ];
       },
     ),
-  );
+  ),
+  // The bare `SUPABASE_EXPERIMENTAL_<FEATURE>` names predate the `[experimental.<feature>]` tables.
+  "experimental.stack.enabled": ["experimental.stack.enabled", "experimental.stack"],
+  "experimental.compute.enabled": ["experimental.compute.enabled", "experimental.compute"],
+};
 
 /** Schema sections whose keys take no `SUPABASE_*` override, with the reason. */
 export const CLI_CONFIG_NO_ENV_SECTIONS: Readonly<Record<string, string>> = {
@@ -172,6 +176,10 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "an absent section means no exclusions, so an env exclusion list must apply while it is absent",
   "experimental.pgdelta":
     "enabled defaults to true without the section, so the env rollback must apply while it is absent",
+  "experimental.stack":
+    "the feature is switched on by env alone, so the env override must apply while the section is absent",
+  "experimental.compute":
+    "the feature is switched on by env alone, so the env override must apply while the section is absent",
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */

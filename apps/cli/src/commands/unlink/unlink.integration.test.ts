@@ -241,33 +241,39 @@ describe("unlink integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fails when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1, removing nothing", () => {
-    const { layer, credentials, workdir } = setup();
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const mode = yield* withConfigEnv(
-        { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
-        projectStateMode({ cwd: workdir }),
-      ).pipe(Effect.exit);
-      yield* seedProjectRef(workdir, VALID_REF);
-      yield* writeProjectLink(workdir, {
-        project: { ref: VALID_REF },
-        active_branch: { ref: VALID_REF },
-        fetchedAt: "2026-01-01T00:00:00.000Z",
-      });
+  it.effect(
+    "fails when SUPABASE_EXPERIMENTAL_STACK_ENABLED is not 0 or 1, removing nothing",
+    () => {
+      const { layer, credentials, workdir } = setup();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const mode = yield* withConfigEnv(
+          { SUPABASE_EXPERIMENTAL_STACK_ENABLED: "maybe" },
+          projectStateMode({ cwd: workdir }),
+        ).pipe(Effect.exit);
+        yield* seedProjectRef(workdir, VALID_REF);
+        yield* writeProjectLink(workdir, {
+          project: { ref: VALID_REF },
+          active_branch: { ref: VALID_REF },
+          fetchedAt: "2026-01-01T00:00:00.000Z",
+        });
 
-      const error = yield* unlink().pipe(Effect.provide(projectStateModeLayer(mode)), Effect.flip);
+        const error = yield* unlink().pipe(
+          Effect.provide(projectStateModeLayer(mode)),
+          Effect.flip,
+        );
 
-      expect(error).toMatchObject({
-        _tag: "ExperimentalFeatureFlagError",
-        message: expect.stringContaining(`Invalid SUPABASE_EXPERIMENTAL_STACK="maybe"`),
-      });
-      expect(yield* tempDirExists(workdir)).toBe(true);
-      expect(yield* fs.exists(path.join(workdir, "supabase", ".link.json"))).toBe(true);
-      expect(credentials.deletedRefs).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
+        expect(error).toMatchObject({
+          _tag: "ExperimentalFeatureFlagError",
+          message: expect.stringContaining(`Invalid SUPABASE_EXPERIMENTAL_STACK_ENABLED="maybe"`),
+        });
+        expect(yield* tempDirExists(workdir)).toBe(true);
+        expect(yield* fs.exists(path.join(workdir, "supabase", ".link.json"))).toBe(true);
+        expect(credentials.deletedRefs).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   describe("in stack mode", () => {
     const seedLinkDocument = (workdir: string, ref: string) =>
