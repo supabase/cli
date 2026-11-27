@@ -1,0 +1,118 @@
+---
+id: config-diff
+kind: command
+category: config
+title: config diff
+symbol: supabase config diff
+summary: Diff local config against a remote project
+usage: supabase config diff [flags]
+description: |-
+  Shows the configuration differences between the local `supabase/config.toml` and the effective configuration of a remote project or branch. Read-only: it never modifies the local file or any remote configuration.
+
+  Pass `--remote=<ref|branch>` to compare against a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target. `--project-ref` still works in v3 but is deprecated and removed in v4; use `--remote`. When the target ref matches a `[remotes.*]` block's `project_id`, that block's merged config is the local side of the comparison.
+
+  Only platform-managed properties are compared. Local-stack-only sections — `[studio]`, `[analytics]`, `[functions]`, `[edge_runtime]`, port numbers, image version pins, `[db.migrations]`, and similar — have no hosted counterpart and are never reported, whether or not your file declares them.
+
+  Each difference is classified as `update` (the file declares a value that differs remotely), `remote-only` (the remote differs while the file is silent — the shown local value is the schema default a `config push` would write), or `local-only` (the file declares a value the remote did not report). `(unset)` means the local side has no value at all; `(not returned)` means the response did not carry the property. Secret values are never compared — the platform only reports digests — and are listed in a masked-credentials note instead, as are declared properties that `config push` cannot communicate and any block the response omitted entirely.
+
+  Local values are shown as the configuration your file would produce once pushed, not its literal spelling: a duration written as `"1m"` renders as `"1m0s"`, and byte sizes are shown in the units you wrote.
+
+  With `--exit-code`, the command exits `2` when any difference is found, keeping exit `1` for errors — so scripts can distinguish drift from failure.
+
+  Machine-readable output is available through `--output-format json|stream-json` — a versioned payload (`schema_version`, `config_schema`, `target`, `scope`, `changes[]`, `masked[]`, `unmanaged[]`, `counts`) with per-change `path`s as segment arrays. `target` identifies the compared project: `kind` (`linked`), `project_ref`, `project_name` and `environment` (`production`, `branch` or `unverified`) when known, `parent_project_ref` for a branch, `branch` when it was named, and `local_scope` (`base` or `remotes.<name>`). The legacy global `-o`/`--output` flag is not supported by this command; use `--output-format json|stream-json` instead.
+parameters:
+  - name: --exit-code
+    location: flag
+    type: boolean
+    description: Exit with status 2 when any difference is found (errors keep exiting 1).
+    default: "false"
+  - name: --remote
+    location: flag
+    type: ref|branch
+    description: "Target another project: `--remote=<ref|branch>`. Defaults to the linked project."
+    default: "false"
+  - name: --agent
+    location: flag
+    type: "[ auto | yes | no ]"
+    description: "Override agent detection: yes, no, or auto"
+    default: auto
+    allowed_values:
+      - auto
+      - "yes"
+      - "no"
+  - name: --debug
+    location: flag
+    type: boolean
+    description: output debug logs to stderr
+    default: "false"
+  - name: --dns-resolver
+    location: flag
+    type: "[ native | https ]"
+    description: lookup domain names using the specified resolver
+    default: native
+    allowed_values:
+      - native
+      - https
+  - name: --experimental
+    location: flag
+    type: boolean
+    description: enable experimental features
+    default: "false"
+  - name: --help
+    location: flag
+    type: boolean
+    description: Show help information
+    short: -h
+    default: "false"
+  - name: --network-id
+    location: flag
+    type: string
+    description: use the specified docker network instead of a generated one
+    default: ""
+  - name: --output
+    location: flag
+    type: "[ env | pretty | json | toml | yaml ]"
+    description: output format of status variables
+    short: -o
+    default: pretty
+    allowed_values:
+      - env
+      - pretty
+      - json
+      - toml
+      - yaml
+  - name: --output-format
+    location: flag
+    type: "[ text | json | stream-json ]"
+    description: "Output format: text, json, or stream-json (NDJSON)"
+    default: text
+    allowed_values:
+      - text
+      - json
+      - stream-json
+  - name: --profile
+    location: flag
+    type: string
+    description: use a specific profile for connecting to Supabase API
+    default: supabase
+  - name: --workdir
+    location: flag
+    type: string
+    description: path to the directory containing your supabase/ folder; used exactly as given, with no ancestor directory search (defaults to searching upward from the current directory)
+    default: ""
+  - name: --yes
+    location: flag
+    type: boolean
+    description: answer yes to all prompts; hosted changes only accept this flag or SUPABASE_YES exported in your shell, never supabase/.env or another .env file
+    default: "false"
+inherits_flags: global-flags
+examples:
+  - id: example-1
+    title: Diff against the linked project
+    lang: sh
+    code: supabase config diff
+  - id: example-2
+    title: Diff against the 'staging' branch, exiting 2 on drift
+    lang: sh
+    code: supabase config diff --exit-code --remote=staging
+---
