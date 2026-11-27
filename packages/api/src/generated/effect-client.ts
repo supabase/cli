@@ -3732,6 +3732,38 @@ export const versionedEffectOperations = {
           options,
         );
       }),
+    projectsDatabaseCloneStatus: (
+      input: typeof operationDefinitions.v2ProjectsDatabaseCloneStatus.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ProjectsDatabaseCloneStatus.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ProjectsDatabaseCloneStatus">(
+          operationDefinitions.v2ProjectsDatabaseCloneStatus,
+          input,
+          options,
+        );
+      }),
+    projectsDatabaseCloneableBackups: (
+      input: typeof operationDefinitions.v2ProjectsDatabaseCloneableBackups.inputSchema.Type,
+      options?: SupabaseApiRequestOptions,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ProjectsDatabaseCloneableBackups.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ProjectsDatabaseCloneableBackups">(
+          operationDefinitions.v2ProjectsDatabaseCloneableBackups,
+          input,
+          options,
+        );
+      }),
     projectsRefWebhooksDeliveriesIdGet: (
       input: typeof operationDefinitions.v2ProjectsRefWebhooksDeliveriesIdGet.inputSchema.Type,
       options?: SupabaseApiRequestOptions,

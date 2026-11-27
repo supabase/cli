@@ -11159,6 +11159,16 @@
           "201": {
             "description": ""
           },
+          "400": {
+            "description": "The project does not have the PITR add-on, or the request cannot be fulfilled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanGateErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized"
           },
@@ -17297,6 +17307,192 @@
         "x-fga-permissions": [["workers_write"]],
         "x-oauth-scope": "edge_functions:write",
         "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/database/clone/cloneable-backups": {
+      "get": {
+        "operationId": "v2-projects-database-cloneable-backups",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloneableBackupsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to list cloneable backups candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the valid physical backups that can be used to clone into a new project",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
+        "x-fga-permissions": [["backups_read"]],
+        "x-oauth-scope": "database:read"
+      }
+    },
+    "/v2/projects/{ref}/database/clone/status": {
+      "get": {
+        "operationId": "v2-projects-database-clone-status",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloneStatusResponse_Output"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request for clone project status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to retrieve clone project status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve the current status of an existing cloning process",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["managed-postgres", "control-plane"],
+        "x-fga-permissions": [["backups_read"]],
+        "x-oauth-scope": "database:read"
       }
     },
     "/v2/projects/{ref}/environments/{environment}/variables": {
@@ -36026,7 +36222,7 @@
                 "description": "Entitlement feature key that failed the check"
               },
               "upgrade_url": {
-                "description": "Billing page URL for the organization, present when the org is resolvable",
+                "description": "Dashboard URL where the feature can be unlocked: the organization billing page, or the project add-ons page when a per-project add-on is missing. Present when the organization or project is resolvable",
                 "type": "string"
               }
             },
@@ -50821,15 +51017,15 @@
                     "inserted_at": {
                       "type": "string"
                     },
-                    "project_id": {
-                      "type": "number"
+                    "project_ref": {
+                      "type": "string"
                     },
                     "status": {
                       "type": "string",
                       "enum": ["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]
                     }
                   },
-                  "required": ["is_physical_backup", "inserted_at", "project_id", "status"]
+                  "required": ["is_physical_backup", "inserted_at", "project_ref", "status"]
                 }
               },
               "required": ["type", "id", "attributes"]
@@ -53204,6 +53400,100 @@
               }
             },
             "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "CloneableBackupsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_cloneable_backup"]
+                },
+                "id": {
+                  "type": "number"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "is_physical_backup": {
+                      "type": "boolean"
+                    },
+                    "inserted_at": {
+                      "type": "string"
+                    },
+                    "project_ref": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]
+                    }
+                  },
+                  "required": ["is_physical_backup", "inserted_at", "project_ref", "status"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "CloneStatusResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_clone_status"]
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "inserted_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "target_project": {
+                      "type": "object",
+                      "properties": {
+                        "ref": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["ref", "name"],
+                      "description": "The destination cloned project"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["COMPLETED", "IN_PROGRESS", "FAILED", "REMOVED"],
+                      "description": "The cloning status"
+                    }
+                  },
+                  "required": ["inserted_at", "updated_at", "target_project", "status"]
+                }
+              },
+              "required": ["type", "attributes"]
+            }
           }
         },
         "required": ["data"]
