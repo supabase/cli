@@ -25,6 +25,8 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
+import { CommandExecutor, commandExecutorLayer } from "../../command-internal/command-executor.ts";
+import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { projectsList } from "../../commands/projects/list/list.handler.ts";
 import { withTraceExport, type TraceSettings } from "./trace-export.layer.ts";
 
@@ -339,7 +341,10 @@ describe("withTraceExport around a command handler", () => {
         }),
       });
 
-      yield* projectsList({}).pipe(
+      yield* CommandExecutor.use((executor) =>
+        executor.run({ owner: "handler", handler: projectsList }, {}, Layer.empty),
+      ).pipe(
+        Effect.provide([commandExecutorLayer, commandRuntimeLayer(["projects", "list"])]),
         Effect.provide(layer),
         withTraceExport(fileSink(tracePath), { "process.boot_ms": 5 }),
       );

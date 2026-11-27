@@ -4,6 +4,7 @@ import { CliOutput, Command } from "effect/cli";
 
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
+import { commandExecutorLayer } from "../command-executor.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { jsonCliOutputFormatter } from "../../shared/output/json-formatter.ts";
@@ -52,6 +53,7 @@ const layerFor = (
 ) =>
   Layer.mergeAll(
     emptyEnv(),
+    commandExecutorLayer,
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
     Layer.succeed(Console.Console, console),
