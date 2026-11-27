@@ -19181,9 +19181,70 @@ export const V2ProjectGetDownloadableBackupsOutput = Schema.Struct({
       attributes: Schema.Struct({
         is_physical_backup: Schema.Boolean,
         inserted_at: Schema.String,
-        project_id: Schema.Number.check(
-          Schema.isFinite().annotate({ expected: "a finite number" }),
-        ),
+        project_ref: Schema.String,
+        status: Schema.Union([
+          Schema.Literals(["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]),
+          OpenString,
+        ]),
+      }),
+    }),
+  ),
+});
+export const V2ProjectsDatabaseCloneStatusInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ProjectsDatabaseCloneStatusOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("project_clone_status").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        inserted_at: Schema.Union([Schema.String, Schema.Null]),
+        updated_at: Schema.Union([Schema.String, Schema.Null]),
+        target_project: Schema.Struct({ ref: Schema.String, name: Schema.String }).annotate({
+          description: "The destination cloned project",
+        }),
+        status: Schema.Union([
+          Schema.Literals(["COMPLETED", "IN_PROGRESS", "FAILED", "REMOVED"]).annotate({
+            description: "The cloning status",
+          }),
+          OpenString,
+        ]),
+      }),
+    }),
+  ),
+});
+export const V2ProjectsDatabaseCloneableBackupsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinCodePoints(20).annotate({ expected: "a string with at least 20 code points" }),
+  )
+    .check(
+      Schema.isMaxCodePoints(20).annotate({ expected: "a string with at most 20 code points" }),
+    )
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$", "u")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ProjectsDatabaseCloneableBackupsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("project_cloneable_backup").annotate({ description: "Resource type." }),
+      id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      attributes: Schema.Struct({
+        is_physical_backup: Schema.Boolean,
+        inserted_at: Schema.String,
+        project_ref: Schema.String,
         status: Schema.Union([
           Schema.Literals(["COMPLETED", "FAILED", "PENDING", "REMOVED", "ARCHIVED", "CANCELLED"]),
           OpenString,
@@ -22523,6 +22584,8 @@ export const openApiOperationIdMap = {
   "v2-organizations-slug-webhooks-endpoints-post": "v2OrganizationsSlugWebhooksEndpointsPost",
   "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
   "v2-project-get-downloadable-backups": "v2ProjectGetDownloadableBackups",
+  "v2-projects-database-clone-status": "v2ProjectsDatabaseCloneStatus",
+  "v2-projects-database-cloneable-backups": "v2ProjectsDatabaseCloneableBackups",
   "v2-projects-ref-webhooks-deliveries-id-get": "v2ProjectsRefWebhooksDeliveriesIdGet",
   "v2-projects-ref-webhooks-deliveries-id-retry-post": "v2ProjectsRefWebhooksDeliveriesIdRetryPost",
   "v2-projects-ref-webhooks-endpoints-delete": "v2ProjectsRefWebhooksEndpointsDelete",
@@ -26229,6 +26292,32 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ProjectGetDownloadableBackupsInput,
     outputSchema: V2ProjectGetDownloadableBackupsOutput,
+  },
+  v2ProjectsDatabaseCloneStatus: {
+    id: "v2ProjectsDatabaseCloneStatus",
+    description: "Retrieve the current status of an existing cloning process",
+    method: "GET",
+    path: "/v2/projects/{ref}/database/clone/status",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsDatabaseCloneStatusInput,
+    outputSchema: V2ProjectsDatabaseCloneStatusOutput,
+  },
+  v2ProjectsDatabaseCloneableBackups: {
+    id: "v2ProjectsDatabaseCloneableBackups",
+    description: "List the valid physical backups that can be used to clone into a new project",
+    method: "GET",
+    path: "/v2/projects/{ref}/database/clone/cloneable-backups",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ProjectsDatabaseCloneableBackupsInput,
+    outputSchema: V2ProjectsDatabaseCloneableBackupsOutput,
   },
   v2ProjectsRefWebhooksDeliveriesIdGet: {
     id: "v2ProjectsRefWebhooksDeliveriesIdGet",
