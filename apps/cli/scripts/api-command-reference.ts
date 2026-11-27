@@ -1,0 +1,198 @@
+import { operationDefinitions } from "@supabase/api/effect";
+import type {
+  ApiCommandBinding,
+  ApiCommandEntry,
+  ApiCommandFlag,
+  ApiCommandWait,
+  ApiPollTarget,
+} from "../src/commands/api/api-command.model.ts";
+import type { ApiNoun } from "../src/commands/api/api-command-policy.ts";
+import { experimentalFeatureSources } from "../src/shared/config/experimental-feature.ts";
+
+export interface ApiCommandReferenceInput {
+  readonly entries: ReadonlyArray<ApiCommandEntry>;
+  readonly pollTargets: ReadonlyArray<ApiPollTarget>;
+  /** Success status code per operation id. */
+  readonly successStatuses: ReadonlyMap<string, number>;
+  readonly nouns: Readonly<Record<string, ApiNoun>>;
+}
+
+const code = (text: string): string => `\`${text}\``;
+
+/** The route the runtime sends, read from the typed client's definition of the operation. */
+const route = (operation: Pick<ApiCommandEntry, "definition">): string => {
+  const { method, path } = operationDefinitions[operation.definition];
+  return code(`${method} ${path}`);
+};
+
+const cell = (text: string): string => text.replaceAll("|", "\\|");
+
+const commandLine = (entry: Pick<ApiCommandEntry, "command">): string =>
+  ["supabase", ...entry.command].join(" ");
+
+const flagType = (flag: ApiCommandFlag): string =>
+  flag.choices === undefined ? flag.type : `${flag.type} (${flag.choices.map(code).join(", ")})`;
+
+const bindsTo = (entry: ApiCommandEntry, flag: ApiCommandFlag): string => {
+  const binding = entry.bindings.find(
+    (candidate) => candidate.source === "flag" && candidate.flag === flag.name,
+  );
+  if (binding === undefined) return "";
+  return binding.location === "body"
+    ? `body ${code(binding.pointer)}`
+    : `${binding.location} ${code(binding.name)}`;
+};
+
+const requiredCell = (entry: ApiCommandEntry, flag: ApiCommandFlag): string => {
+  if (!flag.required) return "no";
+  const bodyBound = entry.bindings.some(
+    (binding) => binding.location === "body" && binding.flag === flag.name,
+  );
+  return bodyBound ? `yes, unless ${code("--body")} or ${code("--file")} has the field` : "yes";
+};
+
+const flagRows = (entry: ApiCommandEntry): ReadonlyArray<string> =>
+  entry.flags.map((flag) => {
+    const label =
+      flag.type === "boolean"
+        ? `--${flag.name}`
+        : `--${flag.name} <${flag.type === "json" ? "json" : flag.name}>`;
+    const notes = flag.sensitive === true ? " Sensitive: never echoed or recorded." : "";
+    return `| ${code(label)} | ${cell(flagType(flag))} | ${requiredCell(entry, flag)} | ${flag.repeatable ? "yes" : "no"} | ${bindsTo(entry, flag)}${notes} |`;
+  });
+
+const argumentLine = (entry: ApiCommandEntry): string | undefined => {
+  if (entry.argument === undefined) return undefined;
+  const binding = entry.bindings.find(
+    (candidate): candidate is Extract<ApiCommandBinding, { source: "argument" }> =>
+      candidate.source === "argument" && candidate.argument === entry.argument?.name,
+  );
+  const target = binding === undefined ? "" : `, bound to path parameter ${code(binding.name)}`;
+  return `Positional argument ${code(`<${entry.argument.name}>`)}${target}.`;
+};
+
+/** The command a failed or timed-out wait names, as the runtime builds it. */
+const failureHintCommand = (
+  entry: ApiCommandEntry,
+  wait: ApiCommandWait,
+  input: ApiCommandReferenceInput,
+): string => {
+  const read = input.entries.find((candidate) => candidate.operationId === wait.read);
+  if (read === undefined) {
+    const inspect = input.entries.find(
+      (candidate) =>
+        candidate.operationId ===
+        input.pollTargets.find((target) => target.operationId === wait.read)?.inspect,
+    );
+    return `${inspect === undefined ? "" : commandLine(inspect)} --remote=<ref>`.trim();
+  }
+  const own = read.operationId === entry.operationId;
+  const parts = read.bindings.flatMap((binding) => {
+    if (binding.source === "target" || binding.location === "body") return [];
+    if (!own && !(binding.name in wait.params)) return [];
+    const text =
+      binding.source === "argument" ? `<${binding.name}>` : `--${binding.flag} <${binding.name}>`;
+    return [own ? `[${text}]` : text];
+  });
+  return [commandLine(read), ...parts, "--remote=<ref>"].join(" ");
+};
+
+const waitSection = (
+  entry: ApiCommandEntry,
+  wait: ApiCommandWait,
+  input: ApiCommandReferenceInput,
+): ReadonlyArray<string> => {
+  const publicRead = input.entries.find((candidate) => candidate.operationId === wait.read);
+  const polled = publicRead ?? input.pollTargets.find((target) => target.operationId === wait.read);
+  const polledRoute = polled === undefined ? "unknown route" : route(polled);
+  const params = Object.entries(wait.params);
+  return [
+    "### Wait",
+    "",
+    `- Polls: ${polledRoute} (${code(wait.read)}${publicRead === undefined ? ", poll-only read" : publicRead.operationId === entry.operationId ? ", the command's own read" : ""}).`,
+    ...(params.length === 0
+      ? []
+      : [
+          `- Read parameters from the change response: ${params
+            .map(([name, pointer]) => `${code(name)} from ${code(pointer)}`)
+            .join(", ")}.`,
+        ]),
+    `- Status at ${code(wait.status)}; succeeded: ${wait.succeeded.map(code).join(", ")}; failed: ${wait.failed.map(code).join(", ")}.`,
+    ...(wait.error === undefined ? [] : [`- Failure message from ${code(wait.error)}.`]),
+    `- Failure hint names ${code(failureHintCommand(entry, wait, input))}.`,
+  ];
+};
+
+const bodyLine = (entry: ApiCommandEntry): string | undefined => {
+  const { body } = entry;
+  if (body === undefined) return undefined;
+  return `JSON envelope ${code(`data.type = ${body.type}`)}, fields under ${code("data.attributes")}`;
+};
+
+const experimentalLine = (
+  entry: ApiCommandEntry,
+  input: ApiCommandReferenceInput,
+): ReadonlyArray<string> => {
+  const flag = input.nouns[entry.command[0] ?? ""]?.experimental;
+  if (flag === undefined) return [];
+  const sources = experimentalFeatureSources(flag);
+  return [
+    `- Experimental: enable with ${code(sources.configPath)} or ${code(`${sources.envName}=1`)}.`,
+  ];
+};
+
+const commandSection = (
+  entry: ApiCommandEntry,
+  input: ApiCommandReferenceInput,
+): ReadonlyArray<string> => {
+  const body = bodyLine(entry);
+  const argument = argumentLine(entry);
+  const flags = flagRows(entry);
+  return [
+    `## ${code(commandLine(entry))}`,
+    "",
+    entry.summary,
+    "",
+    ...(entry.examples ?? []).flatMap((example) => [
+      example.description,
+      "",
+      "```sh",
+      example.command,
+      "```",
+      "",
+    ]),
+    ...(entry.description === undefined ? [] : [entry.description, ""]),
+    `- Access: ${entry.readOnly ? "read-only, no consent" : "mutation, consent defaults to No (`--yes` when it cannot prompt)"}.`,
+    ...experimentalLine(entry, input),
+    ...(entry.confirmDescription
+      ? ["- Consent: prints the API description before the interactive confirmation."]
+      : []),
+    `- Request: ${route(entry)} (${code(entry.operationId)}), success ${input.successStatuses.get(entry.operationId)} json.`,
+    ...(body === undefined ? [] : [`- Body: ${body}.`]),
+    ...(argument === undefined ? [] : [`- ${argument}`]),
+    ...(flags.length === 0
+      ? []
+      : [
+          "",
+          "### Flags",
+          "",
+          "| Flag | Type | Required | Repeatable | Binds to |",
+          "| ---- | ---- | -------- | ---------- | -------- |",
+          ...flags,
+        ]),
+    ...(entry.wait === undefined ? [] : ["", ...waitSection(entry, entry.wait, input)]),
+    "",
+  ];
+};
+
+/** Renders the per-command reference from the derived entries; formatting is left to oxfmt. */
+export const renderApiCommandReference = (input: ApiCommandReferenceInput): string =>
+  [
+    "<!-- Generated by scripts/generate-api-commands.ts. Do not edit. -->",
+    "",
+    "# Generated API commands",
+    "",
+    "Reference for the commands generated from the Management API contract.",
+    "",
+    ...input.entries.flatMap((entry) => commandSection(entry, input)),
+  ].join("\n");

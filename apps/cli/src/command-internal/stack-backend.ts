@@ -8,7 +8,7 @@ import {
   Option,
   type Path,
 } from "effect";
-import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
+import { routingArgsFor } from "./routing-args.ts";
 import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
 import {
   projectStateMode,
@@ -98,27 +98,15 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
     StackRoutingError,
     FileSystem.FileSystem | Path.Path
   > {
-    // Completion passes the final token as the cursor word, so it is not part of
-    // the resolved command path.
-    const routingArgs =
-      input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
-        ? input.args.slice(0, -1)
-        : input.args;
-    if (hasRootVersionFlag(routingArgs))
-      return { projectState: undefined, stackBackend: undefined };
-
-    const commandPath = extractCommandPath(routingArgs);
-    const completePath =
-      commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
-        ? commandPath.slice(1)
-        : commandPath;
-    const routedPath = completePath[0] === "help" ? completePath.slice(1) : completePath;
-    const command = routedPath[0];
+    const routing = routingArgsFor(input.args);
+    if (routing === undefined) return { projectState: undefined, stackBackend: undefined };
+    const { routingArgs, path } = routing;
+    const command = path[0];
     const routed =
       command === undefined ||
       command === "stack" ||
       STACK_BACKEND_COMMANDS.has(command) ||
-      isFunctionsServePath(routedPath);
+      isFunctionsServePath(path);
 
     const projectState = yield* Effect.exit(projectStateMode({ ...input, args: routingArgs }));
     const stackBackend = routed

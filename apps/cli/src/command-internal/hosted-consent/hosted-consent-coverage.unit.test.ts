@@ -11,7 +11,7 @@ const srcDir = fileURLToPath(new URL("../..", import.meta.url));
 
 const VARIANTS: ReadonlyArray<PermissionVariant> = [
   undefined,
-  { stackBackend: "stack", computeEnabled: true },
+  { stackBackend: "stack", computeEnabled: true, apiFeatures: ["warehouse"] },
 ];
 
 const consentDefaultByLeaf: ReadonlyMap<string, "no" | "yes"> = new Map(
@@ -135,6 +135,13 @@ describe("hosted consent coverage", () => {
         "test db": "no",
         "vanity-subdomains activate": "no",
         "vanity-subdomains delete": "no",
+        "warehouse disable": "no",
+        "warehouse enable": "no",
+        "warehouse replication add": "no",
+        "warehouse replication remove": "no",
+        "warehouse replication restart": "no",
+        "warehouse replication resync": "no",
+        "warehouse tables layout update": "no",
       }
     `);
   });

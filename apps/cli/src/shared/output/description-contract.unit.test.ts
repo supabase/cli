@@ -65,6 +65,7 @@ describe("command description contract", () => {
         const root = rootCommandForFeatures({
           stackBackend,
           computeEnabled,
+          apiFeatures: ["warehouse"],
           projectState: Exit.succeed(stackBackend),
         });
         expect(violationsForTree(root)).toEqual([]);

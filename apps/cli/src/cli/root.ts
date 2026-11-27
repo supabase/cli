@@ -18,11 +18,15 @@ import { stackStopCommand } from "../commands/experimental/stack/stop/stop.comma
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
-import type { ExperimentalFeatureFlagError } from "../shared/config/experimental-feature.ts";
+import type {
+  ExperimentalFeature,
+  ExperimentalFeatureFlagError,
+} from "../shared/config/experimental-feature.ts";
 import {
   type ProjectStateMode,
   projectStateModeLayer,
 } from "../shared/config/project-state-mode.ts";
+import { withApiCommands } from "../commands/api/runtime.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -149,6 +153,7 @@ interface RootCommandFeatures {
   readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
+  readonly apiFeatures?: ReadonlyArray<ExperimentalFeature>;
 }
 
 /** Agents default to stream-json for Stack-backed `functions serve`, which rejects json. */
@@ -163,52 +168,57 @@ const agentDefaultOutputFormatFor = (
 export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
-    Command.withSubcommands([
-      backupsCommand,
-      bootstrapCommand,
-      branchesCommand,
-      completionCommand,
-      ...(options.computeEnabled ? [computeCommand] : []),
-      configCommand,
-      dbCommand,
-      domainsCommand,
-      encryptionCommand,
-      feedbackCommand,
-      functionsCommand,
-      genCommand,
-      initCommand,
-      inspectCommand,
-      issueCommand,
-      issuesCommand,
-      linkCommand,
-      loginCommand,
-      logoutCommand,
-      logsCommandFor(),
-      migrationCommand,
-      networkBansCommand,
-      networkRestrictionsCommand,
-      notebooksCommand,
-      orgsCommand,
-      postgresConfigCommand,
-      projectsCommand,
-      pullCommand,
-      secretsCommand,
-      seedCommand,
-      servicesCommand,
-      snippetsCommand,
-      sslEnforcementCommand,
-      ssoCommand,
-      ...(options.stackBackend === "stack" ? [stackCommand] : []),
-      options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
-      options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
-      options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
-      storageCommand,
-      telemetryCommand,
-      testCommand,
-      unlinkCommand,
-      vanitySubdomainsCommand,
-      whoamiCommand,
-    ]),
+    Command.withSubcommands(
+      withApiCommands(
+        [
+          backupsCommand,
+          bootstrapCommand,
+          branchesCommand,
+          completionCommand,
+          ...(options.computeEnabled ? [computeCommand] : []),
+          configCommand,
+          dbCommand,
+          domainsCommand,
+          encryptionCommand,
+          feedbackCommand,
+          functionsCommand,
+          genCommand,
+          initCommand,
+          inspectCommand,
+          issueCommand,
+          issuesCommand,
+          linkCommand,
+          loginCommand,
+          logoutCommand,
+          logsCommandFor(),
+          migrationCommand,
+          networkBansCommand,
+          networkRestrictionsCommand,
+          notebooksCommand,
+          orgsCommand,
+          postgresConfigCommand,
+          projectsCommand,
+          pullCommand,
+          secretsCommand,
+          seedCommand,
+          servicesCommand,
+          snippetsCommand,
+          sslEnforcementCommand,
+          ssoCommand,
+          ...(options.stackBackend === "stack" ? [stackCommand] : []),
+          options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
+          options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
+          options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
+          storageCommand,
+          telemetryCommand,
+          testCommand,
+          unlinkCommand,
+          vanitySubdomainsCommand,
+          whoamiCommand,
+        ],
+        options.apiFeatures ?? [],
+      ),
+    ),
     Command.provide(
       Layer.unwrap(
         Effect.gen(function* () {

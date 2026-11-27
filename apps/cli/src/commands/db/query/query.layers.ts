@@ -5,7 +5,7 @@ import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
-import { linkedDbResolverRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { lazyManagementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { telemetryOutputFormatLayer } from "../../../telemetry/telemetry-output-format.layer.ts";
 import { aiToolLayer } from "../../../shared/telemetry/ai-tool.layer.ts";
 import { randomLayer } from "../../../shared/runtime/random.layer.ts";
@@ -15,7 +15,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
  * Runtime layer for `supabase db query`.
  *
  * The `--local`/`--db-url` paths go through `DbConfigResolver` + `DbConnection` (auth-free). The
- * `--linked` path POSTs to the Management API, supplied by `linkedDbResolverRuntimeLayer`, which
+ * `--linked` path POSTs to the Management API, supplied by `lazyManagementApiRuntimeLayer`, which
  * exposes the access token lazily so building the runtime resolves no token — `--local`/`--db-url`
  * run without a login, since only the handler's `--linked` branch checks `getAccessToken`.
  */
@@ -38,5 +38,5 @@ export const dbQueryRuntimeLayer = Layer.mergeAll(
   stdinLayer,
   telemetryOutputFormatLayer,
   identityStitchLayer,
-  linkedDbResolverRuntimeLayer(["db", "query"]).pipe(Layer.provide(identityStitchLayer)),
+  lazyManagementApiRuntimeLayer(["db", "query"]).pipe(Layer.provide(identityStitchLayer)),
 );

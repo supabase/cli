@@ -24,6 +24,9 @@ src/commands/<command>/
   <command>.errors.ts    # domain errors
 ```
 
+Generated Management API commands have no folder of their own; the generated
+[`src/commands/api/generated.md`](src/commands/api/generated.md) is their per-command reference.
+
 Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
 phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under

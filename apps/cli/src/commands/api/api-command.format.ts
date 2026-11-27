@@ -1,0 +1,231 @@
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { escapeControlCharacters } from "../../shared/output/escape-control-characters.ts";
+import type { ApiRequestPreview } from "./api-command-request.ts";
+
+const INDENT = "  ";
+const SAMPLE_SERIES_KEY = "points";
+const SAMPLE_PREVIEW_LIMIT = 10;
+const ACRONYMS: ReadonlySet<string> = new Set(["id", "url", "fdw", "dns", "api", "sql", "tls"]);
+
+type JsonObject = Readonly<Record<string, unknown>>;
+
+const isObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isScalar = (value: unknown): boolean => value === null || typeof value !== "object";
+
+const compactJson = (value: unknown): string =>
+  escapeControlCharacters(JSON.stringify(value) ?? "null");
+
+/** `snake_case` becomes a sentence-case label; known acronyms stay upper-case. */
+const humanize = (key: string): string =>
+  escapeControlCharacters(key)
+    .split("_")
+    .filter((word) => word !== "")
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (ACRONYMS.has(lower)) return lower.toUpperCase();
+      return index === 0 ? `${lower.charAt(0).toUpperCase()}${lower.slice(1)}` : lower;
+    })
+    .join(" ");
+
+const scalarText = (value: unknown): string => {
+  if (value === null || value === undefined) return "-";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "string") return value === "" ? "-" : escapeControlCharacters(value);
+  return escapeControlCharacters(String(value));
+};
+
+const cellText = (value: unknown): string =>
+  isScalar(value) || value === undefined ? scalarText(value) : compactJson(value);
+
+const isObjectArray = (value: unknown): value is ReadonlyArray<JsonObject> =>
+  Array.isArray(value) && value.length > 0 && value.every(isObject);
+
+/** A table indented under its label; the table's own blank framing lines are dropped. */
+const tableLines = (
+  headers: ReadonlyArray<string>,
+  rows: ReadonlyArray<ReadonlyArray<string>>,
+  indent: string,
+): ReadonlyArray<string> =>
+  renderGlamourTable(headers, rows)
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => `${indent}${line}`);
+
+const objectTable = (
+  items: ReadonlyArray<JsonObject>,
+  columns: ReadonlyArray<string>,
+  indent: string,
+): ReadonlyArray<string> =>
+  tableLines(
+    columns.map((column) => humanize(column).toUpperCase()),
+    items.map((item) => columns.map((column) => cellText(item[column]))),
+    indent,
+  );
+
+const unionKeys = (items: ReadonlyArray<JsonObject>): ReadonlyArray<string> => {
+  const seen = new Set<string>();
+  for (const item of items) for (const key of Object.keys(item)) seen.add(key);
+  return [...seen];
+};
+
+/** The inline text of a value that fits on one line, or `undefined` when it needs its own block. */
+const inlineText = (value: unknown): string | undefined => {
+  if (isScalar(value) || value === undefined) return scalarText(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "-";
+    if (value.every(isScalar)) return value.map(scalarText).join(", ");
+    return undefined;
+  }
+  return isObject(value) && Object.keys(value).length > 0 ? undefined : "-";
+};
+
+const blockLines = (entries: ReadonlyArray<readonly [string, unknown]>, indent: string) => {
+  const rows = entries.map(([key, value]) => {
+    const series = key === SAMPLE_SERIES_KEY && Array.isArray(value) && value.length > 0;
+    return { label: humanize(key), value, series, inline: series ? undefined : inlineText(value) };
+  });
+  const width = Math.max(
+    0,
+    ...rows.flatMap((row) => (row.inline === undefined ? [] : [row.label.length])),
+  );
+  const lines: Array<string> = [];
+  for (const { label, value, series, inline } of rows) {
+    if (inline !== undefined) {
+      lines.push(`${indent}${label.padEnd(width)}${INDENT}${inline}`);
+      continue;
+    }
+    lines.push(`${indent}${label}`);
+    if (Array.isArray(value)) {
+      lines.push(...arrayLines(value, indent, series ? SAMPLE_PREVIEW_LIMIT : value.length));
+    } else if (isObject(value)) {
+      lines.push(...blockLines(Object.entries(value), `${indent}${INDENT}`));
+    }
+  }
+  return lines;
+};
+
+const isFlatObjectArray = (value: unknown): value is ReadonlyArray<JsonObject> =>
+  isObjectArray(value) && value.every((item) => Object.values(item).every(isScalar));
+
+/** Sample series under a `points` key keep only their last samples in response order; other arrays render whole. */
+const arrayLines = (
+  items: ReadonlyArray<unknown>,
+  indent: string,
+  limit: number,
+): ReadonlyArray<string> => {
+  const offset = Math.max(0, items.length - limit);
+  const preview = items.slice(offset);
+  const notice =
+    offset === 0
+      ? []
+      : [
+          `${indent}${INDENT}Showing last ${preview.length} of ${items.length} samples; ${offset} omitted; use --output-format json for all samples.`,
+        ];
+  if (isFlatObjectArray(preview)) {
+    return [...notice, ...objectTable(preview, unionKeys(preview), indent)];
+  }
+  if (preview.every(isScalar))
+    return [...notice, `${indent}${INDENT}${preview.map(scalarText).join(", ")}`];
+  return [
+    ...notice,
+    ...preview.flatMap((item, index) => {
+      const label = `Item ${offset + index + 1}`;
+      return isObject(item)
+        ? [
+            `${indent}${INDENT}${label}`,
+            ...blockLines(Object.entries(item), `${indent}${INDENT}${INDENT}`),
+          ]
+        : blockLines([[label, item]], `${indent}${INDENT}`);
+    }),
+  ];
+};
+
+const isResource = (value: unknown): value is JsonObject & { readonly attributes: JsonObject } =>
+  isObject(value) && typeof value["type"] === "string" && isObject(value["attributes"]);
+
+const resourceEntries = (resource: JsonObject & { readonly attributes: JsonObject }) => {
+  const id = resource["id"];
+  return [
+    ...(id === undefined || id === null ? [] : ([["id", id]] as const)),
+    ...Object.entries(resource.attributes),
+  ];
+};
+
+const resourceLines = (document: JsonObject): ReadonlyArray<string> | undefined => {
+  const keys = Object.keys(document);
+  const data = document["data"];
+  if (keys.length !== 1 || keys[0] !== "data") return undefined;
+  if (Array.isArray(data) && data.length === 0) return ["No results"];
+  if (isResource(data)) {
+    return [humanize(String(data["type"])), ...blockLines(resourceEntries(data), INDENT)];
+  }
+  if (Array.isArray(data) && data.every(isResource)) {
+    const rows = data.map((resource) => Object.fromEntries(resourceEntries(resource)));
+    const columns = unionKeys(rows).filter((column) =>
+      rows.some((row) => row[column] !== undefined),
+    );
+    const nested = new Set(columns.filter((column) => rows.some((row) => !isScalar(row[column]))));
+    const summary = columns.filter((column) => !nested.has(column));
+    const details = data.flatMap((resource, index) => {
+      const entries = resourceEntries(resource).filter(
+        ([key, value]) => nested.has(key) && value !== undefined,
+      );
+      if (entries.length === 0) return [];
+      const id = resource["id"];
+      const name = id === undefined || id === null ? `item ${index + 1}` : scalarText(id);
+      return ["", `${humanize(String(resource["type"]))} ${name}`, ...blockLines(entries, INDENT)];
+    });
+    return [
+      humanize(String(data[0]?.["type"])),
+      ...(summary.length === 0 ? [] : objectTable(rows, summary, "")),
+      ...details,
+    ];
+  }
+  return undefined;
+};
+
+/** Renders a decoded JSON response as the text a person reads; always ends with a newline. */
+export const renderResponseText = (value: unknown): string => {
+  if (isObject(value)) {
+    const lines = resourceLines(value) ?? blockLines(Object.entries(value), "");
+    return `${(lines.length === 0 ? ["-"] : lines).join("\n")}\n`;
+  }
+  if (Array.isArray(value) && value.length > 0) {
+    return `${arrayLines(value, "", value.length).join("\n")}\n`;
+  }
+  return `${inlineText(value) ?? compactJson(value)}\n`;
+};
+
+const rawBlock = (title: string, values: Readonly<Record<string, unknown>>) => {
+  const entries = Object.entries(values);
+  if (entries.length === 0) return [];
+  const width = Math.max(...entries.map(([key]) => key.length));
+  return [
+    title,
+    ...entries.map(
+      ([key, value]) =>
+        `${INDENT}${escapeControlCharacters(key).padEnd(width)}${INDENT}${cellText(value)}`,
+    ),
+  ];
+};
+
+/** Renders the request a dry run would send: a summary line, query and headers, then the body. */
+export const renderDryRunText = (preview: ApiRequestPreview): string => {
+  const body =
+    preview.body === null || preview.body === undefined
+      ? []
+      : [
+          "Body",
+          ...JSON.stringify(preview.body, null, 2)
+            .split("\n")
+            .map((line) => `${INDENT}${escapeControlCharacters(line)}`),
+        ];
+  return `${[
+    `Dry run: ${escapeControlCharacters(preview.method)} ${escapeControlCharacters(preview.path)}`,
+    ...rawBlock("Query", preview.query),
+    ...rawBlock("Headers", preview.headers),
+    ...body,
+  ].join("\n")}\n`;
+};

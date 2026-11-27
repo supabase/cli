@@ -42,8 +42,8 @@ import {
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 import {
-  linkedDbResolverRuntimeLayer,
-  type LinkedDbResolverRuntimeRequirements,
+  lazyManagementApiRuntimeLayer,
+  type LazyManagementApiRuntimeRequirements,
 } from "./management-api-runtime.layer.ts";
 import * as Errors from "./db-config.errors.ts";
 import {
@@ -736,7 +736,7 @@ export const dbConfigResolverLayer = Layer.effect(
     // directly from its own ambient context). Calling them from here would otherwise leak those
     // services into `resolveConnection`/`resolvePoolerFallback`'s R (the interface promises
     // `never`), so every call site below re-closes the gap by additionally providing this layer of
-    // already-resolved values alongside `linkedDbResolverRuntimeLayer`.
+    // already-resolved values alongside `lazyManagementApiRuntimeLayer`.
     const localAmbientServices = Layer.mergeAll(
       Layer.succeed(FileSystem.FileSystem, fs),
       Layer.succeed(Path.Path, path),
@@ -767,7 +767,7 @@ export const dbConfigResolverLayer = Layer.effect(
       Layer.succeed(WorkdirFlag, yield* WorkdirFlag),
       Layer.succeed(OutputFlag, yield* OutputFlag),
       Layer.succeed(DebugFlag, yield* DebugFlag),
-      // `linkedDbResolverRuntimeLayer`'s platform-API factory provides a DoH fetch layer that
+      // `lazyManagementApiRuntimeLayer`'s platform-API factory provides a DoH fetch layer that
       // reads `DnsResolverFlag`; snapshot it so the lazily built linked stack stays fully
       // self-provided (`resolveConnection`'s R stays `never`).
       Layer.succeed(DnsResolverFlag, yield* DnsResolverFlag),
@@ -790,12 +790,12 @@ export const dbConfigResolverLayer = Layer.effect(
       BunServices.layer,
       BunCrypto.layerSecureRandom,
     );
-    // Compile-time guard: if `linkedDbResolverRuntimeLayer`'s requirements ever
+    // Compile-time guard: if `lazyManagementApiRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the
     // lazy `Effect.provide` in the `--linked` branch would otherwise leak that
     // service into `resolveConnection`'s R and only surface as a runtime panic). Mirrors the
     // `_serviceCoverageCheck` pattern in `management-api-runtime.layer.ts`.
-    const _ambientCoverageCheck: Layer.Layer<LinkedDbResolverRuntimeRequirements, never, never> =
+    const _ambientCoverageCheck: Layer.Layer<LazyManagementApiRuntimeRequirements, never, never> =
       ambientLayer;
     void _ambientCoverageCheck;
 
@@ -961,7 +961,7 @@ export const dbConfigResolverLayer = Layer.effect(
       effect.pipe(
         Effect.provide(
           Layer.mergeAll(
-            linkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
+            lazyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
             localAmbientServices,
           ),
         ),
@@ -1054,7 +1054,7 @@ export const dbConfigResolverLayer = Layer.effect(
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              linkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
+              lazyManagementApiRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
               localAmbientServices,
             ),
           ),
