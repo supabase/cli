@@ -17,7 +17,6 @@ import { vi } from "vitest";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
-  mockCommandSettings,
   mockLinkedProjectCacheLayer,
   mockTelemetryStateLayer,
   useTempWorkdir,
@@ -113,7 +112,6 @@ const runCommand = (options: {
         writer,
         commandExecutorLayer,
         mockLinkedProjectCacheLayer,
-        mockCommandSettings({ workdir: home.current }),
         mockTelemetryStateLayer,
         commandRuntimeLayer(["test"]),
       ),
@@ -132,7 +130,7 @@ const runCommand = (options: {
           : command.pipe(
               withManagedHandler({
                 output: Schema.Struct({ value: Schema.String }),
-                handler,
+                handler: () => Effect.map(handler(), (output) => ({ output })),
                 runtime,
               }),
             );

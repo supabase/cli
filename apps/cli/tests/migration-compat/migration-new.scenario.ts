@@ -40,6 +40,14 @@ export const migrationNew = {
       args: ["../../../escape"],
       exitCode: 1,
       routes: {},
+      normalizeStdout: (stdout: string, _workdir: string, path: Path.Path) => {
+        const suffix = (dir: string) =>
+          JSON.stringify(`must not escape the ${dir} directory`).slice(1);
+        const native = suffix(path.join("supabase", "migrations"));
+        if (!stdout.includes(native))
+          throw new Error("Expected the native migrations directory in the diagnostic");
+        return stdout.replace(native, suffix("supabase/migrations"));
+      },
     },
   ]),
 } satisfies Scenario;

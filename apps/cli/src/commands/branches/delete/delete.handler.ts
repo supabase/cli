@@ -48,5 +48,5 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
   yield* ux.writeToStderr(`Deleted preview branch: ${branchRef}\n`, {
     suppressInMachineMode: true,
   });
-  return { project_ref: branchRef, message: "Deleted preview branch" } as const;
+  return { output: { project_ref: branchRef, message: "Deleted preview branch" } } as const;
 });

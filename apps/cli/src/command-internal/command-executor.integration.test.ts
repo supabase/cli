@@ -36,12 +36,12 @@ it("requires the handler to return the declared result", () => {
   withManagedHandler({
     output,
     // @ts-expect-error The declared schema requires a string value.
-    handler: () => Effect.succeed({ value: 1 }),
+    handler: () => Effect.succeed({ output: { value: 1 } }),
     runtime: { required: Layer.empty, completion: Layer.empty },
   });
 });
 it("requires explicit and exclusive result ownership", () => {
-  const handler = () => Effect.succeed({ value: "done" });
+  const handler = () => Effect.succeed({ output: { value: "done" } });
   const runtime = { required: Layer.empty, completion: Layer.empty };
   // @ts-expect-error Managed declarations must supply an output schema.
   withManagedHandler({ handler, runtime });
@@ -145,7 +145,7 @@ it.effect("records legacy output before a required layer release defect escapes"
   );
 });
 
-const run = <E, R>(handler: () => Effect.Effect<typeof output.Type, E, R>) =>
+const run = <E, R>(handler: () => Effect.Effect<{ output: typeof output.Type }, E, R>) =>
   CommandExecutor.use((executor) =>
     executor.run({ owner: "executor", output, handler }, {}, Layer.empty),
   );
@@ -217,11 +217,11 @@ it.effect.each(["text", "json", "stream-json"] as const)(
                     Effect.andThen(
                       ux.writeToStderr(" in text mode\n", { suppressInMachineMode: true }),
                     ),
-                    Effect.as({ value: "result" }),
+                    Effect.as({ output: { value: "result" }, hookData: { label: "result" } }),
                   ),
               ),
             hooks: {
-              onResultReady: ({ value }, { ux }) =>
+              onResultReady: ({ hookData: { label: value } }, { ux }) =>
                 Effect.gen(function* () {
                   hookCalls++;
                   yield* Deferred.succeed(hookStarted, undefined);
@@ -288,7 +288,7 @@ it.effect.each(["handler failure", "release defect", "interruption", "hook failu
                 ? Effect.fail(error)
                 : outcome === "interruption"
                   ? Effect.interrupt
-                  : Effect.succeed({ value: "result" }),
+                  : Effect.succeed({ output: { value: "result" } }),
             hooks: {
               onResultReady: () =>
                 Effect.sync(() => {
@@ -325,7 +325,7 @@ it.effect.each(["cache", "flush"] as const)(
       });
     return run(() =>
       ResolvedProject.use((project) =>
-        project.record("parent").pipe(Effect.as({ value: "branch" })),
+        project.record("parent").pipe(Effect.as({ output: { value: "branch" } })),
       ),
     ).pipe(
       Effect.tap(() =>

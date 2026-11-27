@@ -112,8 +112,8 @@ describe("migration new", () => {
       const file = "20261127123456_create_widgets.sql";
       expect(yield* readMigration(tmp.current, file)).toBe("");
       expect(result).toEqual({
-        path: yield* migrationPath(tmp.current, file),
-        message: "Migration created",
+        output: { path: yield* migrationPath(tmp.current, file), message: "Migration created" },
+        hookData: { displayPath: (yield* Path.Path).join("supabase", "migrations", file) },
       });
     }).pipe(Effect.provide(layer));
   });

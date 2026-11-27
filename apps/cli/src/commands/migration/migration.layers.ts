@@ -18,12 +18,14 @@ import { stackCatalogSetupLayer } from "../../command-internal/stack-catalog-set
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
+/** Keeps stdin scoped to file creation and completion services available for result delivery. */
 export const migrationNewRuntime = {
   required: stdinLayer,
   completion: Layer.mergeAll(
     cliSettings,
     telemetryStateLayer,
     commandRuntimeLayer(["migration", "new"]),
+    // Local file creation never resolves a linked project, so completion has no ref to cache.
     Layer.succeed(LinkedProjectCache, { cache: () => Effect.void }),
   ),
 };

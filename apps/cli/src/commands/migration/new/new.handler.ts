@@ -13,6 +13,8 @@ import { MigrationNewWriteError } from "./new.errors.ts";
 
 export const createdMessage = (relativePath: string) =>
   `Created new migration at ${bold(relativePath, process.stdout)}`;
+
+/** Creates and verifies a local migration file, preserving partial SQL if copying stdin fails. */
 export const migrationNew = Effect.fn("migration.new")(function* (flags: MigrationNewFlags) {
   const ux = yield* CommandUX;
   yield* ResolvedProject.use((project) => project.record(undefined));
@@ -50,6 +52,8 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
     ),
   );
 
+  const displayPath = path.relative(cliSettings.workdir, migrationPath);
+
   // Keep the piped-stdin copy scoped and chunked so large dumps use constant memory.
   if (!stdin.isTTY) {
     yield* Effect.scoped(
@@ -70,9 +74,7 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
                 message: `failed to copy from stdin: ${cause.message}`,
               }),
           ),
-          Effect.tapError(() =>
-            ux.writeToStdout(createdMessage(path.relative(cliSettings.workdir, migrationPath))),
-          ),
+          Effect.tapError(() => ux.writeToStdout(createdMessage(displayPath))),
         );
       }),
     );
@@ -89,5 +91,8 @@ export const migrationNew = Effect.fn("migration.new")(function* (flags: Migrati
     ),
   );
 
-  return { path: migrationPath, message: "Migration created" as const };
+  return {
+    output: { path: migrationPath, message: "Migration created" as const },
+    hookData: { displayPath },
+  };
 });
