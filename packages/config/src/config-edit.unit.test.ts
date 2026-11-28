@@ -81,6 +81,62 @@ allowed_cidrs = ["1.2.3.4/32"]
 `);
   });
 
+  test("appends to a multi-line array after its last item, keeping comments and layout", () => {
+    const source = `[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+  "public.b",
+  # legacy, owned by the billing team
+  "public.a" # keep until 2027
+]
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      {
+        path: ["db", "migrations", "checks", "exclude", "rls_disabled_in_public"],
+        value: ["public.b", "public.a", "public.c", "public.d"],
+      },
+    ]);
+    expect(applied(outcome).text).toBe(`[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+  "public.b",
+  # legacy, owned by the billing team
+  "public.a", # keep until 2027
+  "public.c",
+  "public.d"
+]
+`);
+  });
+
+  test("fills an empty multi-line array above its closing bracket, keeping its comments", () => {
+    const source = `[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+    # objects reviewed by the security team
+]
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      {
+        path: ["db", "migrations", "checks", "exclude", "rls_disabled_in_public"],
+        value: ["public.a", "public.b"],
+      },
+    ]);
+    expect(applied(outcome).text).toBe(`[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+    # objects reviewed by the security team
+    "public.a",
+    "public.b"
+]
+`);
+  });
+
+  test("appends to an inline array, keeping its trailing comma", () => {
+    const source = `[a]
+xs = ["x", ] # note
+`;
+    const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "xs"], value: ["x", "y"] }]);
+    expect(applied(outcome).text).toBe(`[a]
+xs = ["x", "y", ] # note
+`);
+  });
+
   test("preserves an unrelated literal string elsewhere in the file untouched", () => {
     const source = "[a]\npath = 'C:\\Users\\me'\nx = 1\n";
     const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "x"], value: 2 }]);

@@ -2,6 +2,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -28,6 +29,12 @@ const config = {
     Flag.withDescription("Issue level to exit with non-zero status: none, info, warn, error."),
     Flag.optional,
   ),
+  baseline: Flag.Boolean("baseline").pipe(
+    Flag.withDescription(
+      "Add every current security check finding to [db.migrations.checks.exclude] in supabase/config.toml.",
+    ),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type DbAdvisorsFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -47,21 +54,34 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           {
             operationId: "v1-get-security-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", present: false },
+              { flag: "baseline", is: false },
+            ],
           },
           {
             operationId: "v1-get-performance-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", oneOf: ["all", "performance"] }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", oneOf: ["all", "performance"] },
+              { flag: "baseline", is: false },
+            ],
           },
           {
             operationId: "v1-get-performance-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", present: false },
+              { flag: "baseline", is: false },
+            ],
           },
         ],
         noApiEffectFlags: ["level", "fail-on"],
       },
+      withCondition(dbConfig, { flag: "baseline", is: true }),
       withCondition(projectRefPicker, { dbTarget: ["linked"] }),
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,
@@ -74,6 +94,7 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           type: flags.type,
           level: flags.level,
           "fail-on": flags.failOn,
+          baseline: flags.baseline,
         },
         // type/level/fail-on are auto-detected as safe via `config` below.
         config,

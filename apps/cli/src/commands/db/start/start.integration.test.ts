@@ -49,6 +49,7 @@ import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
 import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
+import { MigrationChecksBlockedError } from "../../../command-internal/migration-checks.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
@@ -65,13 +66,16 @@ import {
 } from "@supabase/stack/effect";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
 
-const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
+const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none(), skipChecks: false };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
 const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 
 function flags(fromBackup?: string): DbStartFlags {
-  return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
+  return {
+    fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup),
+    skipChecks: false,
+  };
 }
 
 interface SpawnRecord {
@@ -263,7 +267,7 @@ function alwaysReadyHttpClient() {
 }
 
 /** PG15+ (this suite's default) never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
-function fakeDbSession() {
+function fakeDbSession(findingRows: ReadonlyArray<Record<string, unknown>> = []) {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: DbSession = {
     exec: (sql) =>
@@ -273,7 +277,7 @@ function fakeDbSession() {
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });
-        return [];
+        return sql.startsWith("select l.*") ? findingRows : [];
       }),
     execBatch: (statements) => sequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
@@ -320,6 +324,10 @@ interface SetupOpts {
   readonly recordCatalog?: boolean;
   /** Fail catalog setup after the database has been created. */
   readonly catalogFails?: boolean;
+  /** Splinter rows the fake database returns to a security check read. */
+  readonly findingRows?: ReadonlyArray<Record<string, unknown>>;
+  /** Migration files written under `supabase/migrations`. */
+  readonly migrations?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -336,6 +344,13 @@ function setup(opts: SetupOpts = {}) {
       if (opts.projectEnvContents !== undefined) {
         yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
       }
+      if (opts.migrations !== undefined) {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${workdir}/supabase/migrations`, { recursive: true });
+        for (const [name, contents] of Object.entries(opts.migrations)) {
+          yield* writeProjectFile(workdir, `migrations/${name}`, contents);
+        }
+      }
     }),
   ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -350,7 +365,7 @@ function setup(opts: SetupOpts = {}) {
         ? runningCheckFailsRoute(baseRoute)
         : baseRoute;
   const child = mockContainerCliSpawner(route);
-  const dbSession = fakeDbSession();
+  const dbSession = fakeDbSession(opts.findingRows);
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
@@ -1806,6 +1821,73 @@ describe("db start stack backend", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(fixture.state.destroyed).toBe(true);
       expect((yield* fixture.stack.composition.describe).members).toHaveLength(0);
+    });
+  });
+
+  it.effect(
+    "keeps a newly created database and the SB001 error when its end-state security check fails",
+    () => {
+      const { layer } = setup({
+        configContents:
+          'project_id = "test"\n[db.migrations.checks]\nrls_disabled_in_public = "error"\n',
+        migrations: { "20261001000000_open.sql": "create table public.open_t(id int);\n" },
+        findingRows: [
+          {
+            name: "rls_disabled_in_public",
+            metadata: { schema: "public", name: "open_t", type: "table" },
+          },
+        ],
+      });
+      const fixture = stackFixture(false);
+      return Effect.gen(function* () {
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              stackBackendLayer("stack"),
+              stackLayer(tempRoot.current, fixture, false),
+            ),
+          ),
+          Effect.exit,
+        );
+
+        const error = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        expect(error).toBeInstanceOf(MigrationChecksBlockedError);
+        expect(error instanceof MigrationChecksBlockedError && error.errorCode).toBe("SB001");
+        expect(error instanceof MigrationChecksBlockedError && error.suggestion).toContain(
+          "--skip-checks",
+        );
+        expect(fixture.state.running).toBe(true);
+        expect(fixture.state.destroyed).toBe(false);
+      });
+    },
+  );
+
+  it.effect("destroys a newly created database when the security checks reject the config", () => {
+    const { layer } = setup({
+      configContents: 'project_id = "test"\n[api]\nschemas = ["public", "a,b"]\n',
+      migrations: { "20261001000000_open.sql": "create table public.open_t(id int);\n" },
+    });
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
+      );
+
+      const error = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(error instanceof MigrationChecksBlockedError && error.reason).toBe("invalid_config");
+      expect(fixture.state.destroyed).toBe(true);
     });
   });
 

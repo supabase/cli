@@ -1,3 +1,4 @@
+import { resolveMigrationChecksPolicy } from "../../../command-internal/migration-checks-policy.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { FetchHttpClient } from "effect/http";
@@ -48,6 +49,7 @@ const toml = {
     vaultNames: [],
   },
   migrationsEnabled: true,
+  migrationChecks: resolveMigrationChecksPolicy(undefined),
   schemaPaths: [],
   schemaPathPatterns: [],
   seed: { enabled: false, sqlPaths: [] },

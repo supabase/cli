@@ -6,6 +6,7 @@ import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
 import type { DbTomlValues } from "./db-config.toml-read.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
+import { MigrationChecksBlockedError } from "./migration-checks.ts";
 import { StackCatalogSetup, type StackCatalogSetupInput } from "./stack-catalog-setup.ts";
 
 /**
@@ -60,7 +61,12 @@ const withDatabaseSession = <A, E, R>(
           dnsResolver: "native",
         })
         .pipe(Effect.mapError(bootstrapError("connect")));
-      return yield* body(session).pipe(Effect.mapError(bootstrapError("apply")));
+      // A blocked security check keeps its own code and suggestion.
+      return yield* body(session).pipe(
+        Effect.mapError((error) =>
+          error instanceof MigrationChecksBlockedError ? error : bootstrapError("apply")(error),
+        ),
+      );
     }),
   );
 
@@ -87,7 +93,13 @@ interface StackMigrations {
   readonly workdir: string;
   readonly toml: Pick<
     DbTomlValues,
-    "migrationsEnabled" | "seed" | "pgDelta" | "schemaPaths" | "webhooksEnabled"
+    | "migrationsEnabled"
+    | "seed"
+    | "pgDelta"
+    | "schemaPaths"
+    | "webhooksEnabled"
+    | "migrationChecks"
+    | "apiSchemas"
   >;
   readonly experimental: boolean;
   /** Applies migrations up to this version; omitted applies all of them. */
@@ -99,7 +111,7 @@ const applyStackMigrateAndSeed = (
   migrations: StackMigrations,
 ): Effect.Effect<
   void,
-  StackBootstrapError,
+  StackBootstrapError | MigrationChecksBlockedError,
   DbConnection | FileSystem.FileSystem | Path.Path | Output
 > =>
   withDatabaseSession(
@@ -116,6 +128,7 @@ const applyStackMigrateAndSeed = (
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          checks: toml,
         });
       }),
     "postgres",

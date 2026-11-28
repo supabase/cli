@@ -1,8 +1,9 @@
-import { Data, Effect, type FileSystem, type Path } from "effect";
+import { type CheckError, parseCheckError } from "@supabase/pg-checks";
+import { Data, Effect, type FileSystem, Option, type Path } from "effect";
 
 import { envValue } from "../shared/config/env-option.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { bold } from "./colors.ts";
+import { bold, yellow } from "./colors.ts";
 import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import {
   actionability,
@@ -17,6 +18,12 @@ import {
   createMigrationTable,
   sortMigrationPathsByVersion,
 } from "./migration-history.ts";
+import {
+  type MigrationChecksBlockedError,
+  type MigrationChecksReport,
+  type MigrationChecksRun,
+  startMigrationChecks,
+} from "./migration-checks.ts";
 import { parseMigrationContent } from "./migration-file.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
 import { splitSqlTokens, trimLeadingSqlComments } from "./sql-split.ts";
@@ -355,6 +362,27 @@ const formattedExecBatchDbError = (error: unknown): DbExecError | undefined => {
   return dbError instanceof DbExecError ? dbError : undefined;
 };
 
+/** Where a file's error-level security checks ran, if any rule is at `error`. */
+type FileCheckMode = "none" | "in_batch" | "after_commit";
+
+/**
+ * Check statements appended to a file's final batch, the error a failed check becomes, and the
+ * notice that a file runs outside a single transaction, called before it can commit anything.
+ */
+interface InBatchCheck<C> {
+  readonly statements: ReadonlyArray<string>;
+  readonly onFailure: (check: CheckError) => C;
+  readonly onAfterCommit: () => void;
+}
+
+/** Carries a failed in-batch check past the statement-error formatting. */
+class InBatchCheckFailed<C> {
+  constructor(
+    readonly kind: CheckError["kind"],
+    readonly error: C,
+  ) {}
+}
+
 /**
  * Runs a single migration/seed file's statements, plus the optional history insert.
  *
@@ -368,11 +396,14 @@ const formattedExecBatchDbError = (error: unknown): DbExecError | undefined => {
  * A file starting `-- pg-delta: transaction=false` instead runs every statement sequentially on
  * one connection, with a best-effort session reset on failure.
  *
+ * `inBatchCheck` statements run in the final batch between the file and the history insert, only
+ * when the file is a single transactional batch; any other file reports `onAfterCommit` first.
+ *
  * Does not create the history table or unconditionally `RESET ALL` (caller responsibility).
  * `forceNoVersion` skips the history insert; `projectEnv` is forwarded to
  * {@link checkScannerBufferSize}.
  */
-const execMigrationBatch = <E>(
+const execMigrationBatch = <E, C = never>(
   session: DbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -381,7 +412,8 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E | DbConnectError> =>
+  inBatchCheck?: InBatchCheck<C>,
+): Effect.Effect<void, E | C | DbConnectError> =>
   Effect.gen(function* () {
     // A read failure here is a different error class than a statement-execution failure below,
     // tagged "read" so callers that attach a suggestion only around execution failures can tell
@@ -468,6 +500,18 @@ const execMigrationBatch = <E>(
           ),
         );
 
+      const checkStatements = inBatchCheck?.statements ?? [];
+      const outsideOneTransaction =
+        transactionMode === "none" ||
+        statements.some(hasTransactionControl) ||
+        statements.some(isPipelineIncompatible);
+      // The check must share the file's single implicit transaction to roll it back, so files
+      // that run outside one, or across several, are checked after commit instead.
+      const checkMode: FileCheckMode =
+        checkStatements.length === 0 ? "none" : outsideOneTransaction ? "after_commit" : "in_batch";
+      yield* Effect.annotateCurrentSpan("migration_checks.mode", checkMode);
+      if (outsideOneTransaction) inBatchCheck?.onAfterCommit();
+
       // Session settings must remain active for the nontransactional action, so no transaction
       // boundary is added around this branch.
       if (transactionMode === "none") {
@@ -515,6 +559,15 @@ const execMigrationBatch = <E>(
             injectedBefore.push(injected);
             injected += 1;
           }
+          const checkStart = operations.length;
+          if (final && checkMode === "in_batch") {
+            for (const sql of checkStatements) {
+              operations.push({ sql });
+              injectedBefore.push(injected);
+              injected += 1;
+            }
+          }
+          const checkEnd = operations.length;
           if (recordVersion) {
             operations.push({
               sql: INSERT_MIGRATION_VERSION,
@@ -532,6 +585,18 @@ const execMigrationBatch = <E>(
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.
               const raw = cause.statementIndex ?? 0;
+              if (inBatchCheck !== undefined && raw >= checkStart && raw < checkEnd) {
+                const check = Option.flatMap(
+                  Option.liftThrowable(parseCheckError)(cause, { fromCheck: true }),
+                  Option.fromNullishOr,
+                );
+                if (Option.isSome(check)) {
+                  return new InBatchCheckFailed(
+                    check.value.kind,
+                    inBatchCheck.onFailure(check.value),
+                  );
+                }
+              }
               const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
               return formatExecBatchError(
                 cause,
@@ -560,6 +625,11 @@ const execMigrationBatch = <E>(
       }
       yield* flushBatch(true);
     }).pipe(
+      Effect.tapError((error) =>
+        error instanceof InBatchCheckFailed
+          ? Effect.annotateCurrentSpan("migration_checks.outcome", error.kind)
+          : Effect.void,
+      ),
       Effect.mapError((error) =>
         // A batch connection failure is not an execution failure: it keeps its own
         // error class (and `suggestion`) all the way out, exactly like the connect
@@ -567,7 +637,9 @@ const execMigrationBatch = <E>(
         // relabeled as this file's statement-execution failure.
         error instanceof DbConnectError
           ? error
-          : mapError(errorMessage(error), "exec", formattedExecBatchDbError(error)),
+          : error instanceof InBatchCheckFailed
+            ? error.error
+            : mapError(errorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
   }).pipe(Effect.withSpan("MigrationApply.file"));
@@ -618,6 +690,13 @@ export const applyMigrationFile = <E>(
  * Applies a list of pending migration files: creates the history table once when there is
  * anything to apply, then for each file emits `Applying migration <name>...` to stderr, resets
  * connection state, and runs it transactionally.
+ *
+ * With `checks`, error-level security rules run inside each eligible file's transaction and fail
+ * with {@link MigrationChecksBlockedError}; after the run commits, new warnings and every error
+ * are reported and returned. When a file fails, the read still covers the files committed before
+ * it and any statements the failed file committed outside a transaction; a blocked finding is
+ * printed as a warning and the original failure is raised. Shadow and squash replays pass no
+ * `checks`.
  */
 export const applyMigrations = <E>(
   session: DbSession,
@@ -625,19 +704,68 @@ export const applyMigrations = <E>(
   path: Path.Path,
   pending: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E | DbConnectError, Output> =>
+  checks?: MigrationChecksRun,
+): Effect.Effect<
+  Option.Option<MigrationChecksReport>,
+  E | DbConnectError | MigrationChecksBlockedError,
+  Output
+> =>
   Effect.gen(function* () {
     const output = yield* Output;
-    if (pending.length === 0) return;
+    if (pending.length === 0) return Option.none();
     yield* createMigrationTable(session).pipe(Effect.mapError((e) => mapError(errorMessage(e))));
+    const tracker = checks === undefined ? undefined : yield* startMigrationChecks(session, checks);
+    const checkedAfterCommit: Array<string> = [];
+    let committed = 0;
+    let committedOutsideTransaction = false;
     // Sorted by version, not file name, so callers passing a name-ordered listing (`db reset`,
     // the shadow-database replay) apply files in the same order `db push` does. Idempotent for
     // callers that already sorted.
-    for (const migrationPath of sortMigrationPathsByVersion(pending)) {
-      yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-      yield* resetConnectionState(session, mapError);
-      yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
-    }
+    yield* Effect.gen(function* () {
+      for (const migrationPath of sortMigrationPathsByVersion(pending)) {
+        const file = path.basename(migrationPath);
+        yield* output.raw(`Applying migration ${file}...\n`, "stderr");
+        yield* resetConnectionState(session, mapError);
+        yield* execMigrationBatch(
+          session,
+          fs,
+          path,
+          migrationPath,
+          mapError,
+          false,
+          migrationPath,
+          {},
+          tracker === undefined
+            ? undefined
+            : {
+                statements: tracker.inBatch,
+                onFailure: (check) => tracker.inBatchFailure(file, check),
+                onAfterCommit: () => {
+                  committedOutsideTransaction = true;
+                  if (tracker.inBatch.length > 0) checkedAfterCommit.push(file);
+                },
+              },
+        );
+        committed += 1;
+      }
+    }).pipe(
+      Effect.tapError((error) =>
+        tracker === undefined ||
+        (committed === 0 && !committedOutsideTransaction) ||
+        error instanceof DbConnectError
+          ? Effect.void
+          : session.exec("rollback").pipe(
+              Effect.ignore,
+              Effect.andThen(tracker.afterCommit(checkedAfterCommit)),
+              Effect.catchTag("MigrationChecksBlockedError", (blocked) =>
+                output.raw(`${yellow("WARNING:")} ${blocked.message}\n`, "stderr"),
+              ),
+              Effect.ignore,
+            ),
+      ),
+    );
+    if (tracker === undefined) return Option.none();
+    return Option.some(yield* tracker.afterCommit(checkedAfterCommit));
   }).pipe(
     Effect.withSpan("MigrationApply.run", { attributes: { "migration.count": pending.length } }),
   );

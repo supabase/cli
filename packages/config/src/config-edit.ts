@@ -6,9 +6,9 @@ import type { ConfigFormat } from "./config-format.ts";
  * callers own reading the current file text and writing the returned text back out atomically.
  * Every edited document is re-parsed and deep-compared against the original before being
  * returned; any mismatch refuses rather than shipping wrong bytes. An edit either replaces an
- * existing value's span in place or inserts a new line/table — nothing else is touched, so
- * untouched comments, spacing, and quoting survive byte-for-byte. See ADR 0023 for the design
- * rationale and rejected alternatives.
+ * existing value's span in place, appends to an existing TOML array that its new value extends,
+ * or inserts a new line/table — nothing else is touched, so untouched comments, spacing, and
+ * quoting survive byte-for-byte. See ADR 0023 for the design rationale and rejected alternatives.
  */
 
 export type ConfigEditValue =
@@ -930,11 +930,121 @@ interface TomlPlanResult {
 }
 
 /**
+ * Splices that append `additions` to the array spanning `[start, end)`, after its last item,
+ * following its layout: inline arrays stay inline, multi-line arrays get one line per item with
+ * the last item's indentation, and the trailing-comma style is kept. An empty multi-line array
+ * gets its items above the closing bracket, so comments inside it stay. `undefined` when the span
+ * cannot be read as an array, or is an empty inline one.
+ */
+function arrayAppendSplices(
+  source: string,
+  start: number,
+  end: number,
+  additions: ReadonlyArray<string | number | boolean>,
+  newline: string,
+): ReadonlyArray<Splice> | undefined {
+  const close = end - 1;
+  if (source[start] !== "[" || source[close] !== "]") {
+    return undefined;
+  }
+  let cursor = start + 1;
+  let lastEnd = -1;
+  let lastIsComma = false;
+  let lastComment = -1;
+  while (cursor < close) {
+    const ch = charAt(source, cursor);
+    if (ch === "#") {
+      lastComment = cursor;
+      cursor = skipToEndOfLine(source, cursor);
+      continue;
+    }
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      cursor++;
+      continue;
+    }
+    const next =
+      ch === '"'
+        ? source.startsWith('"""', cursor)
+          ? scanMultilineBasicString(source, cursor + 3)
+          : scanBasicString(source, cursor + 1)
+        : ch === "'"
+          ? source.startsWith("'''", cursor)
+            ? scanMultilineLiteralString(source, cursor + 3)
+            : scanLiteralString(source, cursor + 1)
+          : ch === "["
+            ? scanBracketedValue(source, cursor + 1, "[", "]", true)
+            : ch === "{"
+              ? scanBracketedValue(source, cursor + 1, "{", "}", false)
+              : cursor + 1;
+    if (next === null) {
+      return undefined;
+    }
+    lastIsComma = ch === ",";
+    lastEnd = next;
+    cursor = next;
+  }
+  const items = additions.map(renderScalar);
+  if (lastEnd === -1) {
+    if (!source.slice(start, close).includes("\n")) {
+      return undefined;
+    }
+    const closeLineStart = source.lastIndexOf("\n", close - 1) + 1;
+    const commentLineStart = source.lastIndexOf("\n", lastComment - 1) + 1;
+    const indent =
+      lastComment !== -1 && commentLineStart > start
+        ? indentOfLineAt(source, commentLineStart)
+        : `${indentOfLineAt(source, closeLineStart)}  `;
+    const lines = items
+      .map((item, index) => `${indent}${item}${index < items.length - 1 ? "," : ""}${newline}`)
+      .join("");
+    return [{ start: closeLineStart, end: closeLineStart, text: lines }];
+  }
+  if (!source.slice(lastEnd, close).includes("\n")) {
+    return [
+      {
+        start: lastEnd,
+        end: lastEnd,
+        text: lastIsComma ? ` ${items.join(", ")},` : `, ${items.join(", ")}`,
+      },
+    ];
+  }
+  const indent = indentOfLineAt(source, source.lastIndexOf("\n", lastEnd - 1) + 1);
+  const lineEnd = advancePastNewline(source, skipToEndOfLine(source, lastEnd));
+  const lines = items
+    .map(
+      (item, index) =>
+        `${indent}${item}${lastIsComma || index < items.length - 1 ? "," : ""}${newline}`,
+    )
+    .join("");
+  return [
+    ...(lastIsComma ? [] : [{ start: lastEnd, end: lastEnd, text: "," }]),
+    { start: lineEnd, end: lineEnd, text: lines },
+  ];
+}
+
+/** The elements `next` adds after `current` when it extends it, else `undefined`. */
+function appendedElements(
+  current: unknown,
+  next: ConfigEditLeafValue,
+): ReadonlyArray<string | number | boolean> | undefined {
+  if (!Array.isArray(current) || !isLeafArrayValue(next) || next.length <= current.length) {
+    return undefined;
+  }
+  return current.every((value, index) => deepEqualValue(value, next[index]))
+    ? next.slice(current.length)
+    : undefined;
+}
+
+/**
  * Resolves every leaf edit's placement against the scanned document (see
  * {@link placementOffsetForNewTable} for the priority rule for brand-new tables) and returns the
  * full splice list plus which new tables each leaf caused to be created.
  */
-function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>): TomlPlanResult {
+function planTomlSplices(
+  scan: TomlScanResult,
+  leaves: ReadonlyArray<LeafEdit>,
+  sourceValue: unknown,
+): TomlPlanResult {
   const keyTokens = scan.tokens.filter((token): token is TomlKeyToken => token.kind === "kv");
   const replaceSplices: Array<Splice> = [];
   const insertPieces = new Map<number, Array<InsertPiece>>();
@@ -943,6 +1053,21 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
   for (const leaf of leaves) {
     const exactKey = keyTokens.find((key) => pathsEqual(key.path, leaf.path));
     if (exactKey) {
+      const additions = appendedElements(valueAtPath(sourceValue, leaf.path), leaf.value);
+      const appendSplices =
+        additions === undefined
+          ? undefined
+          : arrayAppendSplices(
+              scan.source,
+              exactKey.valueStart,
+              exactKey.valueEnd,
+              additions,
+              scan.newline,
+            );
+      if (appendSplices !== undefined) {
+        replaceSplices.push(...appendSplices);
+        continue;
+      }
       replaceSplices.push({
         start: exactKey.valueStart,
         end: exactKey.valueEnd,
@@ -1150,7 +1275,7 @@ function applyTomlEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
     }
   }
 
-  const { splices, createdTablesByLeaf } = planTomlSplices(scan, leaves);
+  const { splices, createdTablesByLeaf } = planTomlSplices(scan, leaves, sourceValue);
   const nextText = applySplices(source, splices);
 
   let reparsed: unknown;

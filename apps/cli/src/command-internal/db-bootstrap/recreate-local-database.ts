@@ -28,6 +28,7 @@ import { CLI_PROJECT_LABEL } from "../docker-ids.ts";
 import type { DockerRun } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { formatExecBatchError, type MigrationApplyError } from "../migration-apply.ts";
+import type { MigrationChecksBlockedError } from "../migration-checks.ts";
 import { errorMessage } from "../error-message.ts";
 import type { MigrationSeedError } from "../seed.ts";
 import {
@@ -107,6 +108,7 @@ export type RecreateLocalDatabaseError =
   | DbSetupError
   | ContainerRestartError
   | MigrationApplyError
+  | MigrationChecksBlockedError
   | MigrationSeedError
   // Shared post-recreate step (both branches)
   | RestartServicesError
@@ -393,6 +395,7 @@ const recreateLocalDatabase14 = <E>(
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
           localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          checks: toml,
         });
       }),
     );

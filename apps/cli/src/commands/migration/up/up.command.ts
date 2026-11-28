@@ -20,6 +20,10 @@ const config = {
     Flag.withDescription("Include all migrations not found in the migration history table."),
     Flag.withDefault(false),
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Apply migrations without the [db.migrations.checks] security checks."),
+    Flag.withDefault(false),
+  ),
   ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
@@ -30,7 +34,7 @@ export const migrationUpCommand = Command.make("up", config).pipe(
   Command.withShortDescription("Apply pending migrations to a database"),
   withPermissions(
     compose(
-      { operations: [], noApiEffectFlags: ["include-all"] },
+      { operations: [], noApiEffectFlags: ["include-all", "skip-checks"] },
       dbConfig,
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,
@@ -41,6 +45,7 @@ export const migrationUpCommand = Command.make("up", config).pipe(
       withCommandTelemetry({
         flags: {
           "include-all": flags.includeAll,
+          "skip-checks": flags.skipChecks,
         },
       }),
       withJsonErrorHandling,

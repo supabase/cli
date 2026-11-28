@@ -22,7 +22,12 @@ import {
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
-import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
+import { applyMigrations } from "../../../../../command-internal/migration-apply.ts";
+import {
+  MigrationChecksSkipped,
+  type MigrationChecksRun,
+  migrationChecksRun,
+} from "../../../../../command-internal/migration-checks.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
@@ -542,13 +547,24 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         dnsResolver,
       },
       migrationPaths,
+      migrationChecksRun(toml, flags.skipChecks),
     ).pipe(Effect.result);
 
     if (Result.isSuccess(applyResult)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
+      // Machine output suppresses the findings on stderr, so the result carries them.
+      if (output.format !== "text" && Option.isSome(applyResult.success)) {
+        yield* output.success("Migration applied successfully.", {
+          checks: applyResult.success.value,
+        });
+      }
       return;
     }
 
+    // A security check rolled the migration back; a reset would replay it into the same finding.
+    if (applyResult.failure._tag === "MigrationChecksBlockedError") {
+      return yield* applyResult.failure;
+    }
     // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
     const applyError = applyResult.failure;
     yield* output.raw(`${red(`Migration failed to apply: ${applyError.message}`)}\n`, "stderr");
@@ -614,7 +630,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       yield* output.raw(debugBundleMessage(debugDir), "stderr");
     }
     return yield* applyError;
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    Effect.provideService(MigrationChecksSkipped, flags.skipChecks),
+    Effect.ensuring(telemetryState.flush),
+  );
 });
 
 const declarativeDirHasFiles = Effect.fnUntraced(function* (
@@ -629,10 +648,11 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   return entries.length > 0;
 });
 
-/** Connects once and applies the ordered migration files. */
+/** Connects once and applies the ordered migration files with the project's security checks. */
 const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(function* (
   local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
+  checks: MigrationChecksRun,
 ) {
   yield* Effect.annotateCurrentSpan({ "migration.count": migrationPaths.length });
   const dbConnection = yield* DbConnection;
@@ -654,13 +674,12 @@ const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(func
         (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
       ),
     );
-  for (const migrationPath of migrationPaths) {
-    yield* applyMigrationFile(
-      session,
-      fs,
-      path,
-      migrationPath,
-      (message) => new DeclarativeApplyError({ message }),
-    );
-  }
+  return yield* applyMigrations(
+    session,
+    fs,
+    path,
+    migrationPaths,
+    (message) => new DeclarativeApplyError({ message }),
+    checks,
+  );
 }, Effect.scoped);

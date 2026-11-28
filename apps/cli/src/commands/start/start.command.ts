@@ -1,4 +1,4 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -16,6 +16,7 @@ import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.l
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
+import { MigrationChecksSkipped } from "../../command-internal/migration-checks.ts";
 import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
@@ -38,6 +39,10 @@ const config = {
   exclude: startExcludeFlag,
   ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
+    Flag.withDefault(false),
+  ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Skip the [db.migrations.checks] security checks when replaying local migrations."),
     Flag.withDefault(false),
   ),
   preview: Flag.Boolean("preview").pipe(
@@ -92,10 +97,14 @@ export const startCommand = Command.make("start", config).pipe(
   Command.withShortDescription("Start local Supabase stack"),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "ignore-health-check", "preview"],
+    noApiEffectFlags: ["exclude", "ignore-health-check", "skip-checks", "preview"],
   }),
   Command.withHandler((flags) =>
-    start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
+    start(flags).pipe(
+      Effect.provideService(MigrationChecksSkipped, flags.skipChecks),
+      withCommandTelemetry({ flags }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(startRuntimeLayer),
   Command.provide(cliConfigValuesLayer),

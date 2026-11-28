@@ -35,6 +35,7 @@ import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
 import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { MigrationApplyError, execSqlFile } from "../migration-apply.ts";
+import type { MigrationChecksBlockedError } from "../migration-checks.ts";
 import { readMigrationTable } from "../migration-history.ts";
 import { statementInstallsPgNet } from "../pg-net-guidance.ts";
 import type { MigrationSeedError } from "../seed.ts";
@@ -129,6 +130,7 @@ export type StartSetupLocalDatabaseError =
   | DbSetupError
   | MigrationVaultError
   | MigrationApplyError
+  | MigrationChecksBlockedError
   | MigrationSeedError
   | ImagePrepullError;
 
@@ -874,6 +876,7 @@ export const startSetupLocalDatabase = (
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
       localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+      checks: toml,
     });
   });
 

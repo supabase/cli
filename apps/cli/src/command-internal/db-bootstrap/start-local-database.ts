@@ -29,6 +29,7 @@ import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
+import { leavesMigrationsApplied } from "../migration-checks.ts";
 import { rollbackStart } from "./rollback.ts";
 import { startDatabase } from "./start-database.ts";
 
@@ -259,8 +260,11 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
       isFreshVolume = resolved;
     },
   }).pipe(
-    Effect.onError(() =>
-      rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
+    // A failed end-state security check leaves the started database running with its migrations.
+    Effect.onError((cause) =>
+      leavesMigrationsApplied(cause)
+        ? Effect.void
+        : rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
     ),
   );
 

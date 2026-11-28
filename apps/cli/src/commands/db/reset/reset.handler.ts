@@ -11,6 +11,7 @@ import {
 import { planDbSeed } from "../../../command-internal/seed-remote-consent.ts";
 import { sqlFilesGlob } from "../../../command-internal/sql-files-glob.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
@@ -27,6 +28,14 @@ import {
   ignoresExperimentalSchemaPaths,
 } from "../../../command-internal/migrate-and-seed.ts";
 import { applyMigrations, applySchemaFiles } from "../../../command-internal/migration-apply.ts";
+import {
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
+  MigrationChecksSkipped,
+  migrationChecksRun,
+  preflightMigrationChecks,
+  startMigrationChecks,
+} from "../../../command-internal/migration-checks.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
 import { pathMatch } from "../../../command-internal/path-match.ts";
@@ -174,13 +183,25 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       ...(resolvedVersion !== "" ? { "migration.version": resolvedVersion } : {}),
     });
 
+    const checksReport = yield* Ref.make(Option.none<MigrationChecksReport>());
+    const resultWithChecks = Effect.gen(function* () {
+      const report = yield* Ref.get(checksReport);
+      return {
+        version: resolvedVersion,
+        ...(Option.isSome(report) ? { checks: report.value } : {}),
+      };
+    });
+
     // Local target: the composition (container recreate, storage-health gate, bucket seeding,
     // git-branch line) is hoisted into `resetLocalDatabase`, shared with `db schema declarative`'s
     // recovery reset; this call site keeps only version/seed-flags plumbing and the JSON envelope.
     if (cfg.isLocal) {
-      yield* resetLocalDatabase({ version: resolvedVersion });
+      yield* resetLocalDatabase({ version: resolvedVersion }).pipe(
+        Effect.provideService(MigrationChecksSkipped, flags.skipChecks),
+        Effect.provideService(MigrationChecksReplayReport, checksReport),
+      );
       if (output.format !== "text") {
-        yield* output.success("Reset local database.", { version: resolvedVersion });
+        yield* output.success("Reset local database.", yield* resultWithChecks);
       }
       return;
     }
@@ -201,6 +222,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    const checksRun = migrationChecksRun(toml, flags.skipChecks, flagsForTarget(target));
+    // Before the schemas are dropped, so a setting the checks reject cannot leave them empty.
+    yield* preflightMigrationChecks(checksRun);
     const vaultSecrets = toml.vault;
     const resolvedConfig = yield* configValues.load({
       workdir,
@@ -274,7 +298,14 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
             return m?.[1] !== undefined && m[1] <= resolvedVersion;
           });
           yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
+          // Like a local reset, the replay checks the end state, so a later migration may fix
+          // what an earlier one introduced.
+          const tracker =
+            pending.length === 0 ? undefined : yield* startMigrationChecks(session, checksRun);
           yield* applyMigrations(session, fs, path, pending, applyError);
+          if (tracker !== undefined) {
+            yield* Ref.set(checksReport, Option.some(yield* tracker.endState));
+          }
         }
 
         if (seedEnabled) {
@@ -286,7 +317,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     );
 
     if (output.format !== "text") {
-      yield* output.success("Reset remote database.", { version: resolvedVersion });
+      yield* output.success("Reset remote database.", yield* resultWithChecks);
     }
   });
 

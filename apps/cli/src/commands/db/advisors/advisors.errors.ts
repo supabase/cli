@@ -136,3 +136,19 @@ export class DbAdvisorsFailOnError extends Data.TaggedError("DbAdvisorsFailOnErr
     return actionability.dbFinding;
   }
 }
+
+/**
+ * `--baseline` could not record the findings in the config file: it failed to load, has a layout
+ * the format-preserving editor refuses, or could not be written.
+ */
+export class DbAdvisorsBaselineError extends Data.TaggedError("DbAdvisorsBaselineError")<{
+  readonly message: string;
+  readonly reason: "config" | "layout" | "write" | "flags";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.reason === "flags") return actionability.provideFlags;
+    return this.reason === "write"
+      ? { ...actionability.permission, fingerprint_suffix: "filesystem" }
+      : actionability.invalidInput;
+  }
+}

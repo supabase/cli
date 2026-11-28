@@ -69,6 +69,7 @@ const startFlags = () => ({
   preparation: "on-demand" as const,
   frozen: false,
   eager: false,
+  skipChecks: false,
 });
 
 const makeLayers = (root: string) => {

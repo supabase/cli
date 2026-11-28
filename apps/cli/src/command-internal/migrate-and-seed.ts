@@ -1,9 +1,18 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, type FileSystem, Option, type Path, Ref } from "effect";
 
 import { Output } from "../shared/output/output.service.ts";
 import type { DbSession } from "./db-connection.service.ts";
 import type { DbExecError } from "./db-connection.errors.ts";
+import type { DbTomlValues } from "./db-config.toml-read.ts";
 import { MigrationApplyError, applyMigrationFile, applySchemaFiles } from "./migration-apply.ts";
+import {
+  MigrationChecksDeferral,
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
+  MigrationChecksSkipped,
+  migrationChecksRun,
+  startMigrationChecks,
+} from "./migration-checks.ts";
 import { loadPartialMigrations } from "./migration-history.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION, isPgNetUnavailableError } from "./pg-net-guidance.ts";
 import { applySeedFiles, type SeedConfig } from "./seed.ts";
@@ -27,6 +36,13 @@ export interface MigrateAndSeedConfig {
    * this is not a local start/reset replay and disables local-only remediation.
    */
   readonly localDatabaseWebhooksEnabled?: boolean;
+  /**
+   * `[db.migrations.checks]` and `[api].schemas` for a local replay's end-state check. Omitted,
+   * the replay runs no checks; `--skip-checks` arrives through {@link MigrationChecksSkipped}.
+   */
+  readonly checks?: Pick<DbTomlValues, "migrationChecks" | "apiSchemas">;
+  /** The target flags a suggested `db advisors --baseline` repeats; omitted for a local replay. */
+  readonly checksTargetFlags?: string;
 }
 
 const migrationApplyError = (
@@ -69,6 +85,11 @@ export const ignoresExperimentalSchemaPaths = (inputs: {
  * {@link applySchemaFiles} — bypassing `migrationsEnabled` entirely, since only
  * `applyMigrationFiles` is gated on it. Otherwise migration apply is gated on
  * `db.migrations.enabled` as usual. Seeding always runs, on either branch.
+ *
+ * With `config.checks`, one security check reads the end state after the last migration and
+ * before seeding; an error-level finding fails the replay, unless the caller supplies
+ * {@link MigrationChecksDeferral}, which collects it instead. The report is returned and also
+ * set on {@link MigrationChecksReplayReport} when the caller supplies one.
  */
 export const migrateAndSeed = (
   session: DbSession,
@@ -80,6 +101,7 @@ export const migrateAndSeed = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
+    let report = Option.none<MigrationChecksReport>();
     if (ignoresExperimentalSchemaPaths({ ...config, version })) {
       yield* output.raw(experimentalSchemaPathsIgnoredWarning, "stderr");
     }
@@ -97,12 +119,34 @@ export const migrateAndSeed = (
       const pending = yield* loadPartialMigrations(fs, path, migrationsDir, version).pipe(
         Effect.mapError((cause) => new MigrationApplyError({ message: cause.message })),
       );
+      const skip = yield* MigrationChecksSkipped;
+      const tracker =
+        config.checks === undefined || pending.length === 0
+          ? undefined
+          : yield* startMigrationChecks(
+              session,
+              migrationChecksRun(config.checks, skip, config.checksTargetFlags),
+            );
       for (const migrationPath of pending) {
         yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
         yield* applyMigrationFile(session, fs, path, migrationPath, (message, dbError) =>
           migrationApplyError(message, dbError, config.localDatabaseWebhooksEnabled),
         );
       }
+      if (tracker !== undefined) {
+        const deferral = yield* MigrationChecksDeferral;
+        const sink = yield* MigrationChecksReplayReport;
+        report = yield* tracker.endState.pipe(
+          Effect.map(Option.some),
+          deferral === undefined
+            ? (effect) => effect
+            : Effect.catchTag("MigrationChecksBlockedError", (error) =>
+                Ref.set(deferral, Option.some(error)).pipe(Effect.as(Option.none())),
+              ),
+        );
+        if (sink !== undefined) yield* Ref.set(sink, report);
+      }
     }
     yield* applySeedFiles(session, fs, path, workdir, config.seed);
+    return report;
   });

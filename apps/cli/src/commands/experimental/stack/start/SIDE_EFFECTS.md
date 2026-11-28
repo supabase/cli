@@ -328,6 +328,13 @@ apply needed catalog and webhook setup without replaying project migrations or s
 composition reapplies the webhook setting before activation, first creating the
 `supabase_functions` schema when the database lacks it.
 
+A first startup checks the replayed migrations once, after the last one and before seeding, like
+`supabase start`. An error-level `[db.migrations.checks]` finding does not clean up: the stack
+comes up, the summary prints, and the command then fails with `SB001`, the findings, and how to
+proceed (fix, `db advisors --baseline`, or `--skip-checks`). On success, machine output adds
+`checks: { outcome, findings, checkedAfterCommit }` to the ready result. `--skip-checks` skips the
+read and prints that checks were skipped.
+
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
 files using the service-role JWT, silently overwriting or pruning existing buckets without a
 confirmation prompt. Storage is started and made ready before those requests. A resumed

@@ -104,6 +104,7 @@ describe("native hidden flags", () => {
     expect(buildHelpDoc(startCommand).flags.map((flag) => flag.name)).toEqual([
       "exclude",
       "ignore-health-check",
+      "skip-checks",
     ]);
 
     expect(buildHelpDoc(stopCommand).flags.map((flag) => flag.name)).toEqual([

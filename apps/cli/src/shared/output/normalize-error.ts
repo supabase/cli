@@ -154,7 +154,8 @@ export function normalizeCliError(
       return mapped;
     }
 
-    const code = readString(error, "_tag") ?? "UnknownError";
+    // `errorCode` is a stable public code (`SB001`) an error carries in place of its tag.
+    const code = readString(error, "errorCode") ?? readString(error, "_tag") ?? "UnknownError";
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
     // Raw read: some producers' suggestion text carries meaningful leading

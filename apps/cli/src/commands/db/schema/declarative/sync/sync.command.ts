@@ -47,6 +47,10 @@ const config = {
     ),
     Flag.optional,
   ),
+  skipChecks: Flag.Boolean("skip-checks").pipe(
+    Flag.withDescription("Apply the migration without the [db.migrations.checks] security checks."),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -72,6 +76,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
         "no-apply",
         "no-cache",
         "strict-coverage",
+        "skip-checks",
       ],
     }),
   ),
@@ -94,6 +99,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             name: merged.name,
             apply: merged.apply,
             "no-apply": merged.noApply,
+            "skip-checks": merged.skipChecks,
           },
           // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
           // -s public -f out.sql` must log `schema`/`file`.

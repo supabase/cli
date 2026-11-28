@@ -28,6 +28,10 @@ import {
 import { DbConfigLoadError, isPassthroughLoadFailure } from "./db-config.errors.ts";
 import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { resolveAuthExternalProviders } from "./local-config-values.ts";
+import {
+  type MigrationChecksPolicy,
+  resolveMigrationChecksPolicy,
+} from "./migration-checks-policy.ts";
 import { ramInBytes } from "./size-units.ts";
 import { resolveSmtpEnabled } from "./smtp-enabled.ts";
 import { decryptSecret, isEncryptedSecret } from "../shared/config/vault-decrypt.ts";
@@ -78,6 +82,8 @@ export interface DbTomlValues {
   readonly baseline: BaselineTomlConfig;
   /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
   readonly migrationsEnabled: boolean;
+  /** `[db.migrations.checks]`, with unset rules at "warn". */
+  readonly migrationChecks: MigrationChecksPolicy;
   /**
    * `[db.migrations] schema_paths`, default `[]` — resolved (supabase-prefixed
    * when relative) and overridable via `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`,
@@ -703,6 +709,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       vaultNames,
     },
     migrationsEnabled: config.db.migrations.enabled,
+    migrationChecks: resolveMigrationChecksPolicy(config.db.migrations.checks),
     schemaPaths: schemaPaths.value,
     schemaPathPatterns: schemaPaths.unnormalized ?? schemaPaths.value,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },

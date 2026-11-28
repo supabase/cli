@@ -10,7 +10,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Option, Path, Ref } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -32,6 +32,13 @@ import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { checkDbToml, loadProjectEnvValues, readDbToml } from "../db-config.toml-read.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
+import {
+  MigrationChecksBlockedError,
+  MigrationChecksDeferral,
+  MigrationChecksSkipped,
+  migrationChecksRun,
+  preflightMigrationChecks,
+} from "../migration-checks.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -98,10 +105,22 @@ const suggestionOf = (error: unknown): string | undefined =>
     ? error.suggestion
     : undefined;
 
-/** Resets the local database in-process. See this module's own header for the full design rationale. */
+/**
+ * Resets the local database in-process. See this module's own header for the full design
+ * rationale. A failed end-state security check is reported once every service is back up.
+ */
 export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
+  const deferredChecks = yield* Ref.make(Option.none<MigrationChecksBlockedError>());
+  yield* resetLocalDatabaseAndServices(input).pipe(
+    Effect.provideService(MigrationChecksDeferral, deferredChecks),
+  );
+  const checksFailure = yield* Ref.get(deferredChecks);
+  if (Option.isSome(checksFailure)) return yield* checksFailure.value;
+});
+
+const resetLocalDatabaseAndServices = Effect.fnUntraced(function* (input: ResetLocalDatabaseInput) {
   const backend = yield* currentStackBackend;
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
@@ -116,7 +135,8 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
   // Abort on a bad config before wiping the local database.
-  yield* checkDbToml(fs, path, workdir);
+  const checkedToml = yield* checkDbToml(fs, path, workdir);
+  yield* preflightMigrationChecks(migrationChecksRun(checkedToml, yield* MigrationChecksSkipped));
   yield* Effect.annotateCurrentSpan("stack.backend", backend.kind);
 
   if (backend.kind === "stack") {
@@ -204,13 +224,15 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     }).pipe(
       Effect.provideService(StackCatalogSetup, catalog.value),
       Effect.mapError((cause) =>
-        !(cause instanceof StackBootstrapError)
-          ? resetFailed(cause.message)
-          : cause.reason === "unavailable"
-            ? new ResetLocalDbNotRunningError({ message: cause.message })
-            : cause.reason === "connect"
-              ? resetFailed(`failed to connect after reset: ${cause.message}`)
-              : resetFailed(cause.message),
+        cause instanceof MigrationChecksBlockedError
+          ? cause
+          : !(cause instanceof StackBootstrapError)
+            ? resetFailed(cause.message)
+            : cause.reason === "unavailable"
+              ? new ResetLocalDbNotRunningError({ message: cause.message })
+              : cause.reason === "connect"
+                ? resetFailed(`failed to connect after reset: ${cause.message}`)
+                : resetFailed(cause.message),
       ),
     );
     yield* opened.value.stack.composition.start.pipe(

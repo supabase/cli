@@ -4,7 +4,7 @@
  */
 import { BunPath } from "@effect/platform-bun";
 import { inferFunctionsManifest } from "@supabase/config/effect";
-import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Ref, Result } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
@@ -29,6 +29,12 @@ import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { resolveStudioApiUrl } from "../../command-internal/api-url.ts";
 import { isBitbucketPipeline } from "../../command-internal/bitbucket-pipeline.ts";
 import { aqua, yellow } from "../../command-internal/colors.ts";
+import {
+  MigrationChecksDeferral,
+  type MigrationChecksBlockedError,
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
+} from "../../command-internal/migration-checks.ts";
 import {
   apiTlsCertReadErrorMessage,
   apiTlsKeyReadErrorMessage,
@@ -1443,7 +1449,13 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       );
     }
 
-    const bringUpResult = yield* bringUp;
+    // A failed end-state security check leaves the stack running: it is reported once the stack is up.
+    const deferredChecks = yield* Ref.make(Option.none<MigrationChecksBlockedError>());
+    const checksReport = yield* Ref.make(Option.none<MigrationChecksReport>());
+    const bringUpResult = yield* bringUp.pipe(
+      Effect.provideService(MigrationChecksDeferral, deferredChecks),
+      Effect.provideService(MigrationChecksReplayReport, checksReport),
+    );
 
     // Only reached when Postgres itself became healthy — the `postgresUnhealthyIgnored`
     // short-circuit above skips this entire block and falls through to the tail below instead.
@@ -1585,6 +1597,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // though every other container was never created — the status render shows them anyway,
     // purely from config, with no Docker query to contradict it.
     const statusExcluded = flags.exclude;
+    const checksFailure = yield* Ref.get(deferredChecks);
 
     if (output.format === "text") {
       yield* output.raw(startCompletedMessage(), "stderr");
@@ -1595,9 +1608,16 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       const { values: statusValues, names } = yield* buildStatusValues(statusExcluded, values);
       yield* output.raw(renderStatusPretty(statusValues, names));
       yield* output.raw(startSecurityNotice(), "stderr");
-    } else {
+    } else if (Option.isNone(checksFailure)) {
+      // Machine output carries one document, so a check failure replaces the status result.
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
-      yield* output.success("", statusValues);
+      const report = yield* Ref.get(checksReport);
+      yield* output.success("", {
+        ...statusValues,
+        ...(Option.isSome(report) ? { checks: report.value } : {}),
+      });
     }
+
+    if (Option.isSome(checksFailure)) return yield* checksFailure.value;
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

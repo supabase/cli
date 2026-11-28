@@ -201,6 +201,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
 const flags = (over: Partial<MigrationUpFlags> = {}): MigrationUpFlags => ({
   includeAll: over.includeAll ?? false,
+  skipChecks: over.skipChecks ?? false,
   dbUrl: over.dbUrl ?? Option.none(),
   remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
@@ -245,9 +246,9 @@ describe("migration up", () => {
       const stdout = stripAnsi(out.stdoutText);
       expect(stderr).toContain("Applying migration 20240102000000_b.sql...");
       expect(stderr).toContain("Applying migration 20240103000000_c.sql...");
-      expect(stdout).toContain("Local database is up to date.");
       expect(stdout).not.toContain("Applying migration");
-      expect(stderr).not.toContain("Local database is up to date.");
+      expect(stdout).not.toContain("up to date");
+      expect(stderr).not.toContain("up to date");
       expect(insertedVersions(queries)).toEqual(["20240102000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });

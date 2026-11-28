@@ -45,6 +45,7 @@ import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.t
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
+import { MigrationChecksBlockedError } from "../../command-internal/migration-checks.ts";
 import {
   DebugFlag,
   ExperimentalFlag,
@@ -92,6 +93,7 @@ function flags(overrides: Partial<StartFlags> = {}): StartFlags {
   return {
     exclude: overrides.exclude ?? [],
     ignoreHealthCheck: overrides.ignoreHealthCheck ?? false,
+    skipChecks: overrides.skipChecks ?? false,
     preview: overrides.preview ?? false,
   };
 }
@@ -449,8 +451,9 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
  * schema init is three one-shot `DockerRun` jobs instead), so this mostly just needs to exist
  * and satisfy the type.
  */
-function fakeDbSession() {
+function fakeDbSession(findingRows: ReadonlyArray<Record<string, unknown>> = []) {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
+  let lintReads = 0;
   const session: DbSession = {
     exec: (sql) =>
       Effect.sync(() => {
@@ -459,7 +462,10 @@ function fakeDbSession() {
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });
-        return [];
+        if (!sql.startsWith("select l.*")) return [];
+        // The first read is the replay's baseline, taken before any migration created an object.
+        lintReads += 1;
+        return lintReads === 1 ? [] : findingRows;
       }),
     execBatch: (statements) => sequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
@@ -494,6 +500,8 @@ interface SetupOpts {
   readonly networkId?: Option.Option<string>;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
+  /** Splinter rows the fake database returns to a security check read. */
+  readonly findingRows?: ReadonlyArray<Record<string, unknown>>;
 }
 
 const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
@@ -512,7 +520,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
   });
-  const dbSession = fakeDbSession();
+  const dbSession = fakeDbSession(opts.findingRows);
   const layer = Layer.mergeAll(
     unusedStackServices,
     cliConfigValuesTestLayer,
@@ -2465,6 +2473,72 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("Initialising schema...");
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("-o json carries the replay's warn-level findings in the status result", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { layer, out, workdir } = yield* setup({
+          route: freshVolumeRoute(defaultRoute()),
+          format: "json",
+          configContents: 'project_id = "demo"\n',
+          findingRows: [
+            {
+              name: "rls_disabled_in_public",
+              metadata: { schema: "public", name: "open_t", type: "table" },
+            },
+          ],
+        });
+        yield* fs.makeDirectory(`${workdir}/supabase/migrations`, { recursive: true });
+        yield* fs.writeFileString(
+          `${workdir}/supabase/migrations/20261001000000_open.sql`,
+          "create table public.open_t(id int);\n",
+        );
+
+        yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+        const success = out.messages.find((message) => message.type === "success");
+        expect(success?.data?.["checks"]).toMatchObject({
+          outcome: "applied_with_findings",
+          findings: [{ rule: "rls_disabled_in_public", severity: "warn", name: "open_t" }],
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "a failed end-state security check leaves the stack up and -o json emits only the failure",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { layer, out, workdir } = yield* setup({
+            route: freshVolumeRoute(defaultRoute()),
+            format: "json",
+            configContents:
+              'project_id = "demo"\n[db.migrations.checks]\nrls_disabled_in_public = "error"\n',
+            findingRows: [
+              {
+                name: "rls_disabled_in_public",
+                metadata: { schema: "public", name: "open_t", type: "table" },
+              },
+            ],
+          });
+          yield* fs.makeDirectory(`${workdir}/supabase/migrations`, { recursive: true });
+          yield* fs.writeFileString(
+            `${workdir}/supabase/migrations/20261001000000_open.sql`,
+            "create table public.open_t(id int);\n",
+          );
+
+          const exit = yield* Effect.exit(
+            start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer)),
+          );
+
+          const error = Exit.isFailure(exit)
+            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+            : undefined;
+          expect(error).toBeInstanceOf(MigrationChecksBlockedError);
+          expect(error instanceof MigrationChecksBlockedError && error.errorCode).toBe("SB001");
+          expect(out.messages.filter((message) => message.type === "success")).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 

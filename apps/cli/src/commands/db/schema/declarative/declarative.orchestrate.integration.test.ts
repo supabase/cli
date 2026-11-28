@@ -1,3 +1,4 @@
+import { resolveMigrationChecksPolicy } from "../../../../command-internal/migration-checks-policy.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
@@ -58,6 +59,7 @@ const toml: DbTomlValues = {
     vaultNames: [],
   },
   migrationsEnabled: true,
+  migrationChecks: resolveMigrationChecksPolicy(undefined),
   schemaPaths: [],
   schemaPathPatterns: [],
   seed: { enabled: true, sqlPaths: [] },
