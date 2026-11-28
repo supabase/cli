@@ -2,6 +2,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -53,12 +54,11 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
           {
             operationId: "v1-get-security-advisors",
             kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "baseline", is: true }],
-          },
-          {
-            operationId: "v1-get-security-advisors",
-            kind: "required",
-            when: [{ dbTarget: ["linked"] }, { flag: "type", present: false }],
+            when: [
+              { dbTarget: ["linked"] },
+              { flag: "type", present: false },
+              { flag: "baseline", is: false },
+            ],
           },
           {
             operationId: "v1-get-performance-advisors",
@@ -81,6 +81,7 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
         ],
         noApiEffectFlags: ["level", "fail-on"],
       },
+      withCondition(dbConfig, { flag: "baseline", is: true }),
       withCondition(projectRefPicker, { dbTarget: ["linked"] }),
       withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       branchResolution,

@@ -150,17 +150,23 @@ describe("db.migrations.checks TOML loading", () => {
       ]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise));
 
-  it.each(["public.countries", "my schema.t", "public.my table", "a.b.c"])(
-    "accepts exclusion entry %j",
-    (entry) =>
-      Effect.gen(function* () {
-        const loaded = yield* loadToml(
-          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["${entry}"]`,
-        );
-        expect(loaded.config.db.migrations.checks).toEqual({
-          exclude: { rls_disabled_in_public: [entry] },
-        });
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
+  it.each([
+    "public.countries",
+    "my schema.t",
+    "public.my table",
+    "a.b.c",
+    '"app. data".records',
+    'public."a.b"',
+    '"a""b"." t "',
+  ])("accepts exclusion entry %j", (entry) =>
+    Effect.gen(function* () {
+      const loaded = yield* loadToml(
+        `[db.migrations.checks.exclude]\nrls_disabled_in_public = ['${entry}']`,
+      );
+      expect(loaded.config.db.migrations.checks).toEqual({
+        exclude: { rls_disabled_in_public: [entry] },
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
   );
 
   it.each([
@@ -173,6 +179,10 @@ describe("db.migrations.checks TOML loading", () => {
     '"public."',
     '""',
     "42",
+    '"public.\\"legacy"',
+    '"pub\\"lic.t"',
+    '"public.t$sbc$"',
+    '"\\"public.t"',
   ])("rejects malformed exclusion entry %s and names its value and index", (entry) =>
     Effect.gen(function* () {
       const issues = yield* loadIssues(

@@ -930,15 +930,11 @@ interface TomlPlanResult {
 }
 
 /**
- * Resolves every leaf edit's placement against the scanned document (see
- * {@link placementOffsetForNewTable} for the priority rule for brand-new tables) and returns the
- * full splice list plus which new tables each leaf caused to be created.
- */
-/**
- * Splices that append `additions` to the non-empty array spanning `[start, end)`, after its last
- * item, following its layout: inline arrays stay inline, multi-line arrays get one line per item
- * with the last item's indentation, and the trailing-comma style is kept. `undefined` when the
- * span cannot be read as an array.
+ * Splices that append `additions` to the array spanning `[start, end)`, after its last item,
+ * following its layout: inline arrays stay inline, multi-line arrays get one line per item with
+ * the last item's indentation, and the trailing-comma style is kept. An empty multi-line array
+ * gets its items above the closing bracket, so comments inside it stay. `undefined` when the span
+ * cannot be read as an array, or is an empty inline one.
  */
 function arrayAppendSplices(
   source: string,
@@ -954,9 +950,11 @@ function arrayAppendSplices(
   let cursor = start + 1;
   let lastEnd = -1;
   let lastIsComma = false;
+  let lastComment = -1;
   while (cursor < close) {
     const ch = charAt(source, cursor);
     if (ch === "#") {
+      lastComment = cursor;
       cursor = skipToEndOfLine(source, cursor);
       continue;
     }
@@ -985,10 +983,22 @@ function arrayAppendSplices(
     lastEnd = next;
     cursor = next;
   }
-  if (lastEnd === -1) {
-    return undefined;
-  }
   const items = additions.map(renderScalar);
+  if (lastEnd === -1) {
+    if (!source.slice(start, close).includes("\n")) {
+      return undefined;
+    }
+    const closeLineStart = source.lastIndexOf("\n", close - 1) + 1;
+    const commentLineStart = source.lastIndexOf("\n", lastComment - 1) + 1;
+    const indent =
+      lastComment !== -1 && commentLineStart > start
+        ? indentOfLineAt(source, commentLineStart)
+        : `${indentOfLineAt(source, closeLineStart)}  `;
+    const lines = items
+      .map((item, index) => `${indent}${item}${index < items.length - 1 ? "," : ""}${newline}`)
+      .join("");
+    return [{ start: closeLineStart, end: closeLineStart, text: lines }];
+  }
   if (!source.slice(lastEnd, close).includes("\n")) {
     return [
       {
@@ -1025,6 +1035,11 @@ function appendedElements(
     : undefined;
 }
 
+/**
+ * Resolves every leaf edit's placement against the scanned document (see
+ * {@link placementOffsetForNewTable} for the priority rule for brand-new tables) and returns the
+ * full splice list plus which new tables each leaf caused to be created.
+ */
 function planTomlSplices(
   scan: TomlScanResult,
   leaves: ReadonlyArray<LeafEdit>,

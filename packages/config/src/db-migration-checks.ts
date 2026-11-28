@@ -46,9 +46,13 @@ export const mapMigrationCheckRules = <A>(
 
 const Severity = Schema.Literals(SEVERITIES);
 
-// Only the first dot separates schema from name; whitespace is allowed inside either, not at their edges.
+// The `@supabase/pg-checks` exclusion grammar, narrowed so an unquoted part has no edge whitespace:
+// either part may be double-quoted (`""` escapes a quote), an unquoted schema ends at the first dot,
+// and an unquoted name may hold dots. `$sbc$` and `$sbcq$` would close the checks' quoted SQL.
 const ObjectName = Schema.String.check(
-  Schema.isPattern(/^(?!\s)[^.]*[^.\s]\.(?!\s)[\s\S]*\S(?![\s\S])/u),
+  Schema.isPattern(
+    /^(?![\s\S]*\$sbcq?\$)(?:"(?:[^"]|"")+"|[^".\s](?:[^".]*[^".\s])?)\.(?:"(?:[^"]|"")+"|[^"\s](?:[^"]*[^"\s])?)$/u,
+  ),
 );
 
 const TypedMigrationChecks = Schema.Struct({

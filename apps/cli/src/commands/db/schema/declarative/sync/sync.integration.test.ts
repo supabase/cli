@@ -91,6 +91,7 @@ import { selection } from "../../../../../../tests/helpers/pins.ts";
 
 interface SetupOpts {
   experimental?: boolean;
+  format?: "text" | "json";
   args?: ReadonlyArray<string>;
   yes?: boolean;
   stdinIsTty?: boolean;
@@ -217,6 +218,7 @@ function syncStackApi(workdir: string, port: number) {
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({
+    format: opts.format,
     promptConfirmResponses: opts.promptConfirmResponses,
     promptSelectResponses: opts.promptSelectResponses,
     promptTextResponses: opts.promptTextResponses,
@@ -978,6 +980,24 @@ describe("db schema declarative sync integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
         true,
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--apply -o json emits the security check report", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* seedDeclarative(tmp.current);
+      yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
+      const success = s.out.messages.find((message) => message.type === "success");
+      expect(success?.data?.["checks"]).toEqual({
+        outcome: "passed",
+        findings: [],
+        checkedAfterCommit: [],
+      });
     }).pipe(Effect.provide(s.layer));
   });
 

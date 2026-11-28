@@ -482,6 +482,27 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
         }),
     );
 
+    it.effect(
+      "a file that commits a statement outside a transaction and then fails reports its warnings",
+      () =>
+        Effect.gen(function* () {
+          const { exit, stderr } = yield* runUp({
+            config: "",
+            migrations: {
+              "20261001000024_partial.sql":
+                "-- pg-delta: transaction=false\ncreate table public.partial_warn_t(id int);\nselect 1 / 0;\n",
+            },
+          });
+
+          const error = Exit.isFailure(exit)
+            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+            : undefined;
+          expect(error).toBeInstanceOf(MigrationApplyError);
+          expect(stderr).toContain("rls_disabled_in_public: public.partial_warn_t");
+          expect(yield* tableExists("partial_warn_t")).toBe(true);
+        }),
+    );
+
     it.effect("a blocked file lists only the warnings its run introduced", () =>
       Effect.gen(function* () {
         const { workdir } = yield* makeProject({
@@ -696,25 +717,30 @@ layer(testDatabaseLayer, { timeout: 240_000, excludeTestServices: true })(
         }),
     );
 
-    it.effect("db reset --remote rejects check settings before dropping any schema", () =>
-      Effect.gen(function* () {
-        const { workdir } = yield* makeProject({
-          config: `[api]\nschemas = ["public, extensions"]\n\n${RLS_ERROR}`,
-          migrations: { "20261001000023_kept.sql": "create table public.unused_t(id int);\n" },
-        });
-        yield* sql("create table public.survivor_t(id int)");
+    it.effect.each([
+      ["a comma", "public, extensions"],
+      ["a dollar-quote delimiter", "public$sbc$"],
+    ])(
+      "db reset --remote rejects an [api].schemas entry with %s before dropping any schema",
+      ([, schema]) =>
+        Effect.gen(function* () {
+          const { workdir } = yield* makeProject({
+            config: `[api]\nschemas = ["${schema}"]\n\n${RLS_ERROR}`,
+            migrations: { "20261001000023_kept.sql": "create table public.unused_t(id int);\n" },
+          });
+          yield* sql("create table public.survivor_t(id int)");
 
-        const { exit } = yield* runCommand(
-          workdir,
-          dbReset(remoteResetFlags("postgresql://db.example.com:5432/postgres")).pipe(
-            Effect.provide(remoteResetLayer),
-          ),
-          { remote: true },
-        );
+          const { exit } = yield* runCommand(
+            workdir,
+            dbReset(remoteResetFlags("postgresql://db.example.com:5432/postgres")).pipe(
+              Effect.provide(remoteResetLayer),
+            ),
+            { remote: true },
+          );
 
-        expect(blockedError(exit).reason).toBe("invalid_config");
-        expect(yield* tableExists("survivor_t")).toBe(true);
-      }),
+          expect(blockedError(exit).reason).toBe("invalid_config");
+          expect(yield* tableExists("survivor_t")).toBe(true);
+        }),
     );
 
     it.effect("migration down checks the replayed end state", () =>

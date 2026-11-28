@@ -501,18 +501,16 @@ const execMigrationBatch = <E, C = never>(
         );
 
       const checkStatements = inBatchCheck?.statements ?? [];
+      const outsideOneTransaction =
+        transactionMode === "none" ||
+        statements.some(hasTransactionControl) ||
+        statements.some(isPipelineIncompatible);
       // The check must share the file's single implicit transaction to roll it back, so files
       // that run outside one, or across several, are checked after commit instead.
       const checkMode: FileCheckMode =
-        checkStatements.length === 0
-          ? "none"
-          : transactionMode === "none" ||
-              statements.some(hasTransactionControl) ||
-              statements.some(isPipelineIncompatible)
-            ? "after_commit"
-            : "in_batch";
+        checkStatements.length === 0 ? "none" : outsideOneTransaction ? "after_commit" : "in_batch";
       yield* Effect.annotateCurrentSpan("migration_checks.mode", checkMode);
-      if (checkMode === "after_commit") inBatchCheck?.onAfterCommit();
+      if (outsideOneTransaction) inBatchCheck?.onAfterCommit();
 
       // Session settings must remain active for the nontransactional action, so no transaction
       // boundary is added around this branch.
@@ -719,6 +717,7 @@ export const applyMigrations = <E>(
     const tracker = checks === undefined ? undefined : yield* startMigrationChecks(session, checks);
     const checkedAfterCommit: Array<string> = [];
     let committed = 0;
+    let committedOutsideTransaction = false;
     // Sorted by version, not file name, so callers passing a name-ordered listing (`db reset`,
     // the shadow-database replay) apply files in the same order `db push` does. Idempotent for
     // callers that already sorted.
@@ -741,7 +740,10 @@ export const applyMigrations = <E>(
             : {
                 statements: tracker.inBatch,
                 onFailure: (check) => tracker.inBatchFailure(file, check),
-                onAfterCommit: () => checkedAfterCommit.push(file),
+                onAfterCommit: () => {
+                  committedOutsideTransaction = true;
+                  if (tracker.inBatch.length > 0) checkedAfterCommit.push(file);
+                },
               },
         );
         committed += 1;
@@ -749,7 +751,7 @@ export const applyMigrations = <E>(
     }).pipe(
       Effect.tapError((error) =>
         tracker === undefined ||
-        (committed === 0 && checkedAfterCommit.length === 0) ||
+        (committed === 0 && !committedOutsideTransaction) ||
         error instanceof DbConnectError
           ? Effect.void
           : session.exec("rollback").pipe(

@@ -633,43 +633,65 @@ describe("db advisors — linked", () => {
   );
 
   it.effect(
-    "--baseline writes the linked project's findings for rules that are not off to the exclude list",
+    "--baseline reads the linked database with the checkout's [api].schemas, as db push checks it",
     () => {
       const lint = (name: string, schema: string, table: string) => ({
         ...securityLint,
         name,
         metadata: { schema, name: table, type: "table" },
       });
-      const { layer, api, cache } = setup({
-        securityLints: [
-          lint("rls_disabled_in_public", "public", "legacy"),
+      const { layer, api, connection } = setup({
+        rows: [
+          lint("rls_disabled_in_public", "private_api", "orders"),
           lint("rls_disabled_in_public", "public", "kept"),
           lint("rls_enabled_no_policy", "public", "muted"),
           lint("not_a_check_rule", "public", "other"),
         ],
+        realLayers: true,
       });
+      const resolverRequests: Array<StubbedRequest> = [];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const configPath = `${tempRoot.current}/supabase/config.toml`;
         yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
         yield* fs.writeFileString(
           configPath,
-          '[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["public.kept"]\n',
+          '[api]\nschemas = ["public", "private_api"]\n\n[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["\\"public\\".kept"]\n',
+        );
+        yield* stubManagementApi(resolverRequests, serveLinkedDatabase(VALID_REF));
+
+        yield* dbAdvisors(
+          linkedFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            baseline: true,
+          }),
         );
 
-        yield* dbAdvisors(linkedFlags({ baseline: true }));
-
         expect(yield* fs.readFileString(configPath)).toBe(
-          '[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["public.kept", "public.legacy"]\n',
+          '[api]\nschemas = ["public", "private_api"]\n\n[db.migrations.checks]\nrls_enabled_no_policy = "off"\n\n[db.migrations.checks.exclude]\n# reviewed\nrls_disabled_in_public = ["\\"public\\".kept", "private_api.orders"]\n',
+        );
+        expect(connection.execs.some((sql) => sql.includes("'public,private_api'"))).toBe(true);
+        expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          true,
         );
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { remote: true, baseline: true },
-          requests: api.requests,
+          activeFlags: { remote: VALID_REF, baseline: true },
+          requests: [...asRecordedRequests(resolverRequests), ...api.requests],
           exact: true,
         });
-        expect(cache.cached).toBe(true);
-      }).pipe(Effect.provide(layer));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
     },
   );
 
@@ -688,7 +710,7 @@ describe("db advisors — linked", () => {
     "--baseline honours -o json, appends to a commented list, and leaves the file alone when nothing is new",
     () => {
       const { layer, out } = setup({
-        securityLints: [
+        rows: [
           {
             ...securityLint,
             name: "rls_disabled_in_public",
@@ -725,7 +747,7 @@ describe("db advisors — linked", () => {
     "--baseline extends a matched remote's own exclude list, which replaces the root one",
     () => {
       const { layer } = setup({
-        securityLints: [
+        rows: [
           {
             ...securityLint,
             name: "rls_disabled_in_public",
@@ -751,6 +773,36 @@ describe("db advisors — linked", () => {
     },
   );
 
+  it.effect(
+    "--baseline gives a matched remote without its own list one that keeps the root entries",
+    () => {
+      const { layer } = setup({
+        rows: [
+          {
+            ...securityLint,
+            name: "rls_disabled_in_public",
+            metadata: { schema: "public", name: "legacy", type: "table" },
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const configPath = `${tempRoot.current}/supabase/config.toml`;
+        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          configPath,
+          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.root"]\n\n[remotes.prod]\nproject_id = "${VALID_REF}"\n`,
+        );
+
+        yield* dbAdvisors(linkedFlags({ baseline: true }));
+
+        expect(yield* fs.readFileString(configPath)).toBe(
+          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.root"]\n\n[remotes.prod]\nproject_id = "${VALID_REF}"\n\n[remotes.prod.db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.root", "public.legacy"]\n`,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("--baseline quotes object names the config could not read unquoted", () => {
     const lint = (schema: string, table: string) => ({
       ...securityLint,
@@ -758,7 +810,14 @@ describe("db advisors — linked", () => {
       metadata: { schema, name: table, type: "table" },
     });
     const { layer, out } = setup({
-      securityLints: [lint("public", "legacy "), lint("api.v2", "users"), lint("public", 'a"b')],
+      rows: [
+        lint("public", "legacy "),
+        lint("api.v2", "users"),
+        lint("public", 'a"b'),
+        lint("app. data", "records"),
+        lint("public", "a.b.c"),
+        lint(" lead", "x"),
+      ],
     });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -771,7 +830,7 @@ describe("db advisors — linked", () => {
       yield* dbAdvisors(linkedFlags({ baseline: true }));
 
       expect(yield* fs.readFileString(configPath)).toContain(
-        String.raw`rls_disabled_in_public = ["\"api.v2\".users", "public.\"a\"\"b\"", "public.\"legacy \""]`,
+        String.raw`rls_disabled_in_public = ["\" lead\".x", "\"api.v2\".users", "\"app. data\".records", "public.\"a\"\"b\"", "public.\"legacy \"", "public.a.b.c"]`,
       );
       expect(out.stdoutText).toContain("No new findings");
     }).pipe(Effect.provide(layer));

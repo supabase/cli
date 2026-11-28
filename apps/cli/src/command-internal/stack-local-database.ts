@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
 import type { DatabaseInstance, ServiceCreationInput, Stack } from "@supabase/stack/effect";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
@@ -15,7 +15,7 @@ import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
 import { lockedSelection } from "./stack-lock.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
-import { MigrationChecksBlockedError } from "./migration-checks.ts";
+import { leavesMigrationsApplied, MigrationChecksBlockedError } from "./migration-checks.ts";
 import { catalogDatabaseServices } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
 import {
@@ -371,10 +371,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   }).pipe(
     // A failed end-state security check leaves the new database running with its migrations.
     Effect.onError((cause) =>
-      Option.exists(
-        Cause.findErrorOption(cause),
-        (error) => error instanceof MigrationChecksBlockedError,
-      )
+      leavesMigrationsApplied(cause)
         ? Effect.void
         : database.destroy.pipe(
             Effect.tapError((cause) =>

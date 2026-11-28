@@ -6,8 +6,9 @@ import {
   type Fix,
   parseFindings,
   rulesAt,
+  validateCheckInputs,
 } from "@supabase/pg-checks";
-import { Context, Data, Effect, Option, type Ref } from "effect";
+import { Cause, Context, Data, Effect, Option, type Ref } from "effect";
 
 import { Output } from "../shared/output/output.service.ts";
 import {
@@ -110,6 +111,16 @@ export class MigrationChecksBlockedError extends Data.TaggedError("MigrationChec
       : actionability.invalidConfig;
   }
 }
+
+/**
+ * True when `cause` is a check failure raised once migrations applied, which leaves the database
+ * as it is; a rejected configuration fails before anything applies, so its caller rolls back.
+ */
+export const leavesMigrationsApplied = (cause: Cause.Cause<unknown>): boolean =>
+  Option.exists(
+    Cause.findErrorOption(cause),
+    (error) => error instanceof MigrationChecksBlockedError && error.reason !== "invalid_config",
+  );
 
 const SKIP_CHECKS_SUGGESTION = "Rerun with --skip-checks to apply without security checks.";
 
@@ -258,6 +269,19 @@ const validateExposedSchemas = Effect.fnUntraced(function* (schemas: ReadonlyArr
   });
 });
 
+/** Runs a `@supabase/pg-checks` SQL builder, failing with `invalid_config` where it would throw. */
+const buildChecks = <A>(build: () => A) =>
+  Effect.try({
+    try: build,
+    catch: (cause) =>
+      new MigrationChecksBlockedError({
+        message: `Security checks cannot use this configuration: ${errorMessage(cause)}`,
+        suggestion:
+          "Fix [api].schemas or [db.migrations.checks.exclude] in config.toml, or rerun with --skip-checks.",
+        reason: "invalid_config",
+      }),
+  });
+
 /**
  * Fails before any destructive step when the checks would reject this run's settings; a skipped
  * or all-off run passes.
@@ -268,13 +292,19 @@ export const preflightMigrationChecks = Effect.fnUntraced(function* (
   if (run.skip) return;
   if (rulesAt(run.policy, "error").length + rulesAt(run.policy, "warn").length === 0) return;
   yield* validateExposedSchemas(run.exposedSchemas);
+  const timeoutMs = yield* MigrationChecksTimeoutMs;
+  yield* buildChecks(() =>
+    validateCheckInputs(run.policy, { exposedSchemas: run.exposedSchemas, timeoutMs }),
+  );
 });
 
 const readFindings = Effect.fn("MigrationChecks.read")(function* (
   session: DbSession,
   run: Pick<MigrationChecksRun, "policy" | "exposedSchemas">,
 ) {
-  const read = buildAfterCommitRead(run.policy, { exposedSchemas: run.exposedSchemas });
+  const read = yield* buildChecks(() =>
+    buildAfterCommitRead(run.policy, { exposedSchemas: run.exposedSchemas }),
+  );
   const recover = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.tapError(() =>
@@ -299,7 +329,7 @@ export const readMigrationCheckFindings = Effect.fn("MigrationChecks.readAll")(f
   session: DbSession,
   run: Pick<MigrationChecksRun, "policy" | "exposedSchemas">,
 ) {
-  yield* validateExposedSchemas(run.exposedSchemas);
+  yield* preflightMigrationChecks({ ...run, skip: false });
   return yield* readFindings(session, run);
 });
 
@@ -539,8 +569,11 @@ export const startMigrationChecks = Effect.fn("MigrationChecks.start")(function*
       "migration_checks.checked_after_commit_count": report.checkedAfterCommit.length,
     }).pipe(Effect.as(report));
 
+  const inBatch = yield* buildChecks(() =>
+    buildCheckStatements(run.policy, { exposedSchemas: run.exposedSchemas, timeoutMs }),
+  );
   const tracker: MigrationChecksTracker = {
-    inBatch: buildCheckStatements(run.policy, { exposedSchemas: run.exposedSchemas, timeoutMs }),
+    inBatch,
     inBatchFailure: (file, check) =>
       inBatchCheckError(file, check, preexisting, beforeKeys, targetFlags),
     afterCommit: Effect.fn("MigrationChecks.afterCommit")(function* (

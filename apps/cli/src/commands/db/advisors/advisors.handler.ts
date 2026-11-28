@@ -16,8 +16,6 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
 import { readMigrationCheckFindings } from "../../../command-internal/migration-checks.ts";
-import { getDocumentValue } from "../../../config/cli-config-document.ts";
-import { MIGRATION_CHECK_RULES, type MigrationCheckRule } from "@supabase/config/internal";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
@@ -38,13 +36,7 @@ import {
   scanAdvisorLintRow,
 } from "./advisors.format.ts";
 import { fetchPerformanceAdvisors, fetchSecurityAdvisors } from "./advisors.linked.ts";
-import {
-  type BaselineExclusion,
-  baselineRules,
-  exclusionEntry,
-  loadBaselinePolicy,
-  writeBaseline,
-} from "./advisors.baseline.ts";
+import { baselineRules, loadBaselinePolicy, writeBaseline } from "./advisors.baseline.ts";
 import { splitLintsSql } from "./advisors.lints-sql.ts";
 
 /** Established output-contract suggestion for a missing/invalid access token. */
@@ -72,9 +64,9 @@ const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSess
   return rows.map(scanAdvisorLintRow);
 });
 
-/** Runs `use` on a connection to the local (or `--db-url`) database. */
-const withLocalSession = <A, E, R>(
-  target: Exclude<ResolvedTarget, { readonly kind: "linked" }>,
+/** Runs `use` on a connection to the target database. */
+const withSession = <A, E, R>(
+  target: ResolvedTarget,
   dnsResolver: "native" | "https",
   use: (session: DbSession) => Effect.Effect<A, E, R>,
 ) =>
@@ -103,7 +95,7 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   level: string,
 ) {
   const output = yield* Output;
-  const lints = yield* withLocalSession(target, dnsResolver, (session) =>
+  const lints = yield* withSession(target, dnsResolver, (session) =>
     Effect.gen(function* () {
       yield* session.exec("begin").pipe(
         Effect.mapError(
@@ -187,55 +179,39 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   );
 });
 
-const baselineEntry = (
-  rule: MigrationCheckRule,
-  schema: string,
-  name: string,
-): ReadonlyArray<BaselineExclusion> => {
-  const object = exclusionEntry(schema, name);
-  return object === undefined ? [] : [{ rule, object }];
-};
-
 /**
  * `--baseline`: reads every current finding for the `[db.migrations.checks]` rules that are not
- * off and records it in `[db.migrations.checks.exclude]`. A linked project's findings come from
- * its security advisors, others from the same read migrations run.
+ * off, with the read `db push` runs and this checkout's `[api].schemas`, and records it in
+ * `[db.migrations.checks.exclude]`.
  */
 const runBaseline = Effect.fn("db.advisors.baseline")(function* (
   target: ResolvedTarget,
   dnsResolver: "native" | "https",
 ) {
   const checks = yield* loadBaselinePolicy(target.kind === "linked" ? target.ref : undefined);
-  const rules = new Set<string>(baselineRules(checks.policy));
-  const findings: ReadonlyArray<BaselineExclusion> =
-    rules.size === 0
+  const read = withSession(target, dnsResolver, (session) =>
+    readMigrationCheckFindings(session, checks).pipe(
+      Effect.catchTag(
+        "DbExecError",
+        (cause) => new DbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
+      ),
+    ),
+  );
+  const findings =
+    baselineRules(checks.policy).length === 0
       ? []
       : target.kind === "linked"
-        ? (yield* withLinkedAccess(target, fetchSecurityAdvisors(target.ref))).flatMap((lint) => {
-            const rule = MIGRATION_CHECK_RULES.find((known) => known === lint.name);
-            const schema = getDocumentValue(lint.metadata, ["schema"]);
-            const name = getDocumentValue(lint.metadata, ["name"]);
-            return rule === undefined ||
-              !rules.has(rule) ||
-              typeof schema !== "string" ||
-              typeof name !== "string"
-              ? []
-              : baselineEntry(rule, schema, name);
-          })
-        : (yield* withLocalSession(target, dnsResolver, (session) =>
-            readMigrationCheckFindings(session, checks).pipe(
-              Effect.catchTag(
-                "DbExecError",
-                (cause) =>
-                  new DbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
-              ),
-            ),
-          )).flatMap((finding) =>
-            finding.schema === null || finding.name === null
-              ? []
-              : baselineEntry(finding.rule, finding.schema, finding.name),
-          );
-  yield* writeBaseline(checks.policy, findings, checks.appliedRemote);
+        ? yield* read.pipe(Effect.ensuring((yield* LinkedProjectCache).cache(target.ref)))
+        : yield* read;
+  yield* writeBaseline(
+    checks.policy,
+    findings.flatMap((finding) =>
+      finding.schema === null || finding.name === null
+        ? []
+        : [{ rule: finding.rule, schema: finding.schema, name: finding.name }],
+    ),
+    checks.appliedRemote,
+  );
 });
 
 /** Prints the lints (or the empty-result message) and applies `--fail-on`. */

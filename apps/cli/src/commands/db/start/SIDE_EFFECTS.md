@@ -195,7 +195,7 @@ state lives under `$SUPABASE_HOME/stacks/<stackId>/`, including the selected run
 service identities. Postgres-only first create skips analytics and
 pooler artifact downloads. If first initialization fails after the database is created, the
 new database is destroyed so the command can be retried after fixing the cause, except for a
-failed migration security check, which keeps it (see Notes). If cleanup itself
+failed end-state security check, which keeps it (see Notes). If cleanup itself
 fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.
 Resuming a stopped database whose saved pin differs from the selected one in anything but a
 slim-services revision rebinds the same instance to the selected pin before starting; its id and

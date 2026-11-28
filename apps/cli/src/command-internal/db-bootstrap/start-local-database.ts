@@ -8,7 +8,7 @@
  * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
-import { Cause, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -29,7 +29,7 @@ import { loadLocalProjectContext } from "../local-project-context.ts";
 import { cliProjectFilterValue } from "../docker-ids.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
-import { MigrationChecksBlockedError } from "../migration-checks.ts";
+import { leavesMigrationsApplied } from "../migration-checks.ts";
 import { rollbackStart } from "./rollback.ts";
 import { startDatabase } from "./start-database.ts";
 
@@ -262,10 +262,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   }).pipe(
     // A failed end-state security check leaves the started database running with its migrations.
     Effect.onError((cause) =>
-      Option.exists(
-        Cause.findErrorOption(cause),
-        (error) => error instanceof MigrationChecksBlockedError,
-      )
+      leavesMigrationsApplied(cause)
         ? Effect.void
         : rollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
     ),

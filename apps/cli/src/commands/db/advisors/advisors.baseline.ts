@@ -4,6 +4,7 @@ import {
   type MigrationCheckRule,
   writeCliConfigDocumentText,
 } from "@supabase/config/internal";
+import { parseObjectName } from "@supabase/pg-checks";
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { getDocumentValue } from "../../../config/cli-config-document.ts";
@@ -20,8 +21,15 @@ import {
 } from "../../../command-internal/workdir-project.ts";
 import { DbAdvisorsBaselineError } from "./advisors.errors.ts";
 
-/** One object a `[db.migrations.checks.exclude]` rule skips. */
-export interface BaselineExclusion {
+/** A finding to baseline: the rule and the object's raw schema and name. */
+interface BaselineFinding {
+  readonly rule: MigrationCheckRule;
+  readonly schema: string;
+  readonly name: string;
+}
+
+/** One object a `[db.migrations.checks.exclude]` rule skips, as written in the config. */
+interface BaselineExclusion {
   readonly rule: MigrationCheckRule;
   readonly object: string;
 }
@@ -35,7 +43,7 @@ const quotedPart = (part: string): string => `"${part.replaceAll('"', '""')}"`;
  * double-quoted when it holds a quote, edge whitespace, or (for the schema) a dot; `undefined`
  * when no entry can name it.
  */
-export const exclusionEntry = (schema: string, name: string): string | undefined => {
+const exclusionEntry = (schema: string, name: string): string | undefined => {
   if (schema === "" || name === "" || [schema, name].some((part) => /\$sbcq?\$/u.test(part))) {
     return undefined;
   }
@@ -62,24 +70,41 @@ export const loadBaselinePolicy = Effect.fn("db.advisors.baseline.policy")(funct
   };
 });
 
-/**
- * Where a rule's exclusions live for the target: a matched `[remotes.<name>]` block's own list
- * replaces the root list, so it is the one to extend.
- */
-const excludePath = (
-  document: unknown,
-  rule: MigrationCheckRule,
-  appliedRemote: string | undefined,
-): ReadonlyArray<string> => {
-  const remotePath = ["remotes", appliedRemote ?? "", ...EXCLUDE_PATH, rule];
-  return appliedRemote !== undefined && Array.isArray(getDocumentValue(document, remotePath))
-    ? remotePath
-    : [...EXCLUDE_PATH, rule];
-};
-
 const fileEntries = (document: unknown, path: ReadonlyArray<string>): ReadonlyArray<string> => {
   const value = getDocumentValue(document, path);
   return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+};
+
+/**
+ * Where a rule's exclusions are written for the target and the entries already there. A matched
+ * `[remotes.<name>]` block's list replaces the root list, so the remote's own list is extended,
+ * and one it lacks starts from the root entries it would otherwise replace.
+ */
+const excludeList = (
+  document: unknown,
+  rule: MigrationCheckRule,
+  appliedRemote: string | undefined,
+): { readonly path: ReadonlyArray<string>; readonly existing: ReadonlyArray<string> } => {
+  const rootPath = [...EXCLUDE_PATH, rule];
+  if (appliedRemote === undefined) {
+    return { path: rootPath, existing: fileEntries(document, rootPath) };
+  }
+  const remotePath = ["remotes", appliedRemote, ...rootPath];
+  return {
+    path: remotePath,
+    existing: Array.isArray(getDocumentValue(document, remotePath))
+      ? fileEntries(document, remotePath)
+      : fileEntries(document, rootPath),
+  };
+};
+
+/** Identifies a rule's exclusion of one object, however its entry is quoted. */
+const objectKey = (rule: string, schema: string, name: string): string =>
+  JSON.stringify([rule, schema, name]);
+
+const entryKey = (rule: string, entry: string): string | undefined => {
+  const parsed = parseObjectName(entry);
+  return parsed === null ? undefined : objectKey(rule, parsed.schema, parsed.name);
 };
 
 /**
@@ -90,7 +115,7 @@ const fileEntries = (document: unknown, path: ReadonlyArray<string>): ReadonlyAr
  */
 export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
   policy: MigrationChecksPolicy,
-  findings: ReadonlyArray<BaselineExclusion>,
+  findings: ReadonlyArray<BaselineFinding>,
   appliedRemote: string | undefined,
 ) {
   const output = yield* Output;
@@ -112,26 +137,24 @@ export const writeBaseline = Effect.fn("db.advisors.baseline.write")(function* (
   const loaded = yield* resolvedConfig.fileDeclared.pipe(Effect.mapError(configError));
   const configPath = relativeConfigPath(cliSettings.workdir, loaded.path);
 
-  const excluded = new Set(
-    policy.exclude.map((entry) => JSON.stringify([entry.rule, entry.object])),
-  );
   const added: Array<BaselineExclusion> = [];
   const edits = MIGRATION_CHECK_RULES.flatMap((rule) => {
-    const path = excludePath(loaded.rawDocument, rule, appliedRemote);
-    const existing = fileEntries(loaded.rawDocument, path);
-    const present = new Set(existing);
-    const objects = [
-      ...new Set(
-        findings
-          .filter(
-            (finding) =>
-              finding.rule === rule &&
-              !present.has(finding.object) &&
-              !excluded.has(JSON.stringify([rule, finding.object])),
-          )
-          .map((finding) => finding.object),
-      ),
-    ].toSorted();
+    const { path, existing } = excludeList(loaded.rawDocument, rule, appliedRemote);
+    const skipped = new Set(
+      [
+        ...existing,
+        ...policy.exclude.filter((entry) => entry.rule === rule).map((entry) => entry.object),
+      ].flatMap((entry) => entryKey(rule, entry) ?? []),
+    );
+    const objects: Array<string> = [];
+    for (const finding of findings) {
+      const key = objectKey(rule, finding.schema, finding.name);
+      const object = exclusionEntry(finding.schema, finding.name);
+      if (finding.rule !== rule || object === undefined || skipped.has(key)) continue;
+      skipped.add(key);
+      objects.push(object);
+    }
+    objects.sort();
     added.push(...objects.map((object) => ({ rule, object })));
     return objects.length === 0 ? [] : [{ path, value: [...existing, ...objects] }];
   });

@@ -453,6 +453,7 @@ function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []
  */
 function fakeDbSession(findingRows: ReadonlyArray<Record<string, unknown>> = []) {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
+  let lintReads = 0;
   const session: DbSession = {
     exec: (sql) =>
       Effect.sync(() => {
@@ -461,7 +462,10 @@ function fakeDbSession(findingRows: ReadonlyArray<Record<string, unknown>> = [])
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });
-        return sql.startsWith("select l.*") ? findingRows : [];
+        if (!sql.startsWith("select l.*")) return [];
+        // The first read is the replay's baseline, taken before any migration created an object.
+        lintReads += 1;
+        return lintReads === 1 ? [] : findingRows;
       }),
     execBatch: (statements) => sequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
@@ -2470,6 +2474,36 @@ content_path = "./supabase/templates/custom_notice.html"
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("-o json carries the replay's warn-level findings in the status result", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { layer, out, workdir } = yield* setup({
+          route: freshVolumeRoute(defaultRoute()),
+          format: "json",
+          configContents: 'project_id = "demo"\n',
+          findingRows: [
+            {
+              name: "rls_disabled_in_public",
+              metadata: { schema: "public", name: "open_t", type: "table" },
+            },
+          ],
+        });
+        yield* fs.makeDirectory(`${workdir}/supabase/migrations`, { recursive: true });
+        yield* fs.writeFileString(
+          `${workdir}/supabase/migrations/20261001000000_open.sql`,
+          "create table public.open_t(id int);\n",
+        );
+
+        yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
+
+        const success = out.messages.find((message) => message.type === "success");
+        expect(success?.data?.["checks"]).toMatchObject({
+          outcome: "applied_with_findings",
+          findings: [{ rule: "rls_disabled_in_public", severity: "warn", name: "open_t" }],
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(

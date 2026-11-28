@@ -1865,6 +1865,32 @@ describe("db start stack backend", () => {
     },
   );
 
+  it.effect("destroys a newly created database when the security checks reject the config", () => {
+    const { layer } = setup({
+      configContents: 'project_id = "test"\n[api]\nschemas = ["public", "a,b"]\n',
+      migrations: { "20261001000000_open.sql": "create table public.open_t(id int);\n" },
+    });
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
+      );
+
+      const error = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(error instanceof MigrationChecksBlockedError && error.reason).toBe("invalid_config");
+      expect(fixture.state.destroyed).toBe(true);
+    });
+  });
+
   it.effect(
     "resumes the existing database when its pinned version matches the configured major",
     () => {

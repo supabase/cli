@@ -38,6 +38,10 @@ Issued through the typed client; the generated schema keeps advisor
 `name` / `metadata.type` open, so values the API can add do not fail decoding.
 `--type` selects which endpoints run:
 `security` → security only, `performance` → performance only, `all` → both.
+`--baseline` calls neither advisors endpoint: for a project it connects to the database like
+`db push --remote`, so it may call `GET /v1/projects/{ref}/config/database/pooler` and
+`POST /v1/projects/{ref}/cli/login-role` (no password in `SUPABASE_DB_PASSWORD` or the project
+`.env`).
 
 ## Database (local / `--remote=<url>`)
 
@@ -45,10 +49,10 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 (setup half of `templates/lints.sql`) → the multi-CTE lints query → `ROLLBACK`.
 `--type` filters the resulting rows by category (`SECURITY` / `PERFORMANCE`).
 
-`--baseline` instead runs the `[db.migrations.checks]` read migrations use: `BEGIN`,
-`set_config('search_path', '', true)` (and `pgrst.db_schemas` when `[api].schemas` differs),
-the splinter lint `SELECT` for every rule not at `off`, `ROLLBACK`. For a project it calls only
-`GET /v1/projects/{ref}/advisors/security`.
+`--baseline` instead runs the `[db.migrations.checks]` read migrations use, on every target
+including a project's database: `BEGIN`, `set_config('search_path', '', true)` (and
+`pgrst.db_schemas` when the checkout's `[api].schemas` differs), the splinter lint `SELECT` for
+every rule not at `off`, `ROLLBACK`. It so records the findings `db push` would block on.
 
 ## Environment Variables
 
@@ -65,14 +69,14 @@ honored (see `command-settings.layer.unit.test.ts`).
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                        |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — no issues at or above `--fail-on` (empty result is still `0`)                                                                                                                                                          |
-| `1`  | a remote project or branch with no access token (suggests `supabase login`)                                                                                                                                                      |
-| `1`  | connection / `BEGIN` / setup / query failure (local, `--remote=<url>`)                                                                                                                                                           |
-| `1`  | advisors API non-200 (remote project or branch)                                                                                                                                                                                  |
-| `1`  | a lint's level is at or above `--fail-on`                                                                                                                                                                                        |
-| `1`  | `--baseline`: config load failure, a layout the editor refuses (for example an `env(...)` exclude list), or the write failing (`DbAdvisorsBaselineError`); an `[api].schemas` entry with a comma (`MigrationChecksBlockedError`) |
+| Code | Condition                                                                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — no issues at or above `--fail-on` (empty result is still `0`)                                                                                                                                                                        |
+| `1`  | a remote project or branch with no access token (suggests `supabase login`)                                                                                                                                                                    |
+| `1`  | connection / `BEGIN` / setup / query failure (local, `--remote=<url>`)                                                                                                                                                                         |
+| `1`  | advisors API non-200 (remote project or branch)                                                                                                                                                                                                |
+| `1`  | a lint's level is at or above `--fail-on`                                                                                                                                                                                                      |
+| `1`  | `--baseline`: config load failure, a layout the editor refuses (for example an `env(...)` exclude list), or the write failing (`DbAdvisorsBaselineError`); `[api].schemas` or exclusions the checks cannot use (`MigrationChecksBlockedError`) |
 
 ## Output
 
@@ -111,9 +115,10 @@ the process exits non-zero (no error envelope is written over the payload).
   as `"schema.name"` under its rule in `[db.migrations.checks.exclude]`, so migration checks stop
   blocking on objects that predate them. A part holding a double quote or edge whitespace (or a
   schema holding a dot) is written SQL-quoted, for example `"api.v2".users`. The entries go to a
-  matched `[remotes.<name>]` block's own list for that rule when it declares one, since that list
-  replaces the base one, and to the base document otherwise. It appends the new entries, sorted,
-  after the existing ones, skips objects the resolved policy already excludes, and leaves every
+  matched `[remotes.<name>]` block's own list for that rule, since that list replaces the base
+  one; a block without one gets a new list that starts with the base entries. Without a matched
+  block they go to the base document. It appends the new entries, sorted, after the existing
+  ones, skips objects already excluded however their entry is quoted, and leaves every
   other byte of the file, comments inside the list included, unchanged; a run with no new
   findings writes nothing. Combining it with `--type`, `--level` or `--fail-on` exits 1 (`DbAdvisorsBaselineError`).
 - Not-logged-in suggestion: `Run supabase login first.`

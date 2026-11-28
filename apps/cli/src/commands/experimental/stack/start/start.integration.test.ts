@@ -1285,6 +1285,57 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("-o json carries the first start's warn-level findings in the ready result", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-checks-" });
+      yield* fs.makeDirectory(`${root}/supabase/migrations`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "checks"\n');
+      yield* fs.writeFileString(
+        `${root}/supabase/migrations/20261001000000_open.sql`,
+        "create table public.open_t(id int);\n",
+      );
+      let lintReads = 0;
+      const database: DbSession = {
+        ...session,
+        query: (sql) =>
+          Effect.sync(() => {
+            if (!sql.startsWith("select l.*")) return [];
+            // The first read is the replay's baseline, taken before the migration created open_t.
+            lintReads += 1;
+            return lintReads === 1
+              ? []
+              : [
+                  {
+                    name: "rls_disabled_in_public",
+                    metadata: { schema: "public", name: "open_t", type: "table" },
+                  },
+                ];
+          }),
+      };
+      const out = mockOutput({ format: "json" });
+
+      yield* stackStart(flags()).pipe(
+        Effect.provide(
+          Layer.merge(
+            layers(root, fakeStack(), out, false),
+            Layer.succeed(DbConnection, {
+              connect: () => Effect.scoped(Effect.succeed(database)),
+            }),
+          ),
+        ),
+      );
+
+      const ready = out.messages.find(
+        (message) => message.type === "success" && message.data?.["id"] !== undefined,
+      );
+      expect(ready?.data?.["checks"]).toMatchObject({
+        outcome: "applied_with_findings",
+        findings: [{ rule: "rls_disabled_in_public", severity: "warn", name: "open_t" }],
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect(
     "a failed end-state security check on first start keeps the stack up and fails with SB001",
     () =>

@@ -53,6 +53,8 @@ import {
 import {
   MigrationChecksBlockedError,
   MigrationChecksDeferral,
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
 } from "../../../../command-internal/migration-checks.ts";
 import { stackStorageCredentialsFor } from "../../../../command-internal/stack-storage.ts";
 import {
@@ -727,7 +729,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     // Set once a fully stopped stack's owner reports the endpoint changes it applied at its own
     // startup; a stack that was already running never re-plans, so this stays empty for it.
     let endpointChanges: ReadonlyArray<EndpointPortChange> = [];
-    const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
+    const reportReady = (
+      report: Effect.Success<ReturnType<typeof startReport>>,
+      message: string,
+      checks?: MigrationChecksReport,
+    ) =>
       Effect.gen(function* () {
         const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
         const connections = stackConnections(
@@ -753,6 +759,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
                     to: change.to,
                   })),
                 }),
+            ...(checks === undefined ? {} : { checks }),
           });
         if (message.length > 0) yield* output.success(message);
         yield* output.raw(
@@ -1064,6 +1071,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       });
     // A failed end-state security check leaves the stack running: it is reported once the stack is up.
     const deferredChecks = yield* Ref.make(Option.none<MigrationChecksBlockedError>());
+    const checksReport = yield* Ref.make(Option.none<MigrationChecksReport>());
     if (initialComposition || serviceKindsChanged) {
       yield* Effect.annotateCurrentSpan({ "stack.migrations_applied": true });
       const migrations = initialComposition
@@ -1084,6 +1092,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ...(migrations === undefined ? {} : { migrations }),
       }).pipe(
         Effect.provideService(MigrationChecksDeferral, deferredChecks),
+        Effect.provideService(MigrationChecksReplayReport, checksReport),
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError((error) =>
           error instanceof MigrationChecksBlockedError ? error : stackError(error),
@@ -1145,7 +1154,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const checksFailure = yield* Ref.get(deferredChecks);
     // Machine output carries one document: the check failure replaces the ready result.
     if (Option.isNone(checksFailure) || output.format === "text") {
-      yield* reportReady(report, "");
+      yield* reportReady(report, "", Option.getOrUndefined(yield* Ref.get(checksReport)));
     }
     if (Option.isSome(checksFailure)) return yield* checksFailure.value;
     return stack.id;

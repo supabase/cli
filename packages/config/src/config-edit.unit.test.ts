@@ -106,6 +106,27 @@ rls_disabled_in_public = [
 `);
   });
 
+  test("fills an empty multi-line array above its closing bracket, keeping its comments", () => {
+    const source = `[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+    # objects reviewed by the security team
+]
+`;
+    const outcome = applyConfigEdits(source, "toml", [
+      {
+        path: ["db", "migrations", "checks", "exclude", "rls_disabled_in_public"],
+        value: ["public.a", "public.b"],
+      },
+    ]);
+    expect(applied(outcome).text).toBe(`[db.migrations.checks.exclude]
+rls_disabled_in_public = [
+    # objects reviewed by the security team
+    "public.a",
+    "public.b"
+]
+`);
+  });
+
   test("appends to an inline array, keeping its trailing comma", () => {
     const source = `[a]
 xs = ["x", ] # note

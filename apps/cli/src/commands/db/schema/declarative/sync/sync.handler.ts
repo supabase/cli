@@ -552,6 +552,12 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     if (Result.isSuccess(applyResult)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
+      // Machine output suppresses the findings on stderr, so the result carries them.
+      if (output.format !== "text" && Option.isSome(applyResult.success)) {
+        yield* output.success("Migration applied successfully.", {
+          checks: applyResult.success.value,
+        });
+      }
       return;
     }
 
@@ -668,7 +674,7 @@ const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(func
         (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
       ),
     );
-  yield* applyMigrations(
+  return yield* applyMigrations(
     session,
     fs,
     path,

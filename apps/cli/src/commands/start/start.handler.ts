@@ -32,6 +32,8 @@ import { aqua, yellow } from "../../command-internal/colors.ts";
 import {
   MigrationChecksDeferral,
   type MigrationChecksBlockedError,
+  MigrationChecksReplayReport,
+  type MigrationChecksReport,
 } from "../../command-internal/migration-checks.ts";
 import {
   apiTlsCertReadErrorMessage,
@@ -1449,8 +1451,10 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // A failed end-state security check leaves the stack running: it is reported once the stack is up.
     const deferredChecks = yield* Ref.make(Option.none<MigrationChecksBlockedError>());
+    const checksReport = yield* Ref.make(Option.none<MigrationChecksReport>());
     const bringUpResult = yield* bringUp.pipe(
       Effect.provideService(MigrationChecksDeferral, deferredChecks),
+      Effect.provideService(MigrationChecksReplayReport, checksReport),
     );
 
     // Only reached when Postgres itself became healthy — the `postgresUnhealthyIgnored`
@@ -1607,7 +1611,11 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     } else if (Option.isNone(checksFailure)) {
       // Machine output carries one document, so a check failure replaces the status result.
       const { values: statusValues } = yield* buildStatusValues(statusExcluded, values);
-      yield* output.success("", statusValues);
+      const report = yield* Ref.get(checksReport);
+      yield* output.success("", {
+        ...statusValues,
+        ...(Option.isSome(report) ? { checks: report.value } : {}),
+      });
     }
 
     if (Option.isSome(checksFailure)) return yield* checksFailure.value;

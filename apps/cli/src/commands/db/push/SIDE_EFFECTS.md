@@ -63,18 +63,18 @@ is set. A hosted target asks one combined confirmation before the first write.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                               |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including "up to date")                                                                                                                                                                                        |
-| `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                                                                                                               |
-| `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                                                                                                                   |
-| `1`  | the combined confirmation declined at the prompt (`HostedMutationDeclinedError`); nothing is written                                                                                                                    |
-| `1`  | the combined confirmation needed but the run can't prompt (JSON or machine output, piped stdin, agent) and neither `--yes` nor a shell `SUPABASE_YES` is set (`HostedMutationConsentRequiredError`); nothing is written |
-| `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                                                                                                  |
-| `1`  | `config.toml` parse failure                                                                                                                                                                                             |
-| `1`  | database connection / migration / seed / roles / vault apply failure                                                                                                                                                    |
-| `1`  | `MigrationChecksBlockedError` — an error-level `[db.migrations.checks]` finding, or the check timing out, rolled the migration and its history row back                                                                 |
-| `1`  | `MigrationChecksBlockedError` — a file checked after commit left an error-level finding, or has error-level rules and the after-commit findings read failed (the migrations stay applied), or an `[api].schemas` entry contains a comma                 |
+| Code | Condition                                                                                                                                                                                                                                    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (including "up to date")                                                                                                                                                                                                             |
+| `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                                                                                                                                    |
+| `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                                                                                                                                        |
+| `1`  | the combined confirmation declined at the prompt (`HostedMutationDeclinedError`); nothing is written                                                                                                                                         |
+| `1`  | the combined confirmation needed but the run can't prompt (JSON or machine output, piped stdin, agent) and neither `--yes` nor a shell `SUPABASE_YES` is set (`HostedMutationConsentRequiredError`); nothing is written                      |
+| `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                                                                                                                       |
+| `1`  | `config.toml` parse failure                                                                                                                                                                                                                  |
+| `1`  | database connection / migration / seed / roles / vault apply failure                                                                                                                                                                         |
+| `1`  | `MigrationChecksBlockedError` — an error-level `[db.migrations.checks]` finding, or the check timing out, rolled the migration and its history row back                                                                                      |
+| `1`  | `MigrationChecksBlockedError` — a file checked after commit left an error-level finding, or has error-level rules and the after-commit findings read failed (the migrations stay applied), or an `[api].schemas` entry the checks cannot use |
 
 ## Output
 
@@ -141,8 +141,8 @@ project ref and its environment.
   error-level finding fails the run (`SB001`) saying it was already committed. A failed findings
   read prints a `WARNING:`; when a file checked after commit has error-level rules, it also
   fails the run (`unchecked`). A timed-out check is `SB002`. An `[api].schemas`
-  entry containing a comma fails before any migration runs. `--skip-checks` skips all of it and
-  prints that checks were skipped.
+  entry the checks cannot use (a comma, or `$sbc$` / `$sbcq$`) fails before any migration runs.
+  `--skip-checks` skips all of it and prints that checks were skipped.
 
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`

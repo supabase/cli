@@ -85,8 +85,10 @@ first, so a closed gate (`enabled = false` and no `--experimental`) surfaces bef
 
 ## Output
 
-Text mode only. The generated SQL, the created-migration path, drop-statement
-warnings, and apply status are written to stderr. The no-files bootstrap also
+The generated SQL, the created-migration path, drop-statement
+warnings, and apply status are written to stderr. In `-o json` / `-o stream-json`, a
+successful apply also emits one result document whose `checks` field carries the
+security-check report, since the findings are not printed to stderr in those modes. The no-files bootstrap also
 prints `Declarative schema written to <dir>` (the relative declarative dir) to
 stderr after generating and writing — on both interactive and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
